@@ -1,42 +1,43 @@
 ﻿// backend/server/index.js  (CommonJS, Node 18+)
+
 const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const cors = require("cors");
+const OpenAI = require("openai"); // CommonJS import for SDK v4
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
-// Built-in fetch in Node 18+
+// Node 18+ has global fetch
 
-const { OpenAI } = require("openai");
+// === Config ===
+// Set this in Render backend env to your service URL, e.g. https://fetch-bpof.onrender.com
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "";
 
 // App
 const app = express();
 
-// CORS — allow localhost dev and Render frontends
-const ALLOWED_ORIGINS = [
+// CORS — allow local dev, your Render frontend, and any *.onrender.com previews
+const ALLOWED_ORIGINS = new Set([
   "http://localhost:3000",
   "http://localhost:5173",
-  // Your CRA frontend on Render (adjust if your slug differs)
-  "https://news-podcast-app-frontend.onrender.com",
-];
+  "https://news-podcast-app-frontend.onrender.com", // adjust if your slug differs
+]);
 
-// Also allow any *.onrender.com just in case you use preview URLs
-const corsOptions = {
-  origin(origin, cb) {
-    if (!origin) return cb(null, true); // curl / same-origin
-    if (
-      ALLOWED_ORIGINS.includes(origin) ||
-      /\.onrender\.com$/.test(origin)
-    ) {
-      return cb(null, true);
-    }
-    return cb(null, false);
-  },
-};
-app.use(cors(corsOptions));
+app.use(
+  cors({
+    origin(origin, cb) {
+      if (!origin) return cb(null, true); // curl / same-origin
+      if (ALLOWED_ORIGINS.has(origin) || /\.onrender\.com$/.test(origin)) {
+        return cb(null, true);
+      }
+      return cb(null, false);
+    },
+  })
+);
+
 app.use(express.json());
 
-// Static media
+// Static media (TTS mp3 files)
 const MEDIA_DIR = path.join(__dirname, "media");
 if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
 app.use("/media", express.static(MEDIA_DIR));
@@ -47,7 +48,7 @@ app.use((req, _res, next) => {
   next();
 });
 
-// Safe JSON helper — always send a body
+// Safe JSON helper
 function safeJson(res, payload, status = 200) {
   let body = payload;
   if (!body || (typeof body === "object" && Object.keys(body).length === 0)) {
@@ -61,7 +62,7 @@ app.get("/api/health", (_req, res) => {
   safeJson(res, { ok: true, env: process.env.NODE_ENV || "dev" });
 });
 
-// Env guards (let Render env vars handle secrets — .env is optional)
+// Env guards
 if (!process.env.OPENAI_API_KEY) {
   console.error("❌ Missing OPENAI_API_KEY");
   process.exit(1);
@@ -72,6 +73,7 @@ if (!process.env.NEWSAPI_KEY) {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// Canonical NewsAPI categories
 const TOPIC_CATEGORIES = new Set([
   "business",
   "entertainment",
@@ -147,7 +149,11 @@ async function synthesizeTTS(text) {
     const fname = `tts-${Date.now()}.mp3`;
     const fpath = path.join(MEDIA_DIR, fname);
     fs.writeFileSync(fpath, buf);
-    return `/media/${fname}`;
+
+    // Return absolute URL in prod if PUBLIC_BASE_URL is set
+    return PUBLIC_BASE_URL
+      ? `${PUBLIC_BASE_URL}/media/${fname}`
+      : `/media/${fname}`;
   } catch (e) {
     console.error("TTS error:", e?.message || e);
     return null;
@@ -167,8 +173,7 @@ async function buildCombinedSummary(topics) {
 
   const deduped = dedupeArticles(collected);
   deduped.sort(
-    (a, b) =>
-      new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0)
+    (a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0)
   );
 
   const capped = deduped.slice(0, 14);
