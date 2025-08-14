@@ -2,12 +2,10 @@
   "name": "news-podcast-backend",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=18"
-  },
+  "engines": { "node": ">=18" },
   "scripts": {
-    "dev": "nodemon server/index.js",
-    "start": "node server/index.js"
+    "dev": "nodemon server/index.mjs",
+    "start": "node server/index.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
