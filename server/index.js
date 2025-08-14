@@ -29,8 +29,10 @@ const corsOptionsDelegate = (req, callback) => {
 };
 
 app.use(cors(corsOptionsDelegate));
-// Make sure OPTIONS preflight returns CORS headers
-app.options('*', cors(corsOptionsDelegate));
+// Preflight for ANY route (Express 5-safe: use regex)
+app.options(/.*/, cors(corsOptionsDelegate));
+// (optional) or just preflight for your API:
+// app.options('/api/*', cors(corsOptionsDelegate));
 
 /* -------------------------------------------------------------- */
 
