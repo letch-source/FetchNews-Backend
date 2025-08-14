@@ -8,28 +8,46 @@ const cors = require('cors');
 const OpenAI = require('openai');
 
 const app = express();
-app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'https://news-podcast-app-frontend.onrender.com'
-  ]
-}));
+
+/* -------------------- CORS (with preflight) -------------------- */
+const ALLOWED_ORIGINS = new Set([
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'https://news-podcast-app-frontend.onrender.com',
+]);
+
+const corsOptionsDelegate = (req, callback) => {
+  const origin = req.header('Origin');
+  const isAllowed = origin && ALLOWED_ORIGINS.has(origin);
+  callback(null, {
+    origin: isAllowed,                     // echo allowed origin or false
+    credentials: false,                    // set true only if you use cookies/auth
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Accept'],
+    optionsSuccessStatus: 204,
+  });
+};
+
+app.use(cors(corsOptionsDelegate));
+// Make sure OPTIONS preflight returns CORS headers
+app.options('*', cors(corsOptionsDelegate));
+
+/* -------------------------------------------------------------- */
 
 app.use(express.json());
 
-// static media
+// static media for generated audio
 const MEDIA_DIR = path.join(__dirname, 'media');
 if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
 app.use('/media', express.static(MEDIA_DIR));
 
-// logger
+// request logger
 app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
-// safe JSON helper
+// safe JSON helper (prevents empty 200s)
 function safeJson(res, payload, status = 200) {
   let body = payload;
   if (!body || (typeof body === 'object' && Object.keys(body).length === 0)) {
@@ -151,12 +169,12 @@ app.post('/api/summarize/batch', async (req, res, next) => {
 // legacy alias
 app.post('/api/generate', (req, res) => res.redirect(307, '/api/summarize'));
 
-// JSON 404 for any /api/* not handled (prevents HTML/no-body)
+// JSON 404 for any /api/* not handled
 app.use('/api', (req, res) => {
   safeJson(res, { error: `Not found: ${req.method} ${req.originalUrl}` }, 404);
 });
 
-// global error handler (never empty)
+// global error handler
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err?.stack || err);
   safeJson(res, { error: 'Internal server error' }, 500);
