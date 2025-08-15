@@ -2,13 +2,12 @@
   "name": "news-podcast-backend",
   "private": true,
   "type": "commonjs",
-"engines": { "node": ">=18 <23" }
-
-"scripts": {
-  "dev": "nodemon server/index.js",
-  "start": "node server/index.js",
-  "postinstall": "npm rebuild better-sqlite3 --build-from-source"
-}
+  "engines": { "node": ">=18 <23" },
+  "scripts": {
+    "dev": "nodemon server/index.js",
+    "start": "node server/index.js",
+    "postinstall": "npm rebuild better-sqlite3 --build-from-source"
+  },
   "dependencies": {
     "bcryptjs": "^3.0.2",
     "better-sqlite3": "^12.2.0",
