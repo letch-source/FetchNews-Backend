@@ -2,7 +2,9 @@
   "name": "news-podcast-backend",
   "private": true,
   "type": "commonjs",
-  "engines": { "node": ">=18 <23" },
+  "engines": {
+    "node": ">=18 <23"
+  },
   "scripts": {
     "dev": "nodemon server/index.js",
     "start": "node server/index.js",
@@ -16,6 +18,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
     "openai": "^4.104.0"
   },
   "devDependencies": {
