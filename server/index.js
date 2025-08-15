@@ -49,6 +49,23 @@ function safeJson(res, payload, status = 200) {
   res.status(status).type("application/json").send(JSON.stringify(body));
 }
 
+// Map US state full names to USPS abbreviations
+function stateAbbrevFor(region) {
+  const m = {
+    "Alabama":"AL","Alaska":"AK","Arizona":"AZ","Arkansas":"AR","California":"CA","Colorado":"CO",
+    "Connecticut":"CT","Delaware":"DE","Florida":"FL","Georgia":"GA","Hawaii":"HI","Idaho":"ID",
+    "Illinois":"IL","Indiana":"IN","Iowa":"IA","Kansas":"KS","Kentucky":"KY","Louisiana":"LA",
+    "Maine":"ME","Maryland":"MD","Massachusetts":"MA","Michigan":"MI","Minnesota":"MN","Mississippi":"MS",
+    "Missouri":"MO","Montana":"MT","Nebraska":"NE","Nevada":"NV","New Hampshire":"NH","New Jersey":"NJ",
+    "New Mexico":"NM","New York":"NY","North Carolina":"NC","North Dakota":"ND","Ohio":"OH","Oklahoma":"OK",
+    "Oregon":"OR","Pennsylvania":"PA","Rhode Island":"RI","South Carolina":"SC","South Dakota":"SD",
+    "Tennessee":"TN","Texas":"TX","Utah":"UT","Vermont":"VT","Virginia":"VA","Washington":"WA",
+    "West Virginia":"WV","Wisconsin":"WI","Wyoming":"WY","District of Columbia":"DC","Washington, D.C.":"DC"
+  };
+  return m[(region || "").trim()] || null;
+}
+
+
 // Health
 app.get("/api/health", (_req, res) => { safeJson(res, { ok: true, env: process.env.NODE_ENV || "dev" }); });
 
@@ -75,6 +92,25 @@ async function fetchWithTimeout(url, opts = {}, ms = 5000) {
   } finally {
     clearTimeout(t);
   }
+}
+
+// ---- NewsAPI helpers ----
+async function callNewsApi(pathname, params, timeoutMs = 5000) {
+  if (!process.env.NEWSAPI_KEY) return { articles: [] };
+  const u = new URL(`https://newsapi.org/v2${pathname}`);
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (v != null && v !== "") u.searchParams.set(k, String(v));
+  });
+  const resp = await fetchWithTimeout(
+    u.toString(),
+    { headers: { "X-Api-Key": process.env.NEWSAPI_KEY } },
+    timeoutMs
+  );
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => "");
+    throw new Error(`NewsAPI ${pathname} ${resp.status}: ${t}`);
+  }
+  return resp.json();
 }
 
 async function fetchHeadlinesForTopic(topic) {
@@ -107,6 +143,48 @@ async function fetchHeadlinesForTopic(topic) {
   return data;
 }
 
+// Build a location-focused query with synonyms and state/county hints
+function stateAbbrevFor(region) {
+  const m = {
+    "California": "CA",
+    "New York": "NY",
+    "Texas": "TX",
+    "Florida": "FL",
+    "Illinois": "IL",
+    "Pennsylvania": "PA",
+    "Ohio": "OH",
+    "Georgia": "GA",
+    "North Carolina": "NC",
+    "Michigan": "MI",
+    // add more as needed
+  };
+  return m[region] || null;
+}
+
+function buildLocalQueryKeywords(geo = {}) {
+  const city = (geo.city || "").trim();
+  const region = (geo.region || "").trim();
+  const abbr = stateAbbrevFor(region);
+  const county = /los angeles/i.test(region) || /los angeles/i.test(city) ? "Los Angeles County" : "";
+
+  // City synonyms (customize per city as needed)
+  const citySyn = [];
+  if (/^west hollywood$/i.test(city)) citySyn.push('"WeHo"', '"West Hollywood"');
+
+  const parts = [];
+  if (city) parts.push(`"${city}"`);
+  if (citySyn.length) parts.push(citySyn.join(" OR "));
+  if (county) parts.push(`"${county}"`);
+  if (region) parts.push(`"${region}"`);
+  if (abbr) parts.push(`"${abbr}"`); // e.g., "CA"
+
+  // Bias to civic/local beats
+  const qualifier = "(news OR local OR city OR county OR council OR mayor OR police OR fire OR school OR traffic OR housing)";
+  const base = parts.length ? `(${parts.join(" OR ")})` : "";
+  return base ? `${base} AND ${qualifier}` : qualifier;
+}
+
+// Merge and dedupe (by url/title) preserving newest first
 function dedupeArticles(arr) {
   const seen = new Set();
   const out = [];
@@ -117,6 +195,102 @@ function dedupeArticles(arr) {
     out.push(a);
   }
   return out;
+}
+
+async function fetchLocalHeadlines(geo = {}) {
+  if (!process.env.NEWSAPI_KEY) return [];
+
+  const countryCode = String(geo.country || "US").toLowerCase();
+  const stateName = (geo.region || "").trim();         // e.g., "California"
+  const stateAbbr = stateAbbrevFor(stateName);         // e.g., "CA"
+  const cityName  = (geo.city || "").trim();           // optional city
+
+  // --- Build state-focused queries ---
+  // A) Headlines that explicitly name the state (or its USPS abbr) in the TITLE
+  const qInTitle = [stateName, stateAbbr].filter(Boolean).map(s => `"${s}"`).join(" OR ") || null;
+
+  // B) Wider query: state in title/description plus civic/local terms to reduce noise
+  const qualifier = "(news OR local OR county OR city OR council OR mayor OR police OR fire OR school OR housing OR development OR traffic)";
+  const qStateWide = stateName ? `("${stateName}"${stateAbbr ? ` OR "${stateAbbr}"` : ""}) AND ${qualifier}` : qualifier;
+
+  // C) Optional city boost (if we have a city): city/county tokens
+  const countyMaybe = /los angeles/i.test(stateName) || /los angeles/i.test(cityName) ? "Los Angeles County" : "";
+  const qCityWide = cityName
+    ? `("${cityName}"${countyMaybe ? ` OR "${countyMaybe}"` : ""}${stateName ? ` OR "${stateName}"` : ""}${stateAbbr ? ` OR "${stateAbbr}"` : ""}) AND ${qualifier}`
+    : null;
+
+  // Fire off requests
+  const pTitle = qInTitle
+    ? callNewsApi("/everything", {
+        qInTitle,
+        sortBy: "publishedAt",
+        pageSize: 50,
+        language: countryCode === "us" ? "en" : undefined
+      })
+    : Promise.resolve({ articles: [] });
+
+  const pStateWide = callNewsApi("/everything", {
+    q: qStateWide,
+    searchIn: "title,description",
+    sortBy: "publishedAt",
+    pageSize: 50,
+    language: countryCode === "us" ? "en" : undefined
+  });
+
+  const pCityWide = qCityWide
+    ? callNewsApi("/everything", {
+        q: qCityWide,
+        searchIn: "title,description",
+        sortBy: "publishedAt",
+        pageSize: 40,
+        language: countryCode === "us" ? "en" : undefined
+      })
+    : Promise.resolve({ articles: [] });
+
+  // Optional lightweight backstop (national top-headlines) if results are thin
+  const pTop = callNewsApi("/top-headlines", {
+    pageSize: 15,
+    country: countryCode
+  });
+
+  const [rTitle, rStateWide, rCityWide, rTop] = await Promise.allSettled([
+    pTitle, pStateWide, pCityWide, pTop
+  ]);
+
+  // Merge
+  let articles = [];
+  if (rTitle.status === "fulfilled")     articles = articles.concat(rTitle.value.articles || []);
+  if (rStateWide.status === "fulfilled") articles = articles.concat(rStateWide.value.articles || []);
+  if (rCityWide.status === "fulfilled")  articles = articles.concat(rCityWide.value.articles || []);
+
+  // Dedupe + recency sort
+  const seen = new Set();
+  const deduped = [];
+  for (const a of articles) {
+    const k = (a.url || a.title || "").toLowerCase();
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    deduped.push(a);
+  }
+  deduped.sort((x, y) => new Date(y.publishedAt || 0) - new Date(x.publishedAt || 0));
+
+  // If thin, sprinkle only top-headlines that mention the state tokens to avoid drift
+  if (deduped.length < 12 && rTop.status === "fulfilled") {
+    const needles = [stateName, stateAbbr, cityName].filter(Boolean).map(s => s.toLowerCase());
+    const filteredTop = (rTop.value.articles || []).filter(a => {
+      const hay = `${a.title || ""} ${a.description || ""}`.toLowerCase();
+      return needles.some(n => n && hay.includes(n));
+    });
+    for (const a of filteredTop) {
+      const k = (a.url || a.title || "").toLowerCase();
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      deduped.push(a);
+    }
+  }
+
+  // Cap for prompt size
+  return deduped.slice(0, 30);
 }
 
 function normalizeWordCount(n) {
@@ -159,18 +333,24 @@ async function synthesizeTTS(text) {
   }
 }
 
-async function buildCombinedSummary(topics, wordCount = 200, { noTts = false } = {}) {
-  // Fetch all topics IN PARALLEL
+async function buildCombinedSummary(topics, wordCount = 200, { noTts = false, geo = null } = {}) {
+  // Fetch all topics IN PARALLEL (special-case "local")
   const results = await Promise.allSettled(
-    topics.map(t => fetchHeadlinesForTopic(t))
+    topics.map(t => {
+      if (String(t).toLowerCase() === "local") {
+        return fetchLocalHeadlines(geo || {}); // geo may be null; function handles fallback
+      }
+      return fetchHeadlinesForTopic(t);
+    })
   );
+
   let collected = [];
   results.forEach((r, idx) => {
+    const t = topics[idx];
     if (r.status === "fulfilled") {
-      const t = topics[idx];
       collected = collected.concat(r.value.map(a => ({ ...a, _topic: t })));
     } else {
-      console.error(`News fetch error for "${topics[idx]}":`, r.reason?.message || r.reason);
+      console.error(`News fetch error for "${t}":`, r.reason?.message || r.reason);
     }
   });
 
@@ -191,12 +371,17 @@ async function buildCombinedSummary(topics, wordCount = 200, { noTts = false } =
   // OPTION: skip TTS for faster first paint
   const audioUrl = noTts ? null : await synthesizeTTS(combinedText);
 
-  const combined = {
-    id: `combined-${Date.now()}`,
-    title: `Top ${topics.join(", ")}`,
-    summary: combinedText,
-    audioUrl,
-  };
+const prettyLocal = (geo && (geo.city || geo.region || geo.country))
+  ? ` — ${[geo.city, geo.region].filter(Boolean).join(", ") || geo.country}`
+  : "";
+
+const combined = {
+  id: `combined-${Date.now()}`,
+  title: `Top ${topics.join(", ")}${prettyLocal}`,
+  summary: combinedText,
+  audioUrl,
+};
+
 
   const items = capped.map((a, i) => ({
     id: `a-${i}`,
@@ -217,7 +402,10 @@ app.post("/api/summarize", async (req, res, next) => {
     const topic = (req.body?.topic || "general").toString();
     const wordCount = normalizeWordCount(req.body?.wordCount);
     const noTts = String(req.query.noTts || "0") === "1";
-    const result = await buildCombinedSummary([topic], wordCount, { noTts });
+    // optional geo from client for "local"
+    const geo = req.body?.geo && typeof req.body.geo === "object" ? req.body.geo : null;
+
+    const result = await buildCombinedSummary([topic], wordCount, { noTts, geo });
     safeJson(res, { combined: result.combined, items: result.items });
   } catch (err) { next(err); }
 });
@@ -232,7 +420,10 @@ app.post("/api/summarize/batch", async (req, res, next) => {
 
     const wordCount = normalizeWordCount(req.body?.wordCount);
     const noTts = String(req.query.noTts || "0") === "1";
-    const result = await buildCombinedSummary(topics, wordCount, { noTts });
+    // optional geo from client if "local" is among topics
+    const geo = req.body?.geo && typeof req.body.geo === "object" ? req.body.geo : null;
+
+    const result = await buildCombinedSummary(topics, wordCount, { noTts, geo });
     safeJson(res, { combined: result.combined, items: result.items });
   } catch (err) { next(err); }
 });
