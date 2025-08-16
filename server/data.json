@@ -1,0 +1,14 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "email": "finlaysmith@gmail.com",
+      "password_hash": "$2b$10$Acs9f2bsDaoziD.CU8pqpOEHZ5eTM85tUwdodVB4gGdmBwt9Ft982",
+      "first_name": "Fin",
+      "created_at": "2025-08-16T00:33:19.753Z"
+    }
+  ],
+  "custom_topics": [],
+  "last_preset": [],
+  "reset_tokens": []
+}

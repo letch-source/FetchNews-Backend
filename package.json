@@ -7,18 +7,17 @@
   },
   "scripts": {
     "dev": "nodemon server/index.js",
-    "start": "node server/index.js",
-    "postinstall": "npm rebuild better-sqlite3 --build-from-source"
+    "start": "node server/index.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
-    "better-sqlite3": "^12.2.0",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^7.0.5",
     "openai": "^4.104.0"
   },
   "devDependencies": {
