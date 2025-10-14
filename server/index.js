@@ -268,6 +268,15 @@ function summarizeArticlesSimple(topic, geo, articles, wordCount) {
       if (geoOnly.length) return geoOnly.slice(0, 1).join(" ");
     }
 
+    // For local mode, be more lenient - use any description or title
+    if (isLocalMode) {
+      if (description && !isRedundant(title, description)) {
+        return sentences[0] || "";
+      }
+      // If no good description, use title as fallback
+      return title || "";
+    }
+
     // For core topics, allow a general first sentence
     if (isCoreTopicMode) {
       const first = sentences[0] || "";
@@ -682,15 +691,18 @@ app.post("/api/summarize", async (req, res) => {
 
         const topicLower = String(topic || "").toLowerCase();
         const isCore = CORE_CATEGORIES.has(topicLower);
+        const isLocal = topicLower === "local";
 
         // Filter relevant and require a non-empty blurb only for local/non-core
-        const relevant = filterRelevantArticles(topic, geo || location, articles, perTopic).filter((a) => {
+        const relevant = filterRelevantArticles(topic, geoData, articles, perTopic).filter((a) => {
           if (isCore) return true;
-          const blurb = extractRelevantBlurbForSource(topic, geo || location, a);
+          const blurb = extractRelevantBlurbForSource(topic, geoData, a);
+          // For local news, be more lenient - include articles even without perfect blurbs
+          if (isLocal) return true;
           return !!blurb;
         });
 
-        const summary = summarizeArticlesSimple(topic, geo || location, relevant, wordCount);
+        const summary = summarizeArticlesSimple(topic, geoData, relevant, wordCount);
 
         const perTopicIntro = `Here’s your ${String(topic || "").trim()} news.`;
         const stripped = summary.startsWith(perTopicIntro)
