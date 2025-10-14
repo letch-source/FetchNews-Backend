@@ -133,26 +133,41 @@ async function fetchArticlesForTopic(topic, geo, maxResults) {
   const isLocal = normalizedTopic === "local";
 
   if (isLocal) {
-    // Try strict local: country + qInTitle city/region via top-headlines (approximate using q)
+    // Strategy 1: Try strict local with city/region names
     const qStrict = city || region || "";
     if (qStrict) {
       articles = await fetchTopHeadlinesByCategory("general", countryCode, pageSize, `"${qStrict}"`);
     }
-    // Fallback: country + region as q
-    if ((articles?.length || 0) < Math.min(5, pageSize) && region) {
+    
+    // Strategy 2: Try broader regional search
+    if ((articles?.length || 0) < Math.min(3, pageSize) && region) {
       const extra = await fetchTopHeadlinesByCategory("general", countryCode, pageSize, region);
       articles = [...articles, ...extra];
     }
-    // Fallback: everything with qInTitle city/region
+    
+    // Strategy 3: Try everything endpoint with location terms
     if ((articles?.length || 0) < Math.min(5, pageSize) && (city || region)) {
       const qInTitle = city || region;
       const extra = await fetchArticlesEverything([`title:${qInTitle}`], pageSize - (articles?.length || 0));
       articles = [...articles, ...extra];
     }
-    // Last fallback: everything with city/region terms
+    
+    // Strategy 4: Try general search with location terms
     if ((articles?.length || 0) < Math.min(5, pageSize)) {
       const extra = await fetchArticlesEverything([city, region].filter(Boolean), pageSize - (articles?.length || 0));
       articles = [...articles, ...extra];
+    }
+    
+    // Strategy 5: Fallback to country-wide news if no local articles found
+    if ((articles?.length || 0) < Math.min(3, pageSize) && countryCode) {
+      const fallback = await fetchTopHeadlinesByCategory("general", countryCode, pageSize - (articles?.length || 0));
+      articles = [...articles, ...fallback];
+    }
+    
+    // Strategy 6: Final fallback to general news
+    if ((articles?.length || 0) < Math.min(3, pageSize)) {
+      const finalFallback = await fetchTopHeadlinesByCategory("general", "", pageSize - (articles?.length || 0));
+      articles = [...articles, ...finalFallback];
     }
   } else if (useCategory) {
     const category = normalizedTopic;
@@ -399,7 +414,11 @@ function filterRelevantArticles(topic, geo, articles, minCount = 6) {
     const t = a.title || "";
     const d = a.description || "";
     if (isLocal) {
+      // For local news, be more lenient - include articles that mention location OR are recent general news
       if (geoTokens.size > 0 && (textHasAny(t, geoTokens) || textHasAny(d, geoTokens))) {
+        out.push(a);
+      } else if (geoTokens.size === 0) {
+        // If no location data, include recent articles as fallback
         out.push(a);
       }
     } else {
@@ -445,6 +464,15 @@ function filterRelevantArticles(topic, geo, articles, minCount = 6) {
   for (const { a } of candidates) {
     out.push(a);
     if (out.length >= minCount) break;
+  }
+
+  // For local news, if we still don't have enough, be more permissive
+  if (isLocal && out.length < minCount) {
+    const remaining = original.filter((a) => !selected.has(a));
+    for (const a of remaining) {
+      out.push(a);
+      if (out.length >= minCount) break;
+    }
   }
 
   // Fallback to originals if still empty
@@ -627,7 +655,16 @@ app.post("/api/summarize", async (req, res) => {
     for (const topic of topics) {
       try {
         const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
-        const { articles } = await fetchArticlesForTopic(topic, geo || location, perTopic);
+        // Normalize geo data structure
+        const normalizedGeo = geo || location;
+        const geoData = normalizedGeo ? {
+          city: normalizedGeo.city || "",
+          region: normalizedGeo.region || "",
+          country: normalizedGeo.country || normalizedGeo.countryCode || "",
+          countryCode: normalizedGeo.countryCode || normalizedGeo.country || ""
+        } : null;
+        
+        const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic);
 
         // Pool of unfiltered candidates for global backfill
         for (let idx = 0; idx < articles.length; idx++) {
@@ -770,7 +807,15 @@ app.post("/api/summarize/batch", async (req, res) => {
         for (const topic of topics) {
           try {
             const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
-            const { articles } = await fetchArticlesForTopic(topic, { country: location }, perTopic);
+            // Normalize geo data structure for batch
+            const geoData = location ? {
+              city: "",
+              region: "",
+              country: location,
+              countryCode: location
+            } : null;
+            
+            const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic);
 
             for (let idx = 0; idx < articles.length; idx++) {
               const a = articles[idx];
