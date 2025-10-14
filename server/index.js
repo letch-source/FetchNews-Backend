@@ -648,10 +648,10 @@ app.post("/api/summarize", async (req, res) => {
     }
 
     // Helper to format topics like "A and B" or "A, B, and C"
-    function formatTopicList(list) {
+    function formatTopicList(list, geoData) {
       const names = (list || []).map((t) => {
         if (String(t).toLowerCase() === "local") {
-          const r = geo?.region || geo?.city || geo?.country || "local";
+          const r = geoData?.region || geoData?.city || geoData?.country || location || "local";
           return r;
         }
         return String(t);
@@ -664,21 +664,38 @@ app.post("/api/summarize", async (req, res) => {
     for (const topic of topics) {
       try {
         const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
-        // Normalize geo data structure
-        const normalizedGeo = geo || location;
-        const geoData = normalizedGeo ? {
-          city: normalizedGeo.city || "",
-          region: normalizedGeo.region || "",
-          country: normalizedGeo.country || normalizedGeo.countryCode || "",
-          countryCode: normalizedGeo.countryCode || normalizedGeo.country || ""
-        } : null;
+        
+        // Handle different location formats
+        let geoData = null;
+        if (geo && typeof geo === 'object') {
+          // Format: { city: "Los Angeles", region: "California", country: "US" }
+          geoData = {
+            city: geo.city || "",
+            region: geo.region || "",
+            country: geo.country || geo.countryCode || "",
+            countryCode: geo.countryCode || geo.country || ""
+          };
+        } else if (location && typeof location === 'string') {
+          // Format: "New York" or "Los Angeles, California"
+          const locationStr = String(location).trim();
+          if (locationStr) {
+            // Try to parse location string (e.g., "New York" or "Los Angeles, California")
+            const parts = locationStr.split(',').map(p => p.trim());
+            geoData = {
+              city: parts[0] || "",
+              region: parts[1] || "",
+              country: "US", // Default to US for now
+              countryCode: "US"
+            };
+          }
+        }
         
         const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic);
 
         // Pool of unfiltered candidates for global backfill
         for (let idx = 0; idx < articles.length; idx++) {
           const a = articles[idx];
-          const blurb = extractRelevantBlurbForSource(topic, geo || location, a);
+          const blurb = extractRelevantBlurbForSource(topic, geoData, a);
           globalCandidates.push({
             id: `${topic}-cand-${idx}-${Date.now()}`,
             title: a.title || "",
@@ -713,7 +730,7 @@ app.post("/api/summarize", async (req, res) => {
         const sourceItems = relevant.map((a, idx) => ({
           id: `${topic}-${idx}-${Date.now()}`,
           title: a.title || "",
-          summary: extractRelevantBlurbForSource(topic, geo || location, a) || (a.description || a.title || ""),
+          summary: extractRelevantBlurbForSource(topic, geoData, a) || (a.description || a.title || ""),
           source: a.source || "",
           url: a.url || "",
           topic,
@@ -745,8 +762,32 @@ app.post("/api/summarize", async (req, res) => {
       }
     }
 
-    const topicsLabel = formatTopicList(topics);
-    const overallIntro = topicsLabel ? `Here’s your ${topicsLabel} news.` : "Here’s your news.";
+    // Get the first geoData for formatting (they should all be the same)
+    const firstGeoData = topics.includes('local') ? (() => {
+      if (geo && typeof geo === 'object') {
+        return {
+          city: geo.city || "",
+          region: geo.region || "",
+          country: geo.country || geo.countryCode || "",
+          countryCode: geo.countryCode || geo.country || ""
+        };
+      } else if (location && typeof location === 'string') {
+        const locationStr = String(location).trim();
+        if (locationStr) {
+          const parts = locationStr.split(',').map(p => p.trim());
+          return {
+            city: parts[0] || "",
+            region: parts[1] || "",
+            country: "US",
+            countryCode: "US"
+          };
+        }
+      }
+      return null;
+    })() : null;
+    
+    const topicsLabel = formatTopicList(topics, firstGeoData);
+    const overallIntro = topicsLabel ? `Here's your ${topicsLabel} news.` : "Here's your news.";
     const combinedText = [overallIntro, combinedPieces.join(" ")].filter(Boolean).join(" ").trim();
 
     return res.json({
