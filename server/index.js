@@ -133,38 +133,50 @@ async function fetchArticlesForTopic(topic, geo, maxResults) {
   const isLocal = normalizedTopic === "local";
 
   if (isLocal) {
-    // Strategy 1: Try strict local with city/region names
-    const qStrict = city || region || "";
-    if (qStrict) {
-      articles = await fetchTopHeadlinesByCategory("general", countryCode, pageSize, `"${qStrict}"`);
+    // Strategy 1: Try city-specific search first
+    if (city) {
+      // Try top headlines with city name
+      articles = await fetchTopHeadlinesByCategory("general", countryCode, pageSize, `"${city}"`);
+      
+      // If no city articles, try everything endpoint with city in title
+      if ((articles?.length || 0) < Math.min(3, pageSize)) {
+        const cityArticles = await fetchArticlesEverything([`title:${city}`], pageSize - (articles?.length || 0));
+        articles = [...articles, ...cityArticles];
+      }
+      
+      // If still no city articles, try general search with city name
+      if ((articles?.length || 0) < Math.min(3, pageSize)) {
+        const cityGeneral = await fetchArticlesEverything([city], pageSize - (articles?.length || 0));
+        articles = [...articles, ...cityGeneral];
+      }
     }
     
-    // Strategy 2: Try broader regional search
+    // Strategy 2: If no city articles found, try state/region
     if ((articles?.length || 0) < Math.min(3, pageSize) && region) {
-      const extra = await fetchTopHeadlinesByCategory("general", countryCode, pageSize, region);
-      articles = [...articles, ...extra];
+      // Try top headlines with region name
+      const regionArticles = await fetchTopHeadlinesByCategory("general", countryCode, pageSize - (articles?.length || 0), `"${region}"`);
+      articles = [...articles, ...regionArticles];
+      
+      // If still not enough, try everything endpoint with region
+      if ((articles?.length || 0) < Math.min(5, pageSize)) {
+        const regionEverything = await fetchArticlesEverything([`title:${region}`], pageSize - (articles?.length || 0));
+        articles = [...articles, ...regionEverything];
+      }
+      
+      // Try general search with region
+      if ((articles?.length || 0) < Math.min(5, pageSize)) {
+        const regionGeneral = await fetchArticlesEverything([region], pageSize - (articles?.length || 0));
+        articles = [...articles, ...regionGeneral];
+      }
     }
     
-    // Strategy 3: Try everything endpoint with location terms
-    if ((articles?.length || 0) < Math.min(5, pageSize) && (city || region)) {
-      const qInTitle = city || region;
-      const extra = await fetchArticlesEverything([`title:${qInTitle}`], pageSize - (articles?.length || 0));
-      articles = [...articles, ...extra];
-    }
-    
-    // Strategy 4: Try general search with location terms
-    if ((articles?.length || 0) < Math.min(5, pageSize)) {
-      const extra = await fetchArticlesEverything([city, region].filter(Boolean), pageSize - (articles?.length || 0));
-      articles = [...articles, ...extra];
-    }
-    
-    // Strategy 5: Fallback to country-wide news if no local articles found
+    // Strategy 3: Fallback to country-wide news if no local articles found
     if ((articles?.length || 0) < Math.min(3, pageSize) && countryCode) {
       const fallback = await fetchTopHeadlinesByCategory("general", countryCode, pageSize - (articles?.length || 0));
       articles = [...articles, ...fallback];
     }
     
-    // Strategy 6: Final fallback to general news
+    // Strategy 4: Final fallback to general news
     if ((articles?.length || 0) < Math.min(3, pageSize)) {
       const finalFallback = await fetchTopHeadlinesByCategory("general", "", pageSize - (articles?.length || 0));
       articles = [...articles, ...finalFallback];
@@ -681,9 +693,36 @@ app.post("/api/summarize", async (req, res) => {
           if (locationStr) {
             // Try to parse location string (e.g., "New York" or "Los Angeles, California")
             const parts = locationStr.split(',').map(p => p.trim());
+            
+            // Common US states mapping for better parsing
+            const stateMap = {
+              'california': 'California', 'ca': 'California',
+              'new york': 'New York', 'ny': 'New York',
+              'texas': 'Texas', 'tx': 'Texas',
+              'florida': 'Florida', 'fl': 'Florida',
+              'illinois': 'Illinois', 'il': 'Illinois',
+              'pennsylvania': 'Pennsylvania', 'pa': 'Pennsylvania',
+              'ohio': 'Ohio', 'oh': 'Ohio',
+              'georgia': 'Georgia', 'ga': 'Georgia',
+              'north carolina': 'North Carolina', 'nc': 'North Carolina',
+              'michigan': 'Michigan', 'mi': 'Michigan'
+            };
+            
+            let city = parts[0] || "";
+            let region = parts[1] || "";
+            
+            // If no comma but it looks like a state name, treat as state
+            if (!region && parts.length === 1) {
+              const lowerPart = parts[0].toLowerCase();
+              if (stateMap[lowerPart]) {
+                city = "";
+                region = stateMap[lowerPart];
+              }
+            }
+            
             geoData = {
-              city: parts[0] || "",
-              region: parts[1] || "",
+              city: city,
+              region: region,
               country: "US", // Default to US for now
               countryCode: "US"
             };
@@ -775,9 +814,36 @@ app.post("/api/summarize", async (req, res) => {
         const locationStr = String(location).trim();
         if (locationStr) {
           const parts = locationStr.split(',').map(p => p.trim());
+          
+          // Common US states mapping for better parsing
+          const stateMap = {
+            'california': 'California', 'ca': 'California',
+            'new york': 'New York', 'ny': 'New York',
+            'texas': 'Texas', 'tx': 'Texas',
+            'florida': 'Florida', 'fl': 'Florida',
+            'illinois': 'Illinois', 'il': 'Illinois',
+            'pennsylvania': 'Pennsylvania', 'pa': 'Pennsylvania',
+            'ohio': 'Ohio', 'oh': 'Ohio',
+            'georgia': 'Georgia', 'ga': 'Georgia',
+            'north carolina': 'North Carolina', 'nc': 'North Carolina',
+            'michigan': 'Michigan', 'mi': 'Michigan'
+          };
+          
+          let city = parts[0] || "";
+          let region = parts[1] || "";
+          
+          // If no comma but it looks like a state name, treat as state
+          if (!region && parts.length === 1) {
+            const lowerPart = parts[0].toLowerCase();
+            if (stateMap[lowerPart]) {
+              city = "";
+              region = stateMap[lowerPart];
+            }
+          }
+          
           return {
-            city: parts[0] || "",
-            region: parts[1] || "",
+            city: city,
+            region: region,
             country: "US",
             countryCode: "US"
           };
