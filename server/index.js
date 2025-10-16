@@ -329,7 +329,6 @@ Requirements:
       ],
       max_tokens: Math.min(wordCount * 1.2, 1200), // Further reduced for faster response
       temperature: 0.6, // Reduced for more consistent, faster responses
-      timeout: 12000, // Reduced timeout for faster failure detection
     });
 
     const summary = completion.choices[0]?.message?.content?.trim();
@@ -1022,7 +1021,10 @@ app.post("/api/tts", async (req, res) => {
     
     if (cached && !disableCache) {
       console.log(`TTS cache hit for ${finalText.substring(0, 50)}... with voice: ${voice}`);
-      return res.json({ audioUrl: cached.audioUrl });
+      // Ensure cached URL is absolute
+      const baseUrl = req.protocol + '://' + req.get('host');
+      const audioUrl = cached.audioUrl.startsWith('http') ? cached.audioUrl : `${baseUrl}${cached.audioUrl}`;
+      return res.json({ audioUrl });
     }
     
     console.log(`TTS cache miss - generating new audio with voice: ${voice}`);
@@ -1112,7 +1114,9 @@ app.post("/api/tts", async (req, res) => {
     const outPath = path.join(MEDIA_DIR, fileBase);
     fs.writeFileSync(outPath, buffer);
 
-    const audioUrl = `/media/${fileBase}`;
+    // Create absolute URL for the audio file
+    const baseUrl = req.protocol + '://' + req.get('host');
+    const audioUrl = `${baseUrl}/media/${fileBase}`;
     
     // Cache the TTS result for 24 hours
     await cache.set(cacheKey, { audioUrl }, 86400);
