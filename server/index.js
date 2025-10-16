@@ -9,10 +9,22 @@ const jwt = require("jsonwebtoken");
 const path = require("path");
 const fs = require("fs");
 const OpenAI = require("openai");
+const rateLimit = require("express-rate-limit");
+const cache = require("./cache");
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: { error: "Too many requests, please try again later." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use("/api/", limiter);
 
 // --- Config & helpers ---
 const PORT = process.env.PORT || 3001;
@@ -127,59 +139,60 @@ async function fetchArticlesForTopic(topic, geo, maxResults) {
     return { articles: [], note: "Missing NEWSAPI_KEY" };
   }
 
+  // Check cache first
+  const cacheKey = cache.getNewsKey(topic, geo, pageSize);
+  const cached = await cache.get(cacheKey);
+  if (cached) {
+    console.log(`Cache hit for ${topic}`);
+    return cached;
+  }
+
   let articles = [];
   const normalizedTopic = String(topic || "").toLowerCase();
   const useCategory = CORE_CATEGORIES.has(normalizedTopic) && normalizedTopic !== "world";
   const isLocal = normalizedTopic === "local";
 
   if (isLocal) {
-    // Strategy 1: Try city-specific search first
+    // Parallel API calls for better performance
+    const promises = [];
+    
     if (city) {
-      // Try top headlines with city name
-      articles = await fetchTopHeadlinesByCategory("general", countryCode, pageSize, `"${city}"`);
-      
-      // If no city articles, try everything endpoint with city in title
-      if ((articles?.length || 0) < Math.min(3, pageSize)) {
-        const cityArticles = await fetchArticlesEverything([`title:${city}`], pageSize - (articles?.length || 0));
-        articles = [...articles, ...cityArticles];
-      }
-      
-      // If still no city articles, try general search with city name
-      if ((articles?.length || 0) < Math.min(3, pageSize)) {
-        const cityGeneral = await fetchArticlesEverything([city], pageSize - (articles?.length || 0));
-        articles = [...articles, ...cityGeneral];
-      }
+      promises.push(
+        fetchTopHeadlinesByCategory("general", countryCode, Math.ceil(pageSize/3), `"${city}"`),
+        fetchArticlesEverything([`title:${city}`], Math.ceil(pageSize/3)),
+        fetchArticlesEverything([city], Math.ceil(pageSize/3))
+      );
     }
     
-    // Strategy 2: If no city articles found, try state/region
-    if ((articles?.length || 0) < Math.min(3, pageSize) && region) {
-      // Try top headlines with region name
-      const regionArticles = await fetchTopHeadlinesByCategory("general", countryCode, pageSize - (articles?.length || 0), `"${region}"`);
-      articles = [...articles, ...regionArticles];
-      
-      // If still not enough, try everything endpoint with region
-      if ((articles?.length || 0) < Math.min(5, pageSize)) {
-        const regionEverything = await fetchArticlesEverything([`title:${region}`], pageSize - (articles?.length || 0));
-        articles = [...articles, ...regionEverything];
-      }
-      
-      // Try general search with region
-      if ((articles?.length || 0) < Math.min(5, pageSize)) {
-        const regionGeneral = await fetchArticlesEverything([region], pageSize - (articles?.length || 0));
-        articles = [...articles, ...regionGeneral];
-      }
+    if (region) {
+      promises.push(
+        fetchTopHeadlinesByCategory("general", countryCode, Math.ceil(pageSize/3), `"${region}"`),
+        fetchArticlesEverything([`title:${region}`], Math.ceil(pageSize/3)),
+        fetchArticlesEverything([region], Math.ceil(pageSize/3))
+      );
     }
     
-    // Strategy 3: Fallback to country-wide news if no local articles found
-    if ((articles?.length || 0) < Math.min(3, pageSize) && countryCode) {
-      const fallback = await fetchTopHeadlinesByCategory("general", countryCode, pageSize - (articles?.length || 0));
-      articles = [...articles, ...fallback];
+    if (countryCode) {
+      promises.push(
+        fetchTopHeadlinesByCategory("general", countryCode, Math.ceil(pageSize/2))
+      );
     }
     
-    // Strategy 4: Final fallback to general news
-    if ((articles?.length || 0) < Math.min(3, pageSize)) {
-      const finalFallback = await fetchTopHeadlinesByCategory("general", "", pageSize - (articles?.length || 0));
-      articles = [...articles, ...finalFallback];
+    // Fallback to general news
+    promises.push(
+      fetchTopHeadlinesByCategory("general", "", Math.ceil(pageSize/2))
+    );
+    
+    try {
+      const results = await Promise.allSettled(promises);
+      articles = results
+        .filter(result => result.status === 'fulfilled')
+        .flatMap(result => result.value)
+        .slice(0, pageSize); // Limit to requested size
+    } catch (error) {
+      console.error('Error in parallel local news fetch:', error);
+      // Fallback to single call
+      articles = await fetchTopHeadlinesByCategory("general", countryCode || "", pageSize);
     }
   } else if (useCategory) {
     const category = normalizedTopic;
@@ -203,10 +216,15 @@ async function fetchArticlesForTopic(topic, geo, maxResults) {
     urlToImage: a.urlToImage || "",
   }));
 
-  return { articles: normalized };
+  const result = { articles: normalized };
+  
+  // Cache the result for 15 minutes
+  await cache.set(cacheKey, result, 900);
+  
+  return result;
 }
 
-function summarizeArticlesSimple(topic, geo, articles, wordCount) {
+async function summarizeArticles(topic, geo, articles, wordCount) {
   const baseParts = [String(topic || "").trim()];
   if (geo?.region) baseParts.push(geo.region);
   if (geo?.country || geo?.countryCode) baseParts.push(geo.country || geo.countryCode);
@@ -216,192 +234,116 @@ function summarizeArticlesSimple(topic, geo, articles, wordCount) {
     return `No recent coverage found for ${base}.`;
   }
 
-  const topicLowerForMode = String(topic || "").toLowerCase();
-  const isLocalMode = topicLowerForMode === "local";
-  const isCoreTopicMode = CORE_CATEGORIES.has(topicLowerForMode);
+  console.log(`Summarizing ${articles.length} articles for topic: ${topic} using ChatGPT`);
 
-  // helper: strip trailing publisher from title (e.g., " - BBC", " | BBC", " — AOL.com")
-  function cleanTitle(rawTitle = "") {
-    let t = String(rawTitle).trim();
-    if (!t) return t;
-    const suffixRe = /\s+(?:-|\||—|–)\s+[^\-\|—–]{2,}$/u;
-    let prev;
-    do {
-      prev = t;
-      t = t.replace(suffixRe, "");
-    } while (t !== prev);
-    return t.trim().replace(/[\s\-–—]+$/u, "");
+  // Check if OpenAI API key is available
+  if (!OPENAI_API_KEY) {
+    throw new Error("OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.");
   }
 
-  function tokenSet(s) {
-    return new Set(String(s).toLowerCase().replace(/[^a-z0-9\s]/gi, " ").split(/\s+/).filter((w) => w.length >= 3));
-  }
-  function isRedundant(title, desc) {
-    const tset = tokenSet(title);
-    const dset = tokenSet(desc);
-    if (tset.size === 0 || dset.size === 0) return false;
-    let inter = 0;
-    for (const w of dset) if (tset.has(w)) inter++;
-    const union = new Set([...tset, ...dset]).size || 1;
-    const jaccard = inter / union;
-    return jaccard >= 0.7;
-  }
+  try {
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    
+    // Prepare articles for ChatGPT (limit to 5 articles for faster processing)
+    const articleTexts = articles.slice(0, 5).map((article, index) => {
+      const title = (article.title || "").replace(/[\s\-–—]+$/g, "").trim();
+      const description = (article.description || "").trim().slice(0, 200); // Limit description length
+      const source = article.source || "Unknown";
+      return `${index + 1}. **${title}** (${source})\n${description}`;
+    }).join("\n\n");
 
-  // New: extract blurb sentences that mention topic or geo terms
-  function extractRelevantBlurb(title, description) {
-    const topicTokens = String(topic || "")
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((t) => t.length >= 3);
-    const geoTokens = [geo?.city, geo?.region, geo?.country, geo?.countryCode]
-      .map((t) => String(t || "").toLowerCase())
-      .filter((t) => t.length >= 3);
+    // Create a podcaster-style prompt
+    const prompt = `You are a professional news podcaster creating a ${wordCount}-word summary of ${topic} news. 
 
-    const sentences = String(description || "")
-      .replace(/\s+/g, " ")
-      .split(/(?<=[\.!?])\s+/);
+Here are the latest articles:
 
-    function containsAny(s, toks) {
-      const lc = String(s || "").toLowerCase();
-      return toks.some((t) => t && lc.includes(t));
+${articleTexts}
+
+Please create a natural, conversational summary that:
+1. Sounds like a professional news podcast host
+2. Covers the most important stories in a engaging way
+3. Is approximately ${wordCount} words
+4. Flows naturally from story to story
+5. Includes relevant context and connections between stories
+6. Uses a warm, informative tone
+7. Starts with "Here's your ${topic} news."
+
+Focus on the most significant developments and present them in an engaging, podcast-style format.`;
+
+    console.log(`Sending ${articles.length} articles to ChatGPT for summarization`);
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "You are a professional news podcaster who creates engaging, conversational summaries of news stories. You have a warm, informative tone and present information in a way that flows naturally like a podcast."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      max_tokens: Math.min(wordCount * 1.5, 1500), // Reduced for faster response
+      temperature: 0.7, // Slightly creative but still factual
+      timeout: 15000, // 15 second timeout for ChatGPT call
+    });
+
+    const summary = completion.choices[0]?.message?.content?.trim();
+    
+    if (!summary) {
+      throw new Error("No summary generated by ChatGPT");
     }
 
-    // Prefer sentences that mention both topic and geo
-    const both = sentences.filter((s) => containsAny(s, topicTokens) && containsAny(s, geoTokens));
-    if (both.length) return both.slice(0, 2).join(" ");
+    console.log(`ChatGPT generated summary: ${summary.length} characters`);
+    return summary;
 
-    // Then sentences that mention topic
-    const topicOnly = sentences.filter((s) => containsAny(s, topicTokens));
-    if (topicOnly.length) return topicOnly.slice(0, 2).join(" ");
-
-    // Then sentences that mention geo (only if local)
-    if (isLocalMode) {
-      const geoOnly = sentences.filter((s) => containsAny(s, geoTokens));
-      if (geoOnly.length) return geoOnly.slice(0, 1).join(" ");
-    }
-
-    // For local mode, be more lenient - use any description or title
-    if (isLocalMode) {
-      if (description && !isRedundant(title, description)) {
-        return sentences[0] || "";
-      }
-      // If no good description, use title as fallback
-      return title || "";
-    }
-
-    // For core topics, allow a general first sentence
-    if (isCoreTopicMode) {
-      const first = sentences[0] || "";
-      return first;
-    }
-
-    // Fallback: if description is redundant with title, return empty to mark irrelevant
-    if (!description || isRedundant(title, description)) return "";
-
-    // Otherwise, return first sentence
-    return sentences[0] || "";
+  } catch (error) {
+    console.error("ChatGPT summarization failed:", error);
+    throw new Error(`Failed to generate AI summary: ${error.message}`);
   }
+}
 
-  // Scale by requested length
-  const maxItems = wordCount >= 1500 ? 12 : wordCount >= 800 ? 8 : 5;
 
-  // Deduplicate (exact-ish)
-  function makeKey(a) {
-    const t = cleanTitle(a.title || "");
-    const d = String(a.description || "").toLowerCase();
-    return (t + "|" + d).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 160);
-  }
-  const seen = new Set();
-  const unique = [];
-  for (const a of articles) {
-    const key = makeKey(a);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(a);
-    if (unique.length >= maxItems) break;
-  }
-  if (unique.length === 0) return `No recent coverage found for ${base}.`;
-
-  // Collapse near-duplicate stories across multiple sources using token overlap clustering
-  const STOPWORDS = new Set([
-    "the","and","for","with","from","that","this","into","over","after","before","about","your","news",
-    "week","today","tonight","update","updates","breaking","live","report","reports","says","as","in","on"
-  ]);
-  function normalizeTokens(str) {
-    return String(str || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .split(/\s+/)
-      .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
-  }
-  function jaccard(aTokens, bTokens) {
-    const aSet = new Set(aTokens);
-    let inter = 0;
-    for (const w of bTokens) if (aSet.has(w)) inter++;
-    const union = new Set([...aTokens, ...bTokens]).size || 1;
-    return inter / union;
-  }
-
-  const clusters = [];
-  const used = new Set();
-  for (let i = 0; i < unique.length; i++) {
-    if (used.has(i)) continue;
-    const a = unique[i];
-    const aTitle = cleanTitle(a.title || "");
-    const aTokens = normalizeTokens(aTitle);
-    const group = [i];
-    used.add(i);
-    for (let j = i + 1; j < unique.length; j++) {
-      if (used.has(j)) continue;
-      const b = unique[j];
-      const bTitle = cleanTitle(b.title || "");
-      const bTokens = normalizeTokens(bTitle);
-      const sim = jaccard(aTokens, bTokens);
-      if (sim >= 0.5) {
-        group.push(j);
-        used.add(j);
-      }
-    }
-    clusters.push(group);
-  }
-
-  // Build sentences: one per cluster, prefer a relevant blurb; for core allow title-only
-  const sentences = [];
-  const opening = `Here’s your ${String(topic || "").trim()} news.`;
-  sentences.push(opening);
-
-  for (const group of clusters) {
-    let bestIdx = -1;
-    let bestScore = -1;
-    let bestBlurb = "";
-    for (const idx of group) {
-      const it = unique[idx];
-      const title = cleanTitle((it.title || "").replace(/[\s\-–—]+$/g, "").trim());
-      const blurb = extractRelevantBlurb(title, it.description || "").trim();
-      if (!blurb && !isCoreTopicMode) continue; // require relevance unless core
-      const score = (blurb ? blurb.length : 0) + (title ? 10 : 0);
-      if (score > bestScore) { bestScore = score; bestIdx = idx; bestBlurb = blurb; }
-    }
-    if (bestIdx === -1) continue;
-
-    const rep = unique[bestIdx];
-    const repTitle = cleanTitle((rep.title || "").replace(/[\s\-–—]+$/g, "").trim());
-    const blurb = bestBlurb; // may be empty for core
-
-    let line = repTitle;
-    if (blurb && !isRedundant(repTitle, blurb)) {
-      line = `${repTitle}. ${blurb}`;
-    }
-    if (!/[\.!?]$/.test(line)) line += ".";
-    sentences.push(line);
-  }
-
-  const maxSentenceCount = wordCount >= 1500 ? sentences.length : wordCount >= 800 ? Math.min(sentences.length, 7) : Math.min(sentences.length, 5);
-  const trimmed = sentences.slice(0, maxSentenceCount);
-
-  const paragraph = trimmed.join(" ");
-  const maxChars = Math.min(Math.max(wordCount * 6, 800), 12000);
-  return paragraph.length > maxChars ? paragraph.slice(0, maxChars - 3) + "..." : paragraph;
+// Uplifting news filter: identify positive, inspiring articles
+function isUpliftingNews(article) {
+  const title = (article.title || "").toLowerCase();
+  const description = (article.description || "").toLowerCase();
+  const text = `${title} ${description}`;
+  
+  // Uplifting keywords - more focused on inspiring, positive content
+  const upliftingKeywords = [
+    "breakthrough", "achievement", "success", "victory", "triumph", "milestone",
+    "innovation", "discovery", "progress", "advancement", "improvement", "growth",
+    "celebration", "record", "award", "recognition", "honor", "accomplishment",
+    "recovery", "healing", "cure", "treatment", "solution", "rescue", "save",
+    "donation", "charity", "volunteer", "help", "support", "community", "kindness",
+    "environmental", "sustainability", "green", "renewable", "clean energy", "conservation",
+    "education", "learning", "scholarship", "graduation", "inspiration", "motivation",
+    "art", "culture", "festival", "celebration", "music", "creativity", "beauty",
+    "sports", "championship", "medal", "gold", "silver", "bronze", "teamwork",
+    "technology", "invention", "startup", "funding", "investment", "entrepreneur",
+    "hope", "optimism", "resilience", "courage", "determination", "perseverance"
+  ];
+  
+  // Negative keywords to avoid
+  const negativeKeywords = [
+    "death", "died", "killed", "murder", "crime", "violence", "attack",
+    "war", "conflict", "battle", "fighting", "bomb", "explosion",
+    "disaster", "accident", "crash", "fire", "flood", "earthquake",
+    "crisis", "emergency", "danger", "threat", "risk", "problem",
+    "scandal", "corruption", "fraud", "theft", "robbery", "arrest",
+    "disease", "pandemic", "outbreak", "infection", "virus", "illness",
+    "recession", "unemployment", "layoff", "bankruptcy", "debt", "loss"
+  ];
+  
+  // Check for negative keywords first
+  const hasNegative = negativeKeywords.some(keyword => text.includes(keyword));
+  if (hasNegative) return false;
+  
+  // Check for uplifting keywords
+  const hasUplifting = upliftingKeywords.some(keyword => text.includes(keyword));
+  return hasUplifting;
 }
 
 // Relevance filter: keep articles that explicitly mention the topic or local geo
@@ -624,10 +566,14 @@ app.post("/api/location", authMiddleware, (req, res) => {
 
 // --- Summarization routes (NewsAPI-backed) ---
 
-// Single summarize: expects { topics: string[], wordCount?: number, location?: string }
+// Single summarize: expects { topics: string[], wordCount?: number, location?: string, goodNewsOnly?: boolean }
 app.post("/api/summarize", async (req, res) => {
+  // Set a longer timeout for this endpoint
+  req.setTimeout(45000); // 45 seconds
+  res.setTimeout(45000);
+  
   try {
-    const { topics = [], wordCount = 200, location = "", geo = null } = req.body || {};
+    const { topics = [], wordCount = 200, location = "", geo = null, goodNewsOnly = false } = req.body || {};
     if (!Array.isArray(topics)) {
       return res.status(400).json({ error: "topics must be an array" });
     }
@@ -636,28 +582,6 @@ app.post("/api/summarize", async (req, res) => {
     const combinedPieces = [];
     const globalCandidates = [];
 
-    function extractRelevantBlurbForSource(topic, geo, a) {
-      const topicLower = String(topic || "").toLowerCase();
-      const isLocal = topicLower === "local";
-      const isCore = CORE_CATEGORIES.has(topicLower);
-      const title = (a.title || "");
-      const desc = (a.description || "");
-      const topicTokens = topicLower.split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
-      const geoTokens = [geo?.city, geo?.region, geo?.country, geo?.countryCode].map((t) => String(t || "").toLowerCase()).filter((t) => t.length >= 3);
-      const sentences = String(desc).replace(/\s+/g, " ").split(/(?<=[\.!?])\s+/);
-      const containsAny = (s, toks) => { const lc = String(s||"").toLowerCase(); return toks.some((t)=>t && lc.includes(t)); };
-      const both = sentences.filter((s) => containsAny(s, topicTokens) && containsAny(s, geoTokens));
-      if (both.length) return both[0];
-      const topicOnly = sentences.filter((s) => containsAny(s, topicTokens));
-      if (topicOnly.length) return topicOnly[0];
-      if (isLocal) {
-        const geoOnly = sentences.filter((s) => containsAny(s, geoTokens));
-        if (geoOnly.length) return geoOnly[0];
-      }
-      // For core topics, allow a general first sentence
-      if (isCore) return sentences[0] || title;
-      return "";
-    }
 
     // Helper to format topics like "A and B" or "A, B, and C"
     function formatTopicList(list, geoData) {
@@ -734,11 +658,10 @@ app.post("/api/summarize", async (req, res) => {
         // Pool of unfiltered candidates for global backfill
         for (let idx = 0; idx < articles.length; idx++) {
           const a = articles[idx];
-          const blurb = extractRelevantBlurbForSource(topic, geoData, a);
           globalCandidates.push({
             id: `${topic}-cand-${idx}-${Date.now()}`,
             title: a.title || "",
-            summary: blurb || (a.title || ""),
+            summary: (a.description || a.title || "").slice(0, 200),
             source: a.source || "",
             url: a.url || "",
             topic,
@@ -749,16 +672,15 @@ app.post("/api/summarize", async (req, res) => {
         const isCore = CORE_CATEGORIES.has(topicLower);
         const isLocal = topicLower === "local";
 
-        // Filter relevant and require a non-empty blurb only for local/non-core
-        const relevant = filterRelevantArticles(topic, geoData, articles, perTopic).filter((a) => {
-          if (isCore) return true;
-          const blurb = extractRelevantBlurbForSource(topic, geoData, a);
-          // For local news, be more lenient - include articles even without perfect blurbs
-          if (isLocal) return true;
-          return !!blurb;
-        });
+        // Filter relevant articles
+        let relevant = filterRelevantArticles(topic, geoData, articles, perTopic);
+        
+        // Apply uplifting news filter if enabled
+        if (goodNewsOnly) {
+          relevant = relevant.filter(isUpliftingNews);
+        }
 
-        const summary = summarizeArticlesSimple(topic, geoData, relevant, wordCount);
+        const summary = await summarizeArticles(topic, geoData, relevant, wordCount);
 
         const perTopicIntro = `Here’s your ${String(topic || "").trim()} news.`;
         const stripped = summary.startsWith(perTopicIntro)
@@ -769,7 +691,7 @@ app.post("/api/summarize", async (req, res) => {
         const sourceItems = relevant.map((a, idx) => ({
           id: `${topic}-${idx}-${Date.now()}`,
           title: a.title || "",
-          summary: extractRelevantBlurbForSource(topic, geoData, a) || (a.description || a.title || ""),
+          summary: (a.description || a.title || "").slice(0, 200), // Simple truncation
           source: a.source || "",
           url: a.url || "",
           topic,
@@ -854,7 +776,29 @@ app.post("/api/summarize", async (req, res) => {
     
     const topicsLabel = formatTopicList(topics, firstGeoData);
     const overallIntro = topicsLabel ? `Here's your ${topicsLabel} news.` : "Here's your news.";
-    const combinedText = [overallIntro, combinedPieces.join(" ")].filter(Boolean).join(" ").trim();
+    
+    // Apply deduplication to combined pieces to remove redundant information
+    const deduplicatedPieces = [];
+    const seenNames = new Set();
+    
+    for (const piece of combinedPieces) {
+      // Extract names from this piece
+      const namePattern = /[A-Z][a-z]+(?:'[A-Z][a-z]+)?(?: [A-Z][a-z]+)*/g;
+      const pieceNames = (piece.match(namePattern) || []).map(n => n.toLowerCase());
+      
+      // Check if this piece shares names with already included pieces
+      const hasSharedNames = pieceNames.some(name => seenNames.has(name));
+      
+      if (!hasSharedNames) {
+        deduplicatedPieces.push(piece);
+        // Add names to seen set
+        pieceNames.forEach(name => seenNames.add(name));
+      } else {
+        console.log(`Removing redundant combined piece: "${piece}" (shares names: ${pieceNames.filter(n => seenNames.has(n)).join(', ')})`);
+      }
+    }
+    
+    const combinedText = [overallIntro, deduplicatedPieces.join(" ")].filter(Boolean).join(" ").trim();
 
     return res.json({
       items,
@@ -869,9 +813,13 @@ app.post("/api/summarize", async (req, res) => {
   }
 });
 
-// Batch summarize: expects { batches: Array<{ topics: string[], wordCount?: number, location?: string }> }
+// Batch summarize: expects { batches: Array<{ topics: string[], wordCount?: number, location?: string, goodNewsOnly?: boolean }> }
 // Returns an array of results in the same shape as /api/summarize for each batch
 app.post("/api/summarize/batch", async (req, res) => {
+  // Set a longer timeout for this endpoint
+  req.setTimeout(60000); // 60 seconds for batch processing
+  res.setTimeout(60000);
+  
   try {
     const { batches = [] } = req.body || {};
     if (!Array.isArray(batches)) {
@@ -884,32 +832,12 @@ app.post("/api/summarize/batch", async (req, res) => {
         const wordCount =
           Number.isFinite(b.wordCount) && b.wordCount > 0 ? b.wordCount : 200;
         const location = typeof b.location === "string" ? b.location : "";
+        const goodNewsOnly = Boolean(b.goodNewsOnly);
 
         const items = [];
         const combinedPieces = [];
         const globalCandidates = [];
 
-        function extractRelevantBlurbForSource(topic, geo, a) {
-          const topicLower = String(topic || "").toLowerCase();
-          const isLocal = topicLower === "local";
-          const isCore = CORE_CATEGORIES.has(topicLower);
-          const title = (a.title || "");
-          const desc = (a.description || "");
-          const topicTokens = topicLower.split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
-          const geoTokens = [geo?.city, geo?.region, geo?.country, geo?.countryCode].map((t) => String(t || "").toLowerCase()).filter((t) => t.length >= 3);
-          const sentences = String(desc).replace(/\s+/g, " ").split(/(?<=[\.!?])\s+/);
-          const containsAny = (s, toks) => { const lc = String(s||"").toLowerCase(); return toks.some((t)=>t && lc.includes(t)); };
-          const both = sentences.filter((s) => containsAny(s, topicTokens) && containsAny(s, geoTokens));
-          if (both.length) return both[0];
-          const topicOnly = sentences.filter((s) => containsAny(s, topicTokens));
-          if (topicOnly.length) return topicOnly[0];
-          if (isLocal) {
-            const geoOnly = sentences.filter((s) => containsAny(s, geoTokens));
-            if (geoOnly.length) return geoOnly[0];
-          }
-          if (CORE_CATEGORIES.has(topicLower)) return sentences[0] || title;
-          return "";
-        }
 
         function formatTopicList(list, geoObj) {
           const names = (list || []).map((t) => {
@@ -938,11 +866,10 @@ app.post("/api/summarize/batch", async (req, res) => {
 
             for (let idx = 0; idx < articles.length; idx++) {
               const a = articles[idx];
-              const blurb = extractRelevantBlurbForSource(topic, { country: location }, a);
               globalCandidates.push({
                 id: `${topic}-cand-${idx}-${Date.now()}`,
                 title: a.title || "",
-                summary: blurb || (a.title || ""),
+                summary: (a.description || a.title || "").slice(0, 200),
                 source: a.source || "",
                 url: a.url || "",
                 topic,
@@ -952,13 +879,14 @@ app.post("/api/summarize/batch", async (req, res) => {
             const topicLower = String(topic || "").toLowerCase();
             const isCore = CORE_CATEGORIES.has(topicLower);
 
-            const relevant = filterRelevantArticles(topic, { country: location }, articles, perTopic).filter((a) => {
-              if (isCore) return true;
-              const blurb = extractRelevantBlurbForSource(topic, { country: location }, a);
-              return !!blurb;
-            });
+            let relevant = filterRelevantArticles(topic, { country: location }, articles, perTopic);
+            
+            // Apply uplifting news filter if enabled
+            if (goodNewsOnly) {
+              relevant = relevant.filter(isUpliftingNews);
+            }
 
-            const summary = summarizeArticlesSimple(topic, { country: location }, relevant, wordCount);
+            const summary = await summarizeArticles(topic, { country: location }, relevant, wordCount);
             const perTopicIntro = `Here’s your ${String(topic || "").trim()} news.`;
             const stripped = summary.startsWith(perTopicIntro)
               ? summary.slice(perTopicIntro.length).trim()
@@ -968,7 +896,7 @@ app.post("/api/summarize/batch", async (req, res) => {
             const sourceItems = relevant.map((a, idx) => ({
               id: `${topic}-${idx}-${Date.now()}`,
               title: a.title || "",
-              summary: extractRelevantBlurbForSource(topic, { country: location }, a) || (a.description || a.title || ""),
+              summary: (a.description || a.title || "").slice(0, 200), // Simple truncation
               source: a.source || "",
               url: a.url || "",
               topic,
@@ -1000,8 +928,30 @@ app.post("/api/summarize/batch", async (req, res) => {
         }
 
         const topicsLabel = formatTopicList(topics, { country: location });
-        const overallIntro = topicsLabel ? `Here’s your ${topicsLabel} news.` : "Here’s your news.";
-        const combinedText = [overallIntro, combinedPieces.join(" ")].filter(Boolean).join(" ").trim();
+        const overallIntro = topicsLabel ? `Here's your ${topicsLabel} news.` : "Here's your news.";
+        
+        // Apply deduplication to combined pieces to remove redundant information
+        const deduplicatedPieces = [];
+        const seenNames = new Set();
+        
+        for (const piece of combinedPieces) {
+          // Extract names from this piece
+          const namePattern = /[A-Z][a-z]+(?:'[A-Z][a-z]+)?(?: [A-Z][a-z]+)*/g;
+          const pieceNames = (piece.match(namePattern) || []).map(n => n.toLowerCase());
+          
+          // Check if this piece shares names with already included pieces
+          const hasSharedNames = pieceNames.some(name => seenNames.has(name));
+          
+          if (!hasSharedNames) {
+            deduplicatedPieces.push(piece);
+            // Add names to seen set
+            pieceNames.forEach(name => seenNames.add(name));
+          } else {
+            console.log(`Removing redundant combined piece: "${piece}" (shares names: ${pieceNames.filter(n => seenNames.has(n)).join(', ')})`);
+          }
+        }
+        
+        const combinedText = [overallIntro, deduplicatedPieces.join(" ")].filter(Boolean).join(" ").trim();
 
         return {
           items,
@@ -1023,7 +973,7 @@ app.post("/api/summarize/batch", async (req, res) => {
 // --- TTS endpoint (OpenAI) ---
 app.post("/api/tts", async (req, res) => {
   try {
-    const { text } = req.body || {};
+    const { text, voice = "alloy", speed = 1.0 } = req.body || {};
     if (!text || typeof text !== "string") {
       return res.status(400).json({ error: "text is required" });
     }
@@ -1031,14 +981,31 @@ app.post("/api/tts", async (req, res) => {
       return res.status(501).json({ error: "TTS not configured" });
     }
 
-    // Sanitize and shorten input for TTS stability
+    // Sanitize input for TTS stability
     const cleaned = String(text)
       .replace(/[\n\r]+/g, " ")
       .replace(/\s+/g, " ")
       .replace(/[\u2018\u2019]/g, "'")
       .replace(/[\u201C\u201D]/g, '"')
-      .trim()
-      .slice(0, 800);
+      .trim();
+    
+    // OpenAI TTS has a 4096 character limit, so we'll use a reasonable limit
+    const maxLength = 4000; // Leave some buffer for safety
+    const finalText = cleaned.length > maxLength ? cleaned.slice(0, maxLength - 3) + "..." : cleaned;
+
+    // Check cache first (using final processed text)
+    const cacheKey = cache.getTTSKey(finalText, voice, speed);
+    const cached = await cache.get(cacheKey);
+    
+    // Temporarily disable cache for voice testing
+    const disableCache = true; // Set to false to re-enable caching
+    
+    if (cached && !disableCache) {
+      console.log(`TTS cache hit for ${finalText.substring(0, 50)}... with voice: ${voice}`);
+      return res.json({ audioUrl: cached.audioUrl });
+    }
+    
+    console.log(`TTS cache miss - generating new audio with voice: ${voice}`);
 
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
@@ -1046,32 +1013,73 @@ app.post("/api/tts", async (req, res) => {
       return await openai.audio.speech.create({
         model,
         voice,
-        input: cleaned,
+        input: finalText,
         format: "mp3",
       });
     }
 
+    // Map voice names to lowercase (OpenAI expects lowercase)
+    const normalizedVoice = String(voice || "alloy").toLowerCase();
+    
+    // Available OpenAI TTS voices
+    const availableVoices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+    const selectedVoice = availableVoices.includes(normalizedVoice) ? normalizedVoice : "alloy";
+    
+    console.log(`TTS Request - Original voice: "${voice}", Normalized: "${normalizedVoice}", Selected: "${selectedVoice}"`);
+    
     let speech;
     let lastErr;
+    
+    // Try the requested voice with different models
     const attempts = [
-      { model: "tts-1", voice: "alloy" },
-      { model: "tts-1", voice: "verse" },
-      { model: "gpt-4o-mini-tts", voice: "alloy" },
+      { model: "tts-1", voice: selectedVoice },
+      { model: "tts-1-hd", voice: selectedVoice },
+      { model: "gpt-4o-mini-tts", voice: selectedVoice },
     ];
-    for (const { model, voice } of attempts) {
+    
+    // Only fall back to alloy if the requested voice completely fails
+    const fallbackAttempts = [
+      { model: "tts-1", voice: "alloy" },
+      { model: "tts-1-hd", voice: "alloy" },
+    ];
+    
+    // Try requested voice first
+    for (const { model, voice: attemptVoice } of attempts) {
       try {
-        speech = await tryModel(model, voice);
-        if (speech) break;
+        console.log(`TTS Attempt - Model: ${model}, Voice: ${attemptVoice}`);
+        speech = await tryModel(model, attemptVoice);
+        if (speech) {
+          console.log(`TTS Success - Model: ${model}, Voice: ${attemptVoice}`);
+          break;
+        }
       } catch (e) {
         lastErr = e;
         try {
           const msg = e?.message || String(e);
-          console.warn(`/api/tts attempt failed (model=${model}, voice=${voice}):`, msg);
+          console.warn(`/api/tts attempt failed (model=${model}, voice=${attemptVoice}):`, msg);
           if (e?.response) {
             const body = await e.response.text().catch(() => "");
             console.warn("OpenAI response:", body);
           }
         } catch {}
+      }
+    }
+    
+    // If requested voice failed, try fallback
+    if (!speech) {
+      console.log(`TTS Fallback - Requested voice "${selectedVoice}" failed, trying alloy`);
+      for (const { model, voice: attemptVoice } of fallbackAttempts) {
+        try {
+          console.log(`TTS Fallback Attempt - Model: ${model}, Voice: ${attemptVoice}`);
+          speech = await tryModel(model, attemptVoice);
+          if (speech) {
+            console.log(`TTS Fallback Success - Model: ${model}, Voice: ${attemptVoice}`);
+            break;
+          }
+        } catch (e) {
+          lastErr = e;
+          console.warn(`/api/tts fallback failed (model=${model}, voice=${attemptVoice}):`, e?.message || String(e));
+        }
       }
     }
 
@@ -1085,6 +1093,10 @@ app.post("/api/tts", async (req, res) => {
     fs.writeFileSync(outPath, buffer);
 
     const audioUrl = `/media/${fileBase}`;
+    
+    // Cache the TTS result for 24 hours
+    await cache.set(cacheKey, { audioUrl }, 86400);
+    
     res.json({ audioUrl });
   } catch (e) {
     try {
