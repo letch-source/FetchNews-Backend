@@ -19,7 +19,19 @@ const authenticateToken = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, JWT_SECRET);
-    const user = await User.findById(decoded.userId);
+    
+    // Check if database is available
+    const mongoose = require('mongoose');
+    let user;
+    
+    if (mongoose.connection.readyState === 1) {
+      const User = require('../models/User');
+      user = await User.findById(decoded.userId);
+    } else {
+      // Use fallback authentication
+      const fallbackAuth = require('../utils/fallbackAuth');
+      user = await fallbackAuth.findUserById(decoded.userId);
+    }
     
     if (!user) {
       return res.status(401).json({ error: 'Invalid token' });
@@ -46,7 +58,20 @@ const optionalAuth = async (req, res, next) => {
 
     if (token) {
       const decoded = jwt.verify(token, JWT_SECRET);
-      const user = await User.findById(decoded.userId);
+      
+      // Check if database is available
+      const mongoose = require('mongoose');
+      let user;
+      
+      if (mongoose.connection.readyState === 1) {
+        const User = require('../models/User');
+        user = await User.findById(decoded.userId);
+      } else {
+        // Use fallback authentication
+        const fallbackAuth = require('../utils/fallbackAuth');
+        user = await fallbackAuth.findUserById(decoded.userId);
+      }
+      
       if (user) {
         req.user = user;
       }

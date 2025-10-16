@@ -1,8 +1,14 @@
 const express = require('express');
-const User = require('../models/User');
+const mongoose = require('mongoose');
 const { generateToken, authenticateToken } = require('../middleware/auth');
+const fallbackAuth = require('../utils/fallbackAuth');
 
 const router = express.Router();
+
+// Check if database is available
+const isDatabaseAvailable = () => {
+  return mongoose.connection.readyState === 1;
+};
 
 // Register new user
 router.post('/register', async (req, res) => {
@@ -18,15 +24,28 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ error: 'User already exists' });
-    }
+    let user;
+    if (isDatabaseAvailable()) {
+      const User = require('../models/User');
+      
+      // Check if user already exists
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        return res.status(400).json({ error: 'User already exists' });
+      }
 
-    // Create new user
-    const user = new User({ email, password });
-    await user.save();
+      // Create new user
+      user = new User({ email, password });
+      await user.save();
+    } else {
+      // Use fallback authentication
+      const existingUser = await fallbackAuth.findUserByEmail(email);
+      if (existingUser) {
+        return res.status(400).json({ error: 'User already exists' });
+      }
+      
+      user = await fallbackAuth.createUser(email, password);
+    }
 
     // Generate token
     const token = generateToken(user._id);
@@ -57,14 +76,29 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    // Find user
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+    let user, isMatch;
+    if (isDatabaseAvailable()) {
+      const User = require('../models/User');
+      
+      // Find user
+      user = await User.findOne({ email });
+      if (!user) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+
+      // Check password
+      isMatch = await user.comparePassword(password);
+    } else {
+      // Use fallback authentication
+      user = await fallbackAuth.findUserByEmail(email);
+      if (!user) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+
+      // Check password
+      isMatch = await fallbackAuth.comparePassword(user, password);
     }
 
-    // Check password
-    const isMatch = await user.comparePassword(password);
     if (!isMatch) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -114,7 +148,11 @@ router.post('/subscription', authenticateToken, async (req, res) => {
     const { isPremium, subscriptionId, expiresAt } = req.body;
     const user = req.user;
 
-    await user.updateSubscription(isPremium, subscriptionId, expiresAt);
+    if (isDatabaseAvailable()) {
+      await user.updateSubscription(isPremium, subscriptionId, expiresAt);
+    } else {
+      await fallbackAuth.updateSubscription(user, isPremium, subscriptionId, expiresAt);
+    }
 
     res.json({
       message: 'Subscription updated successfully',
@@ -136,7 +174,13 @@ router.post('/subscription', authenticateToken, async (req, res) => {
 router.get('/usage', authenticateToken, async (req, res) => {
   try {
     const user = req.user;
-    const usageCheck = user.canFetchNews();
+    let usageCheck;
+    
+    if (isDatabaseAvailable()) {
+      usageCheck = user.canFetchNews();
+    } else {
+      usageCheck = fallbackAuth.canFetchNews(user);
+    }
 
     res.json({
       userId: user._id,
@@ -149,6 +193,47 @@ router.get('/usage', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Usage check error:', error);
     res.status(500).json({ error: 'Failed to check usage' });
+  }
+});
+
+// Admin endpoint to manually set premium status (for testing)
+router.post('/admin/set-premium', async (req, res) => {
+  try {
+    const { email, isPremium } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+    
+    let user;
+    if (isDatabaseAvailable()) {
+      const User = require('../models/User');
+      user = await User.findOne({ email });
+      if (user) {
+        await user.updateSubscription(isPremium, 'admin-test', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)); // 30 days
+      }
+    } else {
+      user = await fallbackAuth.findUserByEmail(email);
+      if (user) {
+        await fallbackAuth.updateSubscription(user, isPremium, 'admin-test', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
+      }
+    }
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json({
+      message: `User ${isPremium ? 'upgraded to' : 'downgraded from'} premium`,
+      user: {
+        id: user._id,
+        email: user.email,
+        isPremium: user.isPremium
+      }
+    });
+  } catch (error) {
+    console.error('Admin premium update error:', error);
+    res.status(500).json({ error: 'Failed to update premium status' });
   }
 });
 

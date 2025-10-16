@@ -14,6 +14,7 @@ const cache = require("./cache");
 const connectDB = require("../config/database");
 const { authenticateToken, optionalAuth } = require("../middleware/auth");
 const authRoutes = require("../routes/auth");
+const fallbackAuth = require("../utils/fallbackAuth");
 
 // Connect to MongoDB
 connectDB();
@@ -630,7 +631,12 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
   try {
     // Check user usage limits (if authenticated)
     if (req.user) {
-      const usageCheck = req.user.canFetchNews();
+      let usageCheck;
+      if (mongoose.connection.readyState === 1) {
+        usageCheck = req.user.canFetchNews();
+      } else {
+        usageCheck = fallbackAuth.canFetchNews(req.user);
+      }
       
       if (!usageCheck.allowed) {
         return res.status(429).json({
@@ -858,7 +864,11 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
 
     // Increment user usage for successful request (if authenticated)
     if (req.user) {
-      await req.user.incrementUsage();
+      if (mongoose.connection.readyState === 1) {
+        await req.user.incrementUsage();
+      } else {
+        await fallbackAuth.incrementUsage(req.user);
+      }
     }
     
     return res.json({
@@ -884,7 +894,12 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
   try {
     // Check user usage limits (if authenticated)
     if (req.user) {
-      const usageCheck = req.user.canFetchNews();
+      let usageCheck;
+      if (mongoose.connection.readyState === 1) {
+        usageCheck = req.user.canFetchNews();
+      } else {
+        usageCheck = fallbackAuth.canFetchNews(req.user);
+      }
       
       if (!usageCheck.allowed) {
         return res.status(429).json({
@@ -1020,7 +1035,11 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
 
     // Increment user usage for successful request (if authenticated)
     if (req.user) {
-      await req.user.incrementUsage();
+      if (mongoose.connection.readyState === 1) {
+        await req.user.incrementUsage();
+      } else {
+        await fallbackAuth.incrementUsage(req.user);
+      }
     }
     
     res.json({ results, batches: results });
