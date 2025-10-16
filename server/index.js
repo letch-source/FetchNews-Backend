@@ -24,6 +24,10 @@ const fallbackAuth = require("../utils/fallbackAuth");
 connectDB();
 
 const app = express();
+
+// Trust proxy for Render.com deployment
+app.set('trust proxy', 1);
+
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 
