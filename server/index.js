@@ -238,7 +238,8 @@ async function summarizeArticles(topic, geo, articles, wordCount) {
 
   // Check if OpenAI API key is available
   if (!OPENAI_API_KEY) {
-    throw new Error("OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.");
+    console.warn("OpenAI API key not configured, using simple fallback");
+    return `Here's your ${topic} news. ${articles.slice(0, 3).map(a => a.title).join('. ')}.`;
   }
 
   try {
@@ -300,7 +301,10 @@ Focus on the most significant developments and present them in an engaging, podc
 
   } catch (error) {
     console.error("ChatGPT summarization failed:", error);
-    throw new Error(`Failed to generate AI summary: ${error.message}`);
+    console.log("Falling back to simple summary");
+    // Simple fallback: just use article titles
+    const titles = articles.slice(0, 3).map(a => a.title || "").filter(Boolean);
+    return `Here's your ${topic} news. ${titles.join('. ')}.`;
   }
 }
 

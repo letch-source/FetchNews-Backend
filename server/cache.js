@@ -5,6 +5,7 @@ class CacheManager {
   constructor() {
     this.client = null;
     this.isConnected = false;
+    this.redisErrorLogged = false;
     this.fallbackCache = new Map(); // In-memory fallback
     this.init();
   }
@@ -21,7 +22,10 @@ class CacheManager {
       });
 
       this.client.on('error', (err) => {
-        console.warn('Redis connection error, using fallback cache:', err.message);
+        if (!this.redisErrorLogged) {
+          console.warn('Redis not available, using in-memory cache fallback');
+          this.redisErrorLogged = true; // Only log once
+        }
         this.isConnected = false;
       });
 
@@ -32,7 +36,10 @@ class CacheManager {
 
       await this.client.connect();
     } catch (error) {
-      console.warn('Redis not available, using in-memory cache:', error.message);
+      if (!this.redisErrorLogged) {
+        console.warn('Redis not available, using in-memory cache fallback');
+        this.redisErrorLogged = true;
+      }
       this.isConnected = false;
     }
   }
@@ -47,7 +54,7 @@ class CacheManager {
         return this.fallbackCache.get(key) || null;
       }
     } catch (error) {
-      console.warn('Cache get error:', error.message);
+      // Silently fall back to null for cache misses
       return null;
     }
   }
@@ -64,7 +71,7 @@ class CacheManager {
         }, ttlSeconds * 1000);
       }
     } catch (error) {
-      console.warn('Cache set error:', error.message);
+      // Silently ignore cache set errors
     }
   }
 
@@ -76,7 +83,7 @@ class CacheManager {
         this.fallbackCache.delete(key);
       }
     } catch (error) {
-      console.warn('Cache delete error:', error.message);
+      // Silently ignore cache delete errors
     }
   }
 
