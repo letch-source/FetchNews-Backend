@@ -896,8 +896,13 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       },
     });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "summarize failed" });
+    console.error("Summarize endpoint error:", e);
+    console.error("Error stack:", e.stack);
+    res.status(500).json({ 
+      error: "summarize failed", 
+      details: e.message,
+      type: e.constructor.name
+    });
   }
 });
 
@@ -1061,8 +1066,13 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
     
     res.json({ results, batches: results });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "batch summarize failed" });
+    console.error("Batch summarize endpoint error:", e);
+    console.error("Error stack:", e.stack);
+    res.status(500).json({ 
+      error: "batch summarize failed", 
+      details: e.message,
+      type: e.constructor.name
+    });
   }
 });
 

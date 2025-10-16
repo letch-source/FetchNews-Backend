@@ -17,7 +17,13 @@ router.get('/', authenticateToken, async (req, res) => {
       summaryHistory = fallbackAuth.getSummaryHistory(user);
     }
     
-    res.json({ summaryHistory });
+    // Convert timestamps to ISO strings for frontend compatibility
+    const formattedHistory = summaryHistory.map(entry => ({
+      ...entry.toObject ? entry.toObject() : entry,
+      timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp
+    }));
+    
+    res.json({ summaryHistory: formattedHistory });
   } catch (error) {
     console.error('Get summary history error:', error);
     res.status(500).json({ error: 'Failed to get summary history' });
@@ -41,9 +47,15 @@ router.post('/', authenticateToken, async (req, res) => {
       summaryHistory = await fallbackAuth.addSummaryToHistory(user, summaryData);
     }
     
+    // Convert timestamps to ISO strings for frontend compatibility
+    const formattedHistory = summaryHistory.map(entry => ({
+      ...entry.toObject ? entry.toObject() : entry,
+      timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp
+    }));
+    
     res.json({ 
       message: 'Summary added to history successfully',
-      summaryHistory 
+      summaryHistory: formattedHistory
     });
   } catch (error) {
     console.error('Add summary to history error:', error);
