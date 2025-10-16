@@ -11,6 +11,12 @@ const fs = require("fs");
 const OpenAI = require("openai");
 const rateLimit = require("express-rate-limit");
 const cache = require("./cache");
+const connectDB = require("../config/database");
+const { authenticateToken, optionalAuth } = require("../middleware/auth");
+const authRoutes = require("../routes/auth");
+
+// Connect to MongoDB
+connectDB();
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -25,6 +31,9 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 app.use("/api/", limiter);
+
+// Authentication routes
+app.use("/api/auth", authRoutes);
 
 // --- Config & helpers ---
 const PORT = process.env.PORT || 3001;
@@ -613,12 +622,26 @@ app.post("/api/location", authMiddleware, (req, res) => {
 // --- Summarization routes (NewsAPI-backed) ---
 
 // Single summarize: expects { topics: string[], wordCount?: number, location?: string, goodNewsOnly?: boolean }
-app.post("/api/summarize", async (req, res) => {
+app.post("/api/summarize", optionalAuth, async (req, res) => {
   // Set a longer timeout for this endpoint
   req.setTimeout(45000); // 45 seconds
   res.setTimeout(45000);
   
   try {
+    // Check user usage limits (if authenticated)
+    if (req.user) {
+      const usageCheck = req.user.canFetchNews();
+      
+      if (!usageCheck.allowed) {
+        return res.status(429).json({
+          error: "Daily limit reached",
+          message: "You've reached your daily limit of 1 summary. Upgrade to Premium for unlimited access.",
+          dailyCount: usageCheck.dailyCount,
+          limit: 1
+        });
+      }
+    }
+    
     const { topics = [], wordCount = 200, location = "", geo = null, goodNewsOnly = false } = req.body || {};
     if (!Array.isArray(topics)) {
       return res.status(400).json({ error: "topics must be an array" });
@@ -833,6 +856,11 @@ app.post("/api/summarize", async (req, res) => {
       combinedText = combinedPieces.join(" ").trim();
     }
 
+    // Increment user usage for successful request (if authenticated)
+    if (req.user) {
+      await req.user.incrementUsage();
+    }
+    
     return res.json({
       items,
       combined: {
@@ -848,12 +876,26 @@ app.post("/api/summarize", async (req, res) => {
 
 // Batch summarize: expects { batches: Array<{ topics: string[], wordCount?: number, location?: string, goodNewsOnly?: boolean }> }
 // Returns an array of results in the same shape as /api/summarize for each batch
-app.post("/api/summarize/batch", async (req, res) => {
+app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
   // Set a longer timeout for this endpoint
   req.setTimeout(60000); // 60 seconds for batch processing
   res.setTimeout(60000);
   
   try {
+    // Check user usage limits (if authenticated)
+    if (req.user) {
+      const usageCheck = req.user.canFetchNews();
+      
+      if (!usageCheck.allowed) {
+        return res.status(429).json({
+          error: "Daily limit reached",
+          message: "You've reached your daily limit of 1 summary. Upgrade to Premium for unlimited access.",
+          dailyCount: usageCheck.dailyCount,
+          limit: 1
+        });
+      }
+    }
+    
     const { batches = [] } = req.body || {};
     if (!Array.isArray(batches)) {
       return res.status(400).json({ error: "batches must be an array" });
@@ -976,12 +1018,19 @@ app.post("/api/summarize/batch", async (req, res) => {
       })
     );
 
+    // Increment user usage for successful request (if authenticated)
+    if (req.user) {
+      await req.user.incrementUsage();
+    }
+    
     res.json({ results, batches: results });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "batch summarize failed" });
   }
 });
+
+// Note: Usage endpoint is now handled by /api/auth/usage in auth routes
 
 // --- TTS endpoint (OpenAI) ---
 app.post("/api/tts", async (req, res) => {
