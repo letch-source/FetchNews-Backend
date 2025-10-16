@@ -11,6 +11,7 @@ const fs = require("fs");
 const OpenAI = require("openai");
 const rateLimit = require("express-rate-limit");
 const cache = require("./cache");
+const mongoose = require("mongoose");
 const connectDB = require("../config/database");
 const { authenticateToken, optionalAuth } = require("../middleware/auth");
 const authRoutes = require("../routes/auth");
