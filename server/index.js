@@ -281,32 +281,37 @@ async function summarizeArticles(topic, geo, articles, wordCount, goodNewsOnly =
   try {
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
     
-    // Prepare articles for ChatGPT (limit to 5 articles for faster processing)
-    const articleTexts = articles.slice(0, 5).map((article, index) => {
-      const title = (article.title || "").replace(/[\s\-–—]+$/g, "").trim();
-      const description = (article.description || "").trim().slice(0, 200); // Limit description length
+    // Optimized article preparation for ChatGPT (limit to 4 articles for faster processing)
+    const articleTexts = articles.slice(0, 4).map((article, index) => {
+      // Optimized text cleaning - combine operations for better performance
+      const title = (article.title || "")
+        .replace(/[\s\-–—]+$/g, "") // Remove trailing dashes/spaces
+        .replace(/\s+/g, " ") // Normalize whitespace
+        .trim();
+      
+      // Optimized description processing
+      const description = (article.description || "")
+        .replace(/\s+/g, " ") // Normalize whitespace first
+        .trim()
+        .slice(0, 150); // Reduced from 200 to 150 for faster processing
+      
       const source = article.source || "Unknown";
       return `${index + 1}. **${title}** (${source})\n${description}`;
     }).join("\n\n");
 
-    // Create a podcaster-style prompt
+    // Optimized podcaster-style prompt for faster processing
     const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
-    const prompt = `You are a professional news podcaster creating a ${wordCount}-word summary of ${upliftingPrefix}${topic} news. 
+    const prompt = `Create a ${wordCount}-word ${upliftingPrefix}${topic} news summary in podcast style.
 
-Here are the latest articles:
-
+Articles:
 ${articleTexts}
 
-Please create a natural, conversational summary that:
-1. Sounds like a professional news podcast host
-2. Covers the most important stories in an engaging way
-3. Is approximately ${wordCount} words
-4. Flows naturally from story to story
-5. Includes relevant context and connections between stories
-6. Uses a warm, informative tone
-7. Starts with "Here's your ${upliftingPrefix}${topic} news."
-
-Focus on the most significant developments and present them in an engaging, podcast-style format.`;
+Requirements:
+- Start with "Here's your ${upliftingPrefix}${topic} news."
+- Cover key stories in conversational tone
+- Connect related stories naturally
+- Focus on most significant developments
+- Target ${wordCount} words exactly`;
 
     console.log(`Sending ${articles.length} articles to ChatGPT for summarization`);
 
@@ -315,16 +320,16 @@ Focus on the most significant developments and present them in an engaging, podc
       messages: [
         {
           role: "system",
-          content: "You are a professional news podcaster who creates engaging, conversational summaries of news stories. You have a warm, informative tone and present information in a way that flows naturally like a podcast."
+          content: "You are a professional news podcaster. Create engaging, conversational summaries with a warm, informative tone."
         },
         {
           role: "user",
           content: prompt
         }
       ],
-      max_tokens: Math.min(wordCount * 1.5, 1500), // Reduced for faster response
-      temperature: 0.7, // Slightly creative but still factual
-      timeout: 15000, // 15 second timeout for ChatGPT call
+      max_tokens: Math.min(wordCount * 1.2, 1200), // Further reduced for faster response
+      temperature: 0.6, // Reduced for more consistent, faster responses
+      timeout: 12000, // Reduced timeout for faster failure detection
     });
 
     const summary = completion.choices[0]?.message?.content?.trim();
@@ -697,13 +702,16 @@ app.post("/api/summarize", async (req, res) => {
         
         const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic);
 
-        // Pool of unfiltered candidates for global backfill
+        // Optimized pool of unfiltered candidates for global backfill
         for (let idx = 0; idx < articles.length; idx++) {
           const a = articles[idx];
           globalCandidates.push({
             id: `${topic}-cand-${idx}-${Date.now()}`,
             title: a.title || "",
-            summary: (a.description || a.title || "").slice(0, 200),
+            summary: (a.description || a.title || "")
+              .replace(/\s+/g, " ") // Normalize whitespace
+              .trim()
+              .slice(0, 150), // Reduced for better performance
             source: a.source || "",
             url: a.url || "",
             topic,
@@ -730,7 +738,10 @@ app.post("/api/summarize", async (req, res) => {
         const sourceItems = relevant.map((a, idx) => ({
           id: `${topic}-${idx}-${Date.now()}`,
           title: a.title || "",
-          summary: (a.description || a.title || "").slice(0, 200), // Simple truncation
+          summary: (a.description || a.title || "")
+            .replace(/\s+/g, " ") // Normalize whitespace
+            .trim()
+            .slice(0, 180), // Optimized truncation length
           source: a.source || "",
           url: a.url || "",
           topic,
@@ -892,7 +903,10 @@ app.post("/api/summarize/batch", async (req, res) => {
               globalCandidates.push({
                 id: `${topic}-cand-${idx}-${Date.now()}`,
                 title: a.title || "",
-                summary: (a.description || a.title || "").slice(0, 200),
+                summary: (a.description || a.title || "")
+                  .replace(/\s+/g, " ") // Normalize whitespace
+                  .trim()
+                  .slice(0, 150), // Reduced for better performance
                 source: a.source || "",
                 url: a.url || "",
                 topic,
@@ -916,7 +930,10 @@ app.post("/api/summarize/batch", async (req, res) => {
             const sourceItems = relevant.map((a, idx) => ({
               id: `${topic}-${idx}-${Date.now()}`,
               title: a.title || "",
-              summary: (a.description || a.title || "").slice(0, 200), // Simple truncation
+              summary: (a.description || a.title || "")
+                .replace(/\s+/g, " ") // Normalize whitespace
+                .trim()
+                .slice(0, 180), // Optimized truncation length
               source: a.source || "",
               url: a.url || "",
               topic,
@@ -978,12 +995,18 @@ app.post("/api/tts", async (req, res) => {
       return res.status(501).json({ error: "TTS not configured" });
     }
 
-    // Sanitize input for TTS stability
+    // Optimized text sanitization for TTS stability
     const cleaned = String(text)
-      .replace(/[\n\r]+/g, " ")
-      .replace(/\s+/g, " ")
-      .replace(/[\u2018\u2019]/g, "'")
-      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/[\n\r\u2018\u2019\u201C\u201D]/g, (match) => {
+        // Single pass replacement for better performance
+        switch(match) {
+          case '\n': case '\r': return ' ';
+          case '\u2018': case '\u2019': return "'";
+          case '\u201C': case '\u201D': return '"';
+          default: return match;
+        }
+      })
+      .replace(/\s+/g, " ") // Normalize whitespace
       .trim();
     
     // OpenAI TTS has a 4096 character limit, so we'll use a reasonable limit
