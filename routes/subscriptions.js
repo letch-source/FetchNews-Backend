@@ -49,58 +49,56 @@ router.post('/validate-receipt', authenticateToken, async (req, res) => {
   }
 });
 
-// Simulate Apple receipt validation
-async function validateReceiptWithApple(receipt, transactionID) {
-  // In production, you would:
-  // 1. Send receipt to Apple's validation servers
-  // 2. Verify the receipt signature
-  // 3. Check transaction status
-  // 4. Validate subscription status
-  
-  // For now, we'll accept all receipts (for testing)
-  // In production, implement proper Apple validation:
-  
-  /*
-  const https = require('https');
-  
-  const validationData = {
-    'receipt-data': receipt,
-    'password': process.env.APPLE_SHARED_SECRET, // Your App Store Connect shared secret
-    'exclude-old-transactions': true
-  };
-  
-  const options = {
-    hostname: 'buy.itunes.apple.com',
-    port: 443,
-    path: '/verifyReceipt',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
+// Validate StoreKit 2 JWS receipt
+async function validateReceiptWithApple(jwsReceipt, transactionID) {
+  try {
+    // For StoreKit 2, we need to validate JWS (JSON Web Signature) receipts
+    // This is different from the old base64 receipt validation
+    
+    // Parse the JWS receipt to extract transaction data
+    const parts = jwsReceipt.split('.');
+    if (parts.length !== 3) {
+      console.error('Invalid JWS format');
+      return false;
     }
-  };
-  
-  return new Promise((resolve, reject) => {
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', (chunk) => data += chunk);
-      res.on('end', () => {
-        try {
-          const response = JSON.parse(data);
-          resolve(response.status === 0); // 0 means valid
-        } catch (error) {
-          reject(error);
-        }
-      });
+    
+    // Decode the payload (middle part)
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+    
+    // Verify the transaction ID matches
+    if (payload.transactionId !== transactionID) {
+      console.error('Transaction ID mismatch');
+      return false;
+    }
+    
+    // Check if the transaction is valid
+    if (payload.type !== 'Auto-Renewable Subscription') {
+      console.error('Invalid transaction type');
+      return false;
+    }
+    
+    // Check if the subscription is still active
+    const expiresAt = new Date(payload.expiresDate);
+    if (expiresAt <= new Date()) {
+      console.error('Subscription expired');
+      return false;
+    }
+    
+    // For production, you should also verify the JWS signature
+    // using Apple's public keys, but for testing we'll accept valid format
+    
+    console.log('JWS receipt validated successfully:', {
+      transactionId: payload.transactionId,
+      productId: payload.productId,
+      expiresDate: payload.expiresDate
     });
     
-    req.on('error', reject);
-    req.write(JSON.stringify(validationData));
-    req.end();
-  });
-  */
-  
-  // For testing, always return true
-  return true;
+    return true;
+    
+  } catch (error) {
+    console.error('JWS receipt validation error:', error);
+    return false;
+  }
 }
 
 module.exports = router;
