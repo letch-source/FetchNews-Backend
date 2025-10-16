@@ -151,8 +151,43 @@ async function fetchArticlesForTopic(topic, geo, maxResults) {
   const normalizedTopic = String(topic || "").toLowerCase();
   const useCategory = CORE_CATEGORIES.has(normalizedTopic) && normalizedTopic !== "world";
   const isLocal = normalizedTopic === "local";
+  const isGeneral = normalizedTopic === "general";
 
-  if (isLocal) {
+  if (isGeneral) {
+    // For "general" topic, fetch one article from each of the other 7 base topics
+    const otherTopics = ["business", "entertainment", "health", "science", "sports", "technology", "world"];
+    const promises = otherTopics.map(async (category) => {
+      try {
+        if (category === "world") {
+          // World is not a NewsAPI category, use everything search
+          const worldArticles = await fetchArticlesEverything(["world"], 1);
+          return worldArticles.slice(0, 1);
+        } else {
+          // Use category-based search for other topics
+          const categoryArticles = await fetchTopHeadlinesByCategory(category, countryCode, 1);
+          return categoryArticles.slice(0, 1);
+        }
+      } catch (error) {
+        console.error(`Error fetching ${category} articles for general topic:`, error);
+        return [];
+      }
+    });
+    
+    try {
+      const results = await Promise.allSettled(promises);
+      articles = results
+        .filter(result => result.status === 'fulfilled')
+        .flatMap(result => result.value)
+        .filter(article => article && article.title); // Filter out empty results
+      
+      console.log(`General topic: fetched ${articles.length} articles from ${otherTopics.length} categories`);
+      console.log(`General topic articles:`, articles.map(a => `${a.title} (${a.source})`));
+    } catch (error) {
+      console.error('Error in parallel general topic fetch:', error);
+      // Fallback to regular general category
+      articles = await fetchTopHeadlinesByCategory("general", countryCode, pageSize);
+    }
+  } else if (isLocal) {
     // Parallel API calls for better performance
     const promises = [];
     
@@ -224,7 +259,7 @@ async function fetchArticlesForTopic(topic, geo, maxResults) {
   return result;
 }
 
-async function summarizeArticles(topic, geo, articles, wordCount) {
+async function summarizeArticles(topic, geo, articles, wordCount, goodNewsOnly = false) {
   const baseParts = [String(topic || "").trim()];
   if (geo?.region) baseParts.push(geo.region);
   if (geo?.country || geo?.countryCode) baseParts.push(geo.country || geo.countryCode);
@@ -239,7 +274,8 @@ async function summarizeArticles(topic, geo, articles, wordCount) {
   // Check if OpenAI API key is available
   if (!OPENAI_API_KEY) {
     console.warn("OpenAI API key not configured, using simple fallback");
-    return `Here's your ${topic} news. ${articles.slice(0, 3).map(a => a.title).join('. ')}.`;
+    const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
+    return `Here's your ${upliftingPrefix}${topic} news. ${articles.slice(0, 3).map(a => a.title).join('. ')}.`;
   }
 
   try {
@@ -254,7 +290,8 @@ async function summarizeArticles(topic, geo, articles, wordCount) {
     }).join("\n\n");
 
     // Create a podcaster-style prompt
-    const prompt = `You are a professional news podcaster creating a ${wordCount}-word summary of ${topic} news. 
+    const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
+    const prompt = `You are a professional news podcaster creating a ${wordCount}-word summary of ${upliftingPrefix}${topic} news. 
 
 Here are the latest articles:
 
@@ -262,12 +299,12 @@ ${articleTexts}
 
 Please create a natural, conversational summary that:
 1. Sounds like a professional news podcast host
-2. Covers the most important stories in a engaging way
+2. Covers the most important stories in an engaging way
 3. Is approximately ${wordCount} words
 4. Flows naturally from story to story
 5. Includes relevant context and connections between stories
 6. Uses a warm, informative tone
-7. Starts with "Here's your ${topic} news."
+7. Starts with "Here's your ${upliftingPrefix}${topic} news."
 
 Focus on the most significant developments and present them in an engaging, podcast-style format.`;
 
@@ -304,7 +341,8 @@ Focus on the most significant developments and present them in an engaging, podc
     console.log("Falling back to simple summary");
     // Simple fallback: just use article titles
     const titles = articles.slice(0, 3).map(a => a.title || "").filter(Boolean);
-    return `Here's your ${topic} news. ${titles.join('. ')}.`;
+    const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
+    return `Here's your ${upliftingPrefix}${topic} news. ${titles.join('. ')}.`;
   }
 }
 
@@ -684,13 +722,10 @@ app.post("/api/summarize", async (req, res) => {
           relevant = relevant.filter(isUpliftingNews);
         }
 
-        const summary = await summarizeArticles(topic, geoData, relevant, wordCount);
+        const summary = await summarizeArticles(topic, geoData, relevant, wordCount, goodNewsOnly);
 
-        const perTopicIntro = `Here’s your ${String(topic || "").trim()} news.`;
-        const stripped = summary.startsWith(perTopicIntro)
-          ? summary.slice(perTopicIntro.length).trim()
-          : summary;
-        if (stripped) combinedPieces.push(stripped);
+        // For single topic, use the summary as-is (ChatGPT already includes the intro)
+        if (summary) combinedPieces.push(summary);
 
         const sourceItems = relevant.map((a, idx) => ({
           id: `${topic}-${idx}-${Date.now()}`,
@@ -778,31 +813,15 @@ app.post("/api/summarize", async (req, res) => {
       return null;
     })() : null;
     
-    const topicsLabel = formatTopicList(topics, firstGeoData);
-    const overallIntro = topicsLabel ? `Here's your ${topicsLabel} news.` : "Here's your news.";
-    
-    // Apply deduplication to combined pieces to remove redundant information
-    const deduplicatedPieces = [];
-    const seenNames = new Set();
-    
-    for (const piece of combinedPieces) {
-      // Extract names from this piece
-      const namePattern = /[A-Z][a-z]+(?:'[A-Z][a-z]+)?(?: [A-Z][a-z]+)*/g;
-      const pieceNames = (piece.match(namePattern) || []).map(n => n.toLowerCase());
-      
-      // Check if this piece shares names with already included pieces
-      const hasSharedNames = pieceNames.some(name => seenNames.has(name));
-      
-      if (!hasSharedNames) {
-        deduplicatedPieces.push(piece);
-        // Add names to seen set
-        pieceNames.forEach(name => seenNames.add(name));
-      } else {
-        console.log(`Removing redundant combined piece: "${piece}" (shares names: ${pieceNames.filter(n => seenNames.has(n)).join(', ')})`);
-      }
+    // For single topic, just use the summary as-is (no overall intro needed)
+    let combinedText;
+    if (topics.length === 1) {
+      combinedText = combinedPieces.join(" ").trim();
+    } else {
+      // For multi-topic, create separate segments
+      const topicsLabel = formatTopicList(topics, firstGeoData);
+      combinedText = combinedPieces.join(" ").trim();
     }
-    
-    const combinedText = [overallIntro, deduplicatedPieces.join(" ")].filter(Boolean).join(" ").trim();
 
     return res.json({
       items,
@@ -890,12 +909,9 @@ app.post("/api/summarize/batch", async (req, res) => {
               relevant = relevant.filter(isUpliftingNews);
             }
 
-            const summary = await summarizeArticles(topic, { country: location }, relevant, wordCount);
-            const perTopicIntro = `Here’s your ${String(topic || "").trim()} news.`;
-            const stripped = summary.startsWith(perTopicIntro)
-              ? summary.slice(perTopicIntro.length).trim()
-              : summary;
-            if (stripped) combinedPieces.push(stripped);
+            const summary = await summarizeArticles(topic, { country: location }, relevant, wordCount, goodNewsOnly);
+            // For multi-topic, each summary already includes its own intro, so use as-is
+            if (summary) combinedPieces.push(summary);
 
             const sourceItems = relevant.map((a, idx) => ({
               id: `${topic}-${idx}-${Date.now()}`,
@@ -931,31 +947,8 @@ app.post("/api/summarize/batch", async (req, res) => {
           }
         }
 
-        const topicsLabel = formatTopicList(topics, { country: location });
-        const overallIntro = topicsLabel ? `Here's your ${topicsLabel} news.` : "Here's your news.";
-        
-        // Apply deduplication to combined pieces to remove redundant information
-        const deduplicatedPieces = [];
-        const seenNames = new Set();
-        
-        for (const piece of combinedPieces) {
-          // Extract names from this piece
-          const namePattern = /[A-Z][a-z]+(?:'[A-Z][a-z]+)?(?: [A-Z][a-z]+)*/g;
-          const pieceNames = (piece.match(namePattern) || []).map(n => n.toLowerCase());
-          
-          // Check if this piece shares names with already included pieces
-          const hasSharedNames = pieceNames.some(name => seenNames.has(name));
-          
-          if (!hasSharedNames) {
-            deduplicatedPieces.push(piece);
-            // Add names to seen set
-            pieceNames.forEach(name => seenNames.add(name));
-          } else {
-            console.log(`Removing redundant combined piece: "${piece}" (shares names: ${pieceNames.filter(n => seenNames.has(n)).join(', ')})`);
-          }
-        }
-        
-        const combinedText = [overallIntro, deduplicatedPieces.join(" ")].filter(Boolean).join(" ").trim();
+        // For multi-topic, each piece already has its own intro, so just join them
+        const combinedText = combinedPieces.join(" ").trim();
 
         return {
           items,
