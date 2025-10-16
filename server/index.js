@@ -15,6 +15,9 @@ const mongoose = require("mongoose");
 const connectDB = require("../config/database");
 const { authenticateToken, optionalAuth } = require("../middleware/auth");
 const authRoutes = require("../routes/auth");
+const subscriptionRoutes = require("../routes/subscriptions");
+const customTopicsRoutes = require("../routes/customTopics");
+const summaryHistoryRoutes = require("../routes/summaryHistory");
 const fallbackAuth = require("../utils/fallbackAuth");
 
 // Connect to MongoDB
@@ -36,6 +39,15 @@ app.use("/api/", limiter);
 
 // Authentication routes
 app.use("/api/auth", authRoutes);
+
+// Subscription routes
+app.use("/api/subscriptions", subscriptionRoutes);
+
+// Custom topics routes
+app.use("/api/custom-topics", customTopicsRoutes);
+
+// Summary history routes
+app.use("/api/summary-history", summaryHistoryRoutes);
 
 // --- Config & helpers ---
 const PORT = process.env.PORT || 3001;

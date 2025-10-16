@@ -34,6 +34,22 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
+  customTopics: {
+    type: [String],
+    default: []
+  },
+  summaryHistory: [{
+    id: String,
+    title: String,
+    summary: String,
+    topics: [String],
+    length: String,
+    timestamp: {
+      type: Date,
+      default: Date.now
+    },
+    audioUrl: String
+  }],
   createdAt: {
     type: Date,
     default: Date.now
@@ -92,6 +108,59 @@ userSchema.methods.incrementUsage = function() {
   this.dailyUsageCount += 1;
   this.lastUsageDate = new Date();
   return this.save();
+};
+
+// Custom topics management
+userSchema.methods.addCustomTopic = async function(topic) {
+  if (!this.customTopics.includes(topic)) {
+    this.customTopics.push(topic);
+    await this.save();
+  }
+  return this.customTopics;
+};
+
+userSchema.methods.removeCustomTopic = async function(topic) {
+  this.customTopics = this.customTopics.filter(t => t !== topic);
+  await this.save();
+  return this.customTopics;
+};
+
+userSchema.methods.getCustomTopics = function() {
+  return this.customTopics;
+};
+
+// Summary history management
+userSchema.methods.addSummaryToHistory = async function(summaryData) {
+  const historyEntry = {
+    id: summaryData.id || Date.now().toString(),
+    title: summaryData.title,
+    summary: summaryData.summary,
+    topics: summaryData.topics || [],
+    length: summaryData.length || 'short',
+    timestamp: new Date(),
+    audioUrl: summaryData.audioUrl
+  };
+  
+  // Add to beginning of array (most recent first)
+  this.summaryHistory.unshift(historyEntry);
+  
+  // Keep only last 50 summaries to prevent database bloat
+  if (this.summaryHistory.length > 50) {
+    this.summaryHistory = this.summaryHistory.slice(0, 50);
+  }
+  
+  await this.save();
+  return this.summaryHistory;
+};
+
+userSchema.methods.getSummaryHistory = function() {
+  return this.summaryHistory || [];
+};
+
+userSchema.methods.clearSummaryHistory = async function() {
+  this.summaryHistory = [];
+  await this.save();
+  return this.summaryHistory;
 };
 
 // Update subscription status

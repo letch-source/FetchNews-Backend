@@ -24,6 +24,8 @@ const createFallbackUser = async () => {
     lastUsageDate: new Date(),
     subscriptionId: null,
     subscriptionExpiresAt: null,
+    customTopics: [],
+    summaryHistory: [],
     createdAt: new Date(),
     updatedAt: new Date()
   };
@@ -60,6 +62,8 @@ const fallbackAuth = {
       lastUsageDate: new Date(),
       subscriptionId: null,
       subscriptionExpiresAt: null,
+      customTopics: [],
+      summaryHistory: [],
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -78,6 +82,55 @@ const fallbackAuth = {
     user.subscriptionExpiresAt = expiresAt;
     user.updatedAt = new Date();
     return user;
+  },
+
+  // Custom topics management for fallback
+  async addCustomTopic(user, topic) {
+    if (!user.customTopics.includes(topic)) {
+      user.customTopics.push(topic);
+    }
+    return user.customTopics;
+  },
+
+  async removeCustomTopic(user, topic) {
+    user.customTopics = user.customTopics.filter(t => t !== topic);
+    return user.customTopics;
+  },
+
+  getCustomTopics(user) {
+    return user.customTopics || [];
+  },
+
+  // Summary history management for fallback
+  async addSummaryToHistory(user, summaryData) {
+    const historyEntry = {
+      id: summaryData.id || Date.now().toString(),
+      title: summaryData.title,
+      summary: summaryData.summary,
+      topics: summaryData.topics || [],
+      length: summaryData.length || 'short',
+      timestamp: new Date(),
+      audioUrl: summaryData.audioUrl
+    };
+    
+    // Add to beginning of array (most recent first)
+    user.summaryHistory.unshift(historyEntry);
+    
+    // Keep only last 50 summaries
+    if (user.summaryHistory.length > 50) {
+      user.summaryHistory = user.summaryHistory.slice(0, 50);
+    }
+    
+    return user.summaryHistory;
+  },
+
+  getSummaryHistory(user) {
+    return user.summaryHistory || [];
+  },
+
+  async clearSummaryHistory(user) {
+    user.summaryHistory = [];
+    return user.summaryHistory;
   },
   
   canFetchNews(user) {
