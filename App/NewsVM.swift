@@ -23,6 +23,9 @@ final class NewsVM: ObservableObject {
     @Published var isBusy: Bool = false
     @Published var isDirty: Bool = true
     
+    // Reference to AuthVM for checking user limits
+    weak var authVM: AuthVM?
+    
     // Custom topics (synced with backend)
     @Published var customTopics: [String] = []
     
@@ -77,8 +80,13 @@ final class NewsVM: ObservableObject {
     func initializeIfNeeded() async {
         // Any heavy initialization that was previously done in init
         // This runs after the UI is shown, improving launch performance
-        await loadCustomTopics()
         loadCachedVoiceIntroductions()
+        
+        // Only load custom topics if user is authenticated
+        // This prevents unnecessary network calls during app startup
+        if ApiClient.isAuthenticated {
+            await loadCustomTopics()
+        }
     }
     
     func toggle(_ topic: String) {
@@ -273,6 +281,12 @@ final class NewsVM: ObservableObject {
     func fetch() async {
         guard !selectedTopics.isEmpty, phase == .idle, isDirty else { return }
         
+        // Check if user can fetch news (prevent unnecessary API calls)
+        if let authVM = authVM, !authVM.canFetchNews {
+            lastError = "You've reached your daily limit of 1 summary. Upgrade to Premium for unlimited access."
+            return
+        }
+        
         // Cancel any existing request
         currentTask?.cancel()
         
@@ -280,6 +294,7 @@ final class NewsVM: ObservableObject {
             isBusy = true; phase = .gather
             combined = nil; items = []; resetPlayerState()
             lastError = nil // Clear previous errors
+            isDirty = false // Reset dirty flag at start to allow retries
 
             do {
                 // UX: show "Building summary…" shortly after start
@@ -374,6 +389,17 @@ final class NewsVM: ObservableObject {
                 // Handle different types of errors
                 if let networkError = error as? NetworkError {
                     lastError = networkError.errorDescription
+                } else if let urlError = error as? URLError {
+                    switch urlError.code {
+                    case .badServerResponse:
+                        lastError = "Server error (500) - please try again"
+                    case .timedOut:
+                        lastError = "Request timed out - please try again"
+                    case .notConnectedToInternet:
+                        lastError = "No internet connection"
+                    default:
+                        lastError = "Network error: \(urlError.localizedDescription)"
+                    }
                 } else {
                     lastError = "Failed to fetch news: \(error.localizedDescription)"
                 }

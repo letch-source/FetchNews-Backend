@@ -9,13 +9,17 @@ import Foundation
 
 final class ApiClient {
     // Set to your Render backend base URL:
-    static let base = URL(string: "https://fetch-bpof.onrender.com")!
+    static let base = URL(string: "https://fetchnews-backend.onrender.com")!
     private static var authToken: String?
     
     // MARK: - Authentication Methods
     
     static func setAuthToken(_ token: String?) {
         authToken = token
+    }
+    
+    static var isAuthenticated: Bool {
+        return authToken != nil
     }
     
     static func register(email: String, password: String) async throws -> AuthResponse {
@@ -299,9 +303,39 @@ final class ApiClient {
         }
         
         if httpResponse.statusCode == 200 {
-            let response = try JSONDecoder().decode(SummaryHistoryResponse.self, from: data)
-            return response.summaryHistory
+            // Debug: Log the raw JSON response
+            if let jsonString = String(data: data, encoding: .utf8) {
+                print("Summary History API Response JSON: \(jsonString)")
+            }
+            
+            do {
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let response = try decoder.decode(SummaryHistoryResponse.self, from: data)
+                return response.summaryHistory
+            } catch {
+                print("Summary History JSON Decoding Error: \(error)")
+                if let decodingError = error as? DecodingError {
+                    switch decodingError {
+                    case .keyNotFound(let key, let context):
+                        print("Missing key '\(key)' in \(context.debugDescription)")
+                    case .typeMismatch(let type, let context):
+                        print("Type mismatch for type \(type) in \(context.debugDescription)")
+                    case .valueNotFound(let type, let context):
+                        print("Value not found for type \(type) in \(context.debugDescription)")
+                    case .dataCorrupted(let context):
+                        print("Data corrupted: \(context.debugDescription)")
+                    @unknown default:
+                        print("Unknown decoding error")
+                    }
+                }
+                throw error
+            }
         } else {
+            // Debug: Log error response
+            if let jsonString = String(data: data, encoding: .utf8) {
+                print("Summary History API Error Response: \(jsonString)")
+            }
             let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
             throw NetworkError.serverError(errorResponse.error)
         }
@@ -432,12 +466,27 @@ final class ApiClient {
             body = ["batches": [["topics": topics, "wordCount": wordCount, "goodNewsOnly": goodNewsOnly]]]
         }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        // Debug: Log the request details
+        print("Making summarize request to: \(req.url?.absoluteString ?? "unknown")")
+        print("Request body: \(body)")
+        if let token = authToken {
+            print("Using auth token: \(String(token.prefix(20)))...")
+        } else {
+            print("No auth token available")
+        }
 
         do {
             let (data, resp) = try await session.data(for: req)
             guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? -1
                 print("Summarize API error: HTTP \(statusCode)")
+                
+                // Log response body for debugging
+                if let responseString = String(data: data, encoding: .utf8) {
+                    print("Error response body: \(responseString)")
+                }
+                
                 throw URLError(.badServerResponse)
             }
             

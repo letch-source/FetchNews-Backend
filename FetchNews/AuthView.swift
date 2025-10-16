@@ -50,6 +50,9 @@ struct AuthView: View {
                             .keyboardType(.emailAddress)
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
+                            .onTapGesture {
+                                // Allow text field to be tapped
+                            }
                     }
                     
                     // Password field
@@ -58,6 +61,9 @@ struct AuthView: View {
                             .font(.headline)
                         SecureField("Enter your password", text: $password)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .onTapGesture {
+                                // Allow text field to be tapped
+                            }
                     }
                     
                     // Confirm password field (only for registration)
@@ -67,6 +73,9 @@ struct AuthView: View {
                                 .font(.headline)
                             SecureField("Confirm your password", text: $confirmPassword)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .onTapGesture {
+                                    // Allow text field to be tapped
+                                }
                         }
                     }
                 }
@@ -137,11 +146,11 @@ struct AuthView: View {
                 // Add bottom padding for keyboard
                 Color.clear.frame(height: 100)
             }
-            .onTapGesture {
-                hideKeyboard()
-            }
             .navigationTitle("")
             .navigationBarHidden(true)
+        }
+        .onTapGesture {
+            hideKeyboard()
         }
         .alert("Authentication Error", isPresented: $showingAlert) {
             Button("OK") { }
@@ -155,6 +164,7 @@ struct AuthView: View {
         .sheet(isPresented: $showingResetPassword) {
             ResetPasswordView(resetToken: $resetToken, showingResetPassword: $showingResetPassword)
                 .environmentObject(authVM)
+        }
         }
     }
     
@@ -186,221 +196,15 @@ struct AuthView: View {
     }
     
     private func hideKeyboard() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-    }
-}
-
-
-struct ForgotPasswordView: View {
-    @EnvironmentObject var authVM: AuthVM
-    @Binding var email: String
-    @Binding var showingForgotPassword: Bool
-    @State private var showingAlert = false
-    @State private var alertMessage = ""
-    
-    var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 30) {
-                    VStack(spacing: 16) {
-                        Image(systemName: "key.fill")
-                            .font(.system(size: 50))
-                            .foregroundColor(.blue)
-                        
-                        Text("Reset Password")
-                            .font(.title)
-                            .fontWeight(.bold)
-                        
-                        Text("Enter your email address and we'll send you a link to reset your password.")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding(.top, 40)
-                
-                VStack(spacing: 20) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Email")
-                            .font(.headline)
-                        TextField("Enter your email", text: $email)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .keyboardType(.emailAddress)
-                            .autocapitalization(.none)
-                            .disableAutocorrection(true)
-                    }
-                    
-                    Button(action: {
-                        Task {
-                            if let message = await authVM.requestPasswordReset(email: email) {
-                                alertMessage = message
-                                showingAlert = true
-                            }
-                        }
-                    }) {
-                        HStack {
-                            if authVM.isLoading {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    .scaleEffect(0.8)
-                            }
-                            Text("Send Reset Link")
-                                .font(.headline)
-                                .fontWeight(.semibold)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(email.contains("@") ? Color.blue : Color.gray)
-                        .foregroundColor(.white)
-                        .cornerRadius(12)
-                    }
-                    .disabled(!email.contains("@") || authVM.isLoading)
-                }
-                .padding(.horizontal, 20)
-                
-                Spacer()
-                
-                // Add bottom padding for keyboard
-                Color.clear.frame(height: 100)
-            }
-            .onTapGesture {
-                hideKeyboard()
-            }
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        showingForgotPassword = false
-                    }
-                }
-            }
-        }
-        .alert("Password Reset", isPresented: $showingAlert) {
-            Button("OK") {
-                if alertMessage.contains("sent") {
-                    showingForgotPassword = false
-                }
-            }
-        } message: {
-            Text(alertMessage)
-        }
-    }
-    
-    private func hideKeyboard() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-    }
-}
-
-struct ResetPasswordView: View {
-    @EnvironmentObject var authVM: AuthVM
-    @Binding var resetToken: String
-    @Binding var showingResetPassword: Bool
-    @State private var newPassword = ""
-    @State private var confirmPassword = ""
-    @State private var showingAlert = false
-    @State private var alertMessage = ""
-    
-    var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 30) {
-                    VStack(spacing: 16) {
-                        Image(systemName: "lock.rotation")
-                            .font(.system(size: 50))
-                            .foregroundColor(.blue)
-                        
-                        Text("Set New Password")
-                            .font(.title)
-                            .fontWeight(.bold)
-                        
-                        Text("Enter your new password below.")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding(.top, 40)
-                
-                VStack(spacing: 20) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("New Password")
-                            .font(.headline)
-                        SecureField("Enter new password", text: $newPassword)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Confirm Password")
-                            .font(.headline)
-                        SecureField("Confirm new password", text: $confirmPassword)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                    }
-                    
-                    Button(action: {
-                        Task {
-                            if let message = await authVM.resetPassword(token: resetToken, newPassword: newPassword) {
-                                alertMessage = message
-                                showingAlert = true
-                            }
-                        }
-                    }) {
-                        HStack {
-                            if authVM.isLoading {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    .scaleEffect(0.8)
-                            }
-                            Text("Reset Password")
-                                .font(.headline)
-                                .fontWeight(.semibold)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(isFormValid ? Color.blue : Color.gray)
-                        .foregroundColor(.white)
-                        .cornerRadius(12)
-                    }
-                    .disabled(!isFormValid || authVM.isLoading)
-                }
-                .padding(.horizontal, 20)
-                
-                Spacer()
-                
-                // Add bottom padding for keyboard
-                Color.clear.frame(height: 100)
-            }
-            .onTapGesture {
-                hideKeyboard()
-            }
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        showingResetPassword = false
-                    }
-                }
-            }
-        }
-        .alert("Password Reset", isPresented: $showingAlert) {
-            Button("OK") {
-                if alertMessage.contains("successful") {
-                    showingResetPassword = false
-                }
-            }
-        } message: {
-            Text(alertMessage)
-        }
-    }
-    
-    private var isFormValid: Bool {
-        return !newPassword.isEmpty && 
-               !confirmPassword.isEmpty && 
-               newPassword == confirmPassword && 
-               newPassword.count >= 6
-    }
-    
-    private func hideKeyboard() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        let keyWindow = UIApplication.shared.connectedScenes
+            .filter { $0.activationState == .foregroundActive }
+            .map { $0 as? UIWindowScene }
+            .compactMap { $0 }
+            .first?.windows
+            .filter { $0.isKeyWindow }
+            .first
+        
+        keyWindow?.endEditing(true)
     }
 }
 

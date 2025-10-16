@@ -339,6 +339,10 @@ struct ContentView: View {
         .sheet(isPresented: $showingHistory) {
             SummaryHistoryView()
         }
+        .onAppear {
+            // Set the authVM reference in NewsVM for limit checking
+            vm.authVM = authVM
+        }
     }
 
     private var header: some View {

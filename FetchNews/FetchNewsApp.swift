@@ -14,22 +14,42 @@ struct FetchNewsApp: App {
 
     var body: some Scene {
         WindowGroup {
-            if authVM.isAuthenticated {
-                ContentView()
-                    .environmentObject(vm)
-                    .environmentObject(authVM)
-                    .onAppear {
-                        // Skip heavy initialization during UI testing
-                        if ProcessInfo.processInfo.environment["UITESTING"] != "1" {
-                            Task {
-                                await vm.initializeIfNeeded()
+            Group {
+                if authVM.isInitializing {
+                    // Show loading screen while checking authentication
+                    VStack(spacing: 20) {
+                        Image(systemName: "newspaper.fill")
+                            .font(.system(size: 60))
+                            .foregroundColor(.blue)
+                        
+                        Text("Fetch News")
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                        
+                        ProgressView()
+                            .scaleEffect(1.2)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemBackground))
+                } else if authVM.isAuthenticated {
+                    ContentView()
+                        .environmentObject(vm)
+                        .environmentObject(authVM)
+                        .onAppear {
+                            // Skip heavy initialization during UI testing
+                            if ProcessInfo.processInfo.environment["UITESTING"] != "1" {
+                                Task {
+                                    await vm.initializeIfNeeded()
+                                }
                             }
                         }
-                    }
-            } else {
-                AuthView()
-                    .environmentObject(authVM)
+                } else {
+                    AuthView()
+                        .environmentObject(authVM)
+                }
             }
+            .animation(.easeInOut(duration: 0.3), value: authVM.isAuthenticated)
+            .animation(.easeInOut(duration: 0.2), value: authVM.isInitializing)
         }
     }
 }

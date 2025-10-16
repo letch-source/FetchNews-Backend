@@ -14,12 +14,16 @@ final class AuthVM: ObservableObject {
     @Published var currentUser: User?
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
+    @Published var isInitializing: Bool = true
     
     private let tokenKey = "auth_token"
     private let userKey = "current_user"
     
     init() {
-        loadStoredAuth()
+        // Load stored auth asynchronously to avoid blocking UI
+        Task {
+            await loadStoredAuthAsync()
+        }
     }
     
     // MARK: - Authentication Methods
@@ -111,6 +115,36 @@ final class AuthVM: ObservableObject {
         } else {
             print("❌ No stored token found")
         }
+    }
+    
+    private func loadStoredAuthAsync() async {
+        print("🔍 Loading stored authentication asynchronously...")
+        
+        // Small delay to allow UI to render first
+        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+        
+        if let token = UserDefaults.standard.string(forKey: tokenKey) {
+            print("✅ Found stored token")
+            if let userData = UserDefaults.standard.data(forKey: userKey) {
+                print("✅ Found stored user data")
+                if let user = try? JSONDecoder().decode(User.self, from: userData) {
+                    print("✅ Successfully decoded user: \(user.email)")
+                    isAuthenticated = true
+                    currentUser = user
+                    // Set the token in ApiClient
+                    ApiClient.setAuthToken(token)
+                    print("🔑 Authentication restored successfully")
+                } else {
+                    print("❌ Failed to decode user data")
+                }
+            } else {
+                print("❌ No stored user data found")
+            }
+        } else {
+            print("❌ No stored token found")
+        }
+        
+        isInitializing = false
     }
     
     private func saveToken(token: String) {
