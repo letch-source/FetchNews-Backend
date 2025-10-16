@@ -57,7 +57,11 @@ router.post('/register', async (req, res) => {
         id: user._id,
         email: user.email,
         isPremium: user.isPremium,
-        dailyUsageCount: user.dailyUsageCount
+        dailyUsageCount: user.dailyUsageCount,
+        subscriptionId: user.subscriptionId,
+        subscriptionExpiresAt: user.subscriptionExpiresAt,
+        customTopics: user.customTopics || [],
+        summaryHistory: user.summaryHistory || []
       }
     });
   } catch (error) {
@@ -113,7 +117,11 @@ router.post('/login', async (req, res) => {
         id: user._id,
         email: user.email,
         isPremium: user.isPremium,
-        dailyUsageCount: user.dailyUsageCount
+        dailyUsageCount: user.dailyUsageCount,
+        subscriptionId: user.subscriptionId,
+        subscriptionExpiresAt: user.subscriptionExpiresAt,
+        customTopics: user.customTopics || [],
+        summaryHistory: user.summaryHistory || []
       }
     });
   } catch (error) {
@@ -133,7 +141,9 @@ router.get('/me', authenticateToken, async (req, res) => {
         isPremium: user.isPremium,
         dailyUsageCount: user.dailyUsageCount,
         subscriptionId: user.subscriptionId,
-        subscriptionExpiresAt: user.subscriptionExpiresAt
+        subscriptionExpiresAt: user.subscriptionExpiresAt,
+        customTopics: user.customTopics || [],
+        summaryHistory: user.summaryHistory || []
       }
     });
   } catch (error) {
