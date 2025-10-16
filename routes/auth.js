@@ -247,4 +247,104 @@ router.post('/admin/set-premium', async (req, res) => {
   }
 });
 
+// Request password reset
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    let user;
+    if (isDatabaseAvailable()) {
+      const User = require('../models/User');
+      user = await User.findOne({ email });
+    } else {
+      // For fallback auth, we'll simulate the process
+      user = await fallbackAuth.findUserByEmail(email);
+    }
+
+    // Always return success to prevent email enumeration
+    res.json({ 
+      message: 'If an account with that email exists, a password reset link has been sent.' 
+    });
+
+    // Only proceed if user exists
+    if (!user) {
+      return;
+    }
+
+    // Generate reset token
+    let resetToken;
+    if (isDatabaseAvailable()) {
+      resetToken = user.generatePasswordResetToken();
+      await user.save();
+    } else {
+      // For fallback, generate a simple token
+      resetToken = require('crypto').randomBytes(32).toString('hex');
+    }
+
+    // In a real app, you would send an email here
+    // For now, we'll just log the reset link
+    const resetUrl = `${process.env.FRONTEND_ORIGIN || 'https://your-app.com'}/reset-password?token=${resetToken}`;
+    console.log(`Password reset link for ${email}: ${resetUrl}`);
+    
+    // TODO: Send email with reset link
+    // await sendPasswordResetEmail(email, resetUrl);
+
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Failed to process password reset request' });
+  }
+});
+
+// Reset password with token
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ error: 'Token and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    let user;
+    if (isDatabaseAvailable()) {
+      const User = require('../models/User');
+      const crypto = require('crypto');
+      
+      // Hash the token to compare with stored hash
+      const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+      
+      user = await User.findOne({
+        resetPasswordToken: hashedToken,
+        resetPasswordExpires: { $gt: Date.now() }
+      });
+
+      if (!user) {
+        return res.status(400).json({ error: 'Invalid or expired reset token' });
+      }
+
+      // Update password and clear reset token
+      user.password = newPassword;
+      await user.clearPasswordResetToken();
+
+    } else {
+      // For fallback auth, we'll simulate the process
+      // In a real implementation, you'd need to store tokens somewhere
+      return res.status(400).json({ error: 'Password reset not available in fallback mode' });
+    }
+
+    res.json({ message: 'Password has been reset successfully' });
+
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
 module.exports = router;

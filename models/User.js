@@ -50,6 +50,14 @@ const userSchema = new mongoose.Schema({
     },
     audioUrl: String
   }],
+  resetPasswordToken: {
+    type: String,
+    default: null
+  },
+  resetPasswordExpires: {
+    type: Date,
+    default: null
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -168,6 +176,24 @@ userSchema.methods.updateSubscription = function(isPremium, subscriptionId = nul
   this.isPremium = isPremium;
   this.subscriptionId = subscriptionId;
   this.subscriptionExpiresAt = expiresAt;
+  return this.save();
+};
+
+// Generate password reset token
+userSchema.methods.generatePasswordResetToken = function() {
+  const crypto = require('crypto');
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  
+  this.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+  this.resetPasswordExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+  
+  return resetToken;
+};
+
+// Clear password reset token
+userSchema.methods.clearPasswordResetToken = function() {
+  this.resetPasswordToken = undefined;
+  this.resetPasswordExpires = undefined;
   return this.save();
 };
 
