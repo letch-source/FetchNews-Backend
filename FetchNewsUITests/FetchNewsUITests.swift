@@ -26,6 +26,8 @@ final class FetchNewsUITests: XCTestCase {
     func testExample() throws {
         // UI tests must launch the application that they test.
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
+        app.launchEnvironment = ["UITESTING": "1"]
         app.launch()
 
         // Use XCTAssert and related functions to verify your tests produce the correct results.
@@ -34,8 +36,27 @@ final class FetchNewsUITests: XCTestCase {
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
+        app.launchEnvironment = ["UITESTING": "1"]
+        
+        // Use a more conservative approach for performance testing
         measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+            app.launch()
+            // Wait for the app to be ready before measuring completes
+            _ = app.wait(for: .runningForeground, timeout: 5)
         }
+    }
+    
+    @MainActor
+    func testBasicLaunch() throws {
+        // Simple launch test without performance measurement
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
+        app.launchEnvironment = ["UITESTING": "1"]
+        app.launch()
+        
+        // Wait for the app to be ready
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
     }
 }

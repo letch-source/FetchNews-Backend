@@ -6,6 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		176425582E4E9073005C8526 /* NewsVM.swift in Sources */ = {isa = PBXBuildFile; fileRef = 176425572E4E8CBD005C8526 /* NewsVM.swift */; };
+		176425592E4E9081005C8526 /* ApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 176425562E4E8CA5005C8526 /* ApiClient.swift */; };
+		1764255A2E4E9085005C8526 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 176425552E4E8C80005C8526 /* Models.swift */; };
+		1764255B2E4E9089005C8526 /* AuthVM.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1764255C2E4E8C90005C8526 /* AuthVM.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		176425362E4E8A41005C8526 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,11 +34,28 @@
 		176425282E4E8A3F005C8526 /* FetchNews.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FetchNews.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		176425352E4E8A41005C8526 /* FetchNewsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FetchNewsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1764253F2E4E8A41005C8526 /* FetchNewsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FetchNewsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		176425552E4E8C80005C8526 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		176425562E4E8CA5005C8526 /* ApiClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApiClient.swift; sourceTree = "<group>"; };
+		176425572E4E8CBD005C8526 /* NewsVM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsVM.swift; sourceTree = "<group>"; };
+		1764255C2E4E8C90005C8526 /* AuthVM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthVM.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		176425532E4E8B56005C8526 /* Exceptions for "FetchNews" folder in "FetchNews" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 176425272E4E8A3F005C8526 /* FetchNews */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		1764252A2E4E8A3F005C8526 /* FetchNews */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				176425532E4E8B56005C8526 /* Exceptions for "FetchNews" folder in "FetchNews" target */,
+			);
 			path = FetchNews;
 			sourceTree = "<group>";
 		};
@@ -75,6 +99,7 @@
 		1764251F2E4E8A3F005C8526 = {
 			isa = PBXGroup;
 			children = (
+				176425542E4E8C67005C8526 /* App */,
 				1764252A2E4E8A3F005C8526 /* FetchNews */,
 				176425382E4E8A41005C8526 /* FetchNewsTests */,
 				176425422E4E8A41005C8526 /* FetchNewsUITests */,
@@ -90,6 +115,17 @@
 				1764253F2E4E8A41005C8526 /* FetchNewsUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		176425542E4E8C67005C8526 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				176425572E4E8CBD005C8526 /* NewsVM.swift */,
+				176425562E4E8CA5005C8526 /* ApiClient.swift */,
+				176425552E4E8C80005C8526 /* Models.swift */,
+				1764255C2E4E8C90005C8526 /* AuthVM.swift */,
+			);
+			path = App;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -236,6 +272,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				176425582E4E9073005C8526 /* NewsVM.swift in Sources */,
+				176425592E4E9081005C8526 /* ApiClient.swift in Sources */,
+				1764255A2E4E9085005C8526 /* Models.swift in Sources */,
+				1764255B2E4E9089005C8526 /* AuthVM.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -393,15 +433,19 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 834624ZZ4N;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FetchNews/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -420,15 +464,19 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 834624ZZ4N;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FetchNews/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
