@@ -742,4 +742,163 @@ final class ApiClient {
         }
     }
     
+    // MARK: - User Preferences Methods
+    
+    static func getUserPreferences() async throws -> UserPreferences {
+        let endpoint = "/api/preferences"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "GET"
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode != 200 {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+        
+        let preferences = try JSONDecoder().decode(UserPreferences.self, from: data)
+        return preferences
+    }
+    
+    static func updateUserPreferences(_ preferences: UserPreferences) async throws -> UserPreferences {
+        let endpoint = "/api/preferences"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "PUT"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let encoder = JSONEncoder()
+        req.httpBody = try encoder.encode(preferences)
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode != 200 {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+        
+        let updatedPreferences = try JSONDecoder().decode(UserPreferences.self, from: data)
+        return updatedPreferences
+    }
+    
+    static func updateUserPreference(_ preference: String, value: Any) async throws -> UserPreferences {
+        let endpoint = "/api/preferences/\(preference)"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "PATCH"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let body = ["value": value]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode != 200 {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+        
+        let preferences = try JSONDecoder().decode(UserPreferences.self, from: data)
+        return preferences
+    }
+    
+    // MARK: - News Sources API
+    
+    static func getAvailableNewsSources() async throws -> NewsSourcesResponse {
+        let endpoint = "/api/news-sources/available"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "GET"
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(NewsSourcesResponse.self, from: data)
+        } else {
+            let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse?.error ?? "Failed to fetch news sources")
+        }
+    }
+    
+    static func getSelectedNewsSources() async throws -> [String] {
+        let endpoint = "/api/news-sources/selected"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "GET"
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            let response = try JSONDecoder().decode([String: [String]].self, from: data)
+            return response["selectedSources"] ?? []
+        } else {
+            let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse?.error ?? "Failed to fetch selected news sources")
+        }
+    }
+    
+    static func updateSelectedNewsSources(_ sources: [String]) async throws -> [String] {
+        let endpoint = "/api/news-sources/selected"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "PUT"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let body = ["selectedSources": sources]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            let response = try JSONDecoder().decode([String: [String]].self, from: data)
+            return response["selectedSources"] ?? []
+        } else {
+            let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse?.error ?? "Failed to update selected news sources")
+        }
+    }
+    
 }

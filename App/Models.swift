@@ -254,3 +254,34 @@ struct AdminAction: Codable, Identifiable {
 struct AdminActionsResponse: Codable {
     let adminActions: [AdminAction]
 }
+
+struct UserPreferences: Codable {
+    let selectedVoice: String
+    let playbackRate: Double
+    let upliftingNewsOnly: Bool
+    let lastFetchedTopics: [String]
+    let selectedNewsSources: [String]
+    
+    enum CodingKeys: String, CodingKey {
+        case selectedVoice
+        case playbackRate
+        case upliftingNewsOnly
+        case lastFetchedTopics
+        case selectedNewsSources
+    }
+}
+
+struct NewsSource: Codable, Identifiable {
+    let id: String
+    let name: String
+    let description: String
+    let url: String
+    let category: String
+    let language: String
+    let country: String
+}
+
+struct NewsSourcesResponse: Codable {
+    let sources: [NewsSource]
+    let sourcesByCategory: [String: [NewsSource]]
+}

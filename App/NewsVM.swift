@@ -34,6 +34,13 @@ final class NewsVM: ObservableObject {
         didSet { saveSettings() }
     }
     
+    // News sources (premium feature)
+    @Published var selectedNewsSources: Set<String> = [] {
+        didSet { saveSettings() }
+    }
+    @Published var availableNewsSources: [NewsSource] = []
+    @Published var newsSourcesByCategory: [String: [NewsSource]] = [:]
+    
     // User location
     @Published var userLocation: String = ""
     
@@ -101,6 +108,12 @@ final class NewsVM: ObservableObject {
         if ApiClient.isAuthenticated {
             await loadCustomTopics()
             await loadRemoteSettings()
+            
+            // Load news sources for premium users
+            if let authVM = authVM, authVM.currentUser?.isPremium == true {
+                await loadAvailableNewsSources()
+                await loadSelectedNewsSources()
+            }
         }
     }
     
@@ -195,6 +208,10 @@ final class NewsVM: ObservableObject {
         if let savedTopics = defaults.array(forKey: "FetchNews_lastFetchedTopics") as? [String] {
             lastFetchedTopics = Set(savedTopics)
         }
+        
+        if let savedSources = defaults.array(forKey: "FetchNews_selectedNewsSources") as? [String] {
+            selectedNewsSources = Set(savedSources)
+        }
     }
     
     private func loadRemoteSettings() async {
@@ -209,6 +226,7 @@ final class NewsVM: ObservableObject {
             playbackRate = preferences.playbackRate
             upliftingNewsOnly = preferences.upliftingNewsOnly
             lastFetchedTopics = Set(preferences.lastFetchedTopics)
+            selectedNewsSources = Set(preferences.selectedNewsSources)
             
             // Save to local UserDefaults as backup
             saveLocalSettings()
@@ -241,6 +259,7 @@ final class NewsVM: ObservableObject {
         defaults.set(validVoice, forKey: "FetchNews_selectedVoice")
         defaults.set(upliftingNewsOnly, forKey: "FetchNews_upliftingNewsOnly")
         defaults.set(Array(lastFetchedTopics), forKey: "FetchNews_lastFetchedTopics")
+        defaults.set(Array(selectedNewsSources), forKey: "FetchNews_selectedNewsSources")
         
         defaults.synchronize()
     }
@@ -251,7 +270,8 @@ final class NewsVM: ObservableObject {
                 selectedVoice: selectedVoice,
                 playbackRate: playbackRate,
                 upliftingNewsOnly: upliftingNewsOnly,
-                lastFetchedTopics: Array(lastFetchedTopics)
+                lastFetchedTopics: Array(lastFetchedTopics),
+                selectedNewsSources: Array(selectedNewsSources)
             )
             
             _ = try await ApiClient.updateUserPreferences(preferences)
@@ -713,6 +733,50 @@ final class NewsVM: ObservableObject {
             }
         } catch {
             // Silently fail - user can try again
+        }
+    }
+    
+    // MARK: - News Sources Management
+    
+    func loadAvailableNewsSources() async {
+        do {
+            let response = try await ApiClient.getAvailableNewsSources()
+            await MainActor.run {
+                self.availableNewsSources = response.sources
+                self.newsSourcesByCategory = response.sourcesByCategory
+            }
+        } catch {
+            // Silently fail - news sources are optional
+        }
+    }
+    
+    func loadSelectedNewsSources() async {
+        do {
+            let sources = try await ApiClient.getSelectedNewsSources()
+            await MainActor.run {
+                self.selectedNewsSources = Set(sources)
+            }
+        } catch {
+            // Silently fail - use local settings
+        }
+    }
+    
+    func updateSelectedNewsSources(_ sources: [String]) async {
+        do {
+            let updatedSources = try await ApiClient.updateSelectedNewsSources(sources)
+            await MainActor.run {
+                self.selectedNewsSources = Set(updatedSources)
+            }
+        } catch {
+            // Silently fail - user can try again
+        }
+    }
+    
+    func toggleNewsSource(_ sourceId: String) {
+        if selectedNewsSources.contains(sourceId) {
+            selectedNewsSources.remove(sourceId)
+        } else {
+            selectedNewsSources.insert(sourceId)
         }
     }
     
