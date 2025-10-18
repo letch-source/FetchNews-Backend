@@ -100,7 +100,7 @@ struct ContentView: View {
                                 Task { await vm.fetchAgain() }
                             }) {
                                 VStack(spacing: 4) {
-                                    Text("Fetch \(userNewsTitle(from: vm.lastFetchedTopics)) again?")
+                                    Text(vm.lastFetchedTopics.count > 2 ? "Fetch mixed topic News again?" : "Fetch \(userNewsTitle(from: vm.lastFetchedTopics)) again?")
                                         .font(.headline)
                                         .foregroundColor(.white)
                                     
