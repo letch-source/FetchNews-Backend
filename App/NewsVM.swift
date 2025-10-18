@@ -29,6 +29,9 @@ final class NewsVM: ObservableObject {
     // Custom topics (synced with backend)
     @Published var customTopics: [String] = []
     
+    // Last fetched topics for "Fetch again" functionality
+    @Published var lastFetchedTopics: Set<String> = []
+    
     // User location
     @Published var userLocation: String = ""
     
@@ -107,6 +110,14 @@ final class NewsVM: ObservableObject {
     }
 
     func setLength(_ l: ApiClient.Length) { length = l; isDirty = true }
+    
+    func fetchAgain() async {
+        // Set the selected topics to the last fetched topics
+        selectedTopics = lastFetchedTopics
+        isDirty = true
+        // Trigger the fetch
+        await fetch()
+    }
     
     
     private func loadCachedVoiceIntroductions() {
@@ -415,6 +426,12 @@ final class NewsVM: ObservableObject {
                 
                 // Save summary to history only on success
                 await saveSummaryToHistory()
+                
+                // Store the topics that were used for this summary before deselecting
+                lastFetchedTopics = selectedTopics
+                
+                // Deselect all topics after successful summary generation
+                selectedTopics.removeAll()
                 
                 // Refresh user data to update usage count
                 await authVM?.refreshUser()

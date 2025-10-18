@@ -63,9 +63,6 @@ struct ContentView: View {
     @State private var isScrubbing = false
     @State private var scrubValue: Double = 0
 
-    /// Tracks topics as of the most recent "Fetch News" press so the title
-    /// doesn’t change while selecting chips.
-    @State private var lastFetchedTopics: Set<String> = []
 
     private var fetchDisabled: Bool {
         vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty
@@ -81,7 +78,7 @@ struct ContentView: View {
     }
 
     /// Title uses last fetched topics, not live selected topics.
-    private var fetchedTitle: String { userNewsTitle(from: lastFetchedTopics) }
+    private var fetchedTitle: String { userNewsTitle(from: vm.lastFetchedTopics) }
 
     /// Only show items that actually have previewable text.
     private var displayableItems: [Item] {
@@ -94,6 +91,36 @@ struct ContentView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12, pinnedViews: [.sectionHeaders]) {
+
+                    // Fetch again button (only show if we have last fetched topics)
+                    if !vm.lastFetchedTopics.isEmpty {
+                        VStack(spacing: 8) {
+                            Button(action: {
+                                expandSummary = false
+                                Task { await vm.fetchAgain() }
+                            }) {
+                                VStack(spacing: 4) {
+                                    Text("Fetch \(userNewsTitle(from: vm.lastFetchedTopics)) again?")
+                                        .font(.headline)
+                                        .foregroundColor(.white)
+                                    
+                                    Text(Array(vm.lastFetchedTopics).sorted().map { $0.capitalized }.joined(separator: ", "))
+                                        .font(.caption)
+                                        .foregroundColor(.white.opacity(0.8))
+                                        .lineLimit(2)
+                                }
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 16)
+                                .frame(maxWidth: .infinity)
+                                .background(Color.blue)
+                                .cornerRadius(12)
+                            }
+                            .disabled(vm.isBusy || vm.phase != .idle)
+                            .opacity((vm.isBusy || vm.phase != .idle) ? 0.6 : 1.0)
+                        }
+                        .padding(.horizontal)
+                        .padding(.top, 6)
+                    }
 
                     // Topic chips
                     LazyVGrid(columns: CHIP_COLUMNS, alignment: .center, spacing: 10) {
@@ -143,8 +170,6 @@ struct ContentView: View {
                     // Actions
                     HStack(spacing: 12) {
                         Button(fetchTitle) {
-                            // Lock the title to the topics at the moment of fetch.
-                            lastFetchedTopics = vm.selectedTopics
                             expandSummary = false
                             Task { await vm.fetch() }
                         }
