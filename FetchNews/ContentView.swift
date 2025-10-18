@@ -59,7 +59,6 @@ struct ContentView: View {
     @State private var showingLocation = false
     @State private var showingCustomTopics = false
     @State private var showingHistory = false
-    @State private var showingNewsSources = false
     @State private var expandSummary = false
     @State private var isScrubbing = false
     @State private var scrubValue: Double = 0
@@ -361,9 +360,6 @@ struct ContentView: View {
         .sheet(isPresented: $showingHistory) {
             SummaryHistoryView()
         }
-        .sheet(isPresented: $showingNewsSources) {
-            NewsSourcesView(vm: vm, authVM: authVM)
-        }
         .onAppear {
             // Set the authVM reference in NewsVM for limit checking
             vm.authVM = authVM
@@ -422,16 +418,6 @@ struct ContentView: View {
                     // Premium upgrade button removed from header (moved to settings)
                     
                     
-                    // News sources button (premium only)
-                    if authVM.currentUser?.isPremium == true {
-                        Button { showingNewsSources = true } label: {
-                            Image(systemName: "newspaper")
-                                .imageScale(.large)
-                                .foregroundColor(.blue)
-                                .padding(8)
-                        }
-                        .accessibilityLabel("News Sources")
-                    }
                     
                     // History button
                     Button { showingHistory = true } label: {
@@ -753,6 +739,32 @@ struct SettingsView: View {
                             print("🔊 Uplifting news toggle changed from \(oldValue) to \(newValue)")
                             vm.setUpliftingNewsOnly(newValue)
                         }
+                }
+                
+                // Premium Features Section
+                if let user = authVM.currentUser, user.isPremium {
+                    Section(header: Text("Premium Features")) {
+                        NavigationLink(destination: NewsSourcesView(vm: vm, authVM: authVM)) {
+                            HStack {
+                                Image(systemName: "newspaper")
+                                    .foregroundColor(.blue)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("News Sources")
+                                        .font(.body)
+                                    Text("Choose which news sources to use")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                if !vm.selectedNewsSources.isEmpty {
+                                    Text("\(vm.selectedNewsSources.count) selected")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                    }
                 }
                 
                 Section(header: Text("Account")) {

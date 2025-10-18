@@ -28,8 +28,7 @@ struct NewsSourcesView: View {
     }
     
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
+        VStack(spacing: 0) {
                 if !(authVM.currentUser?.isPremium == true) {
                     // Premium gate
                     VStack(spacing: 16) {
@@ -165,7 +164,6 @@ struct NewsSourcesView: View {
             }
         }
     }
-}
 
 struct NewsSourceRow: View {
     let source: NewsSource
