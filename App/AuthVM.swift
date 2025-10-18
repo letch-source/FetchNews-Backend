@@ -89,7 +89,23 @@ final class AuthVM: ObservableObject {
         currentUser = response.user
         saveToken(token: response.token)
         saveUser(user: response.user)
+        
+        // Set user's timezone automatically
+        await setUserTimezone()
+        
         print("💾 Auth data saved, isAuthenticated: \(isAuthenticated)")
+    }
+    
+    private func setUserTimezone() async {
+        do {
+            let timezone = TimeZone.current.identifier
+            print("🌍 Setting user timezone to: \(timezone)")
+            try await ApiClient.setTimezone(timezone)
+            print("✅ Timezone set successfully")
+        } catch {
+            print("❌ Failed to set timezone: \(error.localizedDescription)")
+            // Don't fail authentication if timezone setting fails
+        }
     }
     
     private func loadStoredAuth() {
@@ -133,6 +149,10 @@ final class AuthVM: ObservableObject {
                     currentUser = user
                     // Set the token in ApiClient
                     ApiClient.setAuthToken(token)
+                    
+                    // Set user's timezone automatically
+                    await setUserTimezone()
+                    
                     print("🔑 Authentication restored successfully")
                 } else {
                     print("❌ Failed to decode user data")

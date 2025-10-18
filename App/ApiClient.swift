@@ -22,6 +22,31 @@ final class ApiClient {
         return authToken != nil
     }
     
+    static func setTimezone(_ timezone: String) async throws {
+        let endpoint = "/api/auth/timezone"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let body = ["timezone": timezone]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode != 200 {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+    }
+    
     static func register(email: String, password: String) async throws -> AuthResponse {
         let endpoint = "/api/auth/register"
         var req = URLRequest(url: base.appendingPathComponent(endpoint))
