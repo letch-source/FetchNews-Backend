@@ -94,14 +94,13 @@ final class NewsVM: ObservableObject {
     
     // MARK: - Intents
     func initializeIfNeeded() async {
-        // Any heavy initialization that was previously done in init
-        // This runs after the UI is shown, improving launch performance
+        // Load cached voice introductions
         loadCachedVoiceIntroductions()
         
-        // Only load custom topics if user is authenticated
-        // This prevents unnecessary network calls during app startup
+        // Only load custom topics and sync preferences if user is authenticated
         if ApiClient.isAuthenticated {
             await loadCustomTopics()
+            await loadRemoteSettings()
         }
     }
     
@@ -137,33 +136,128 @@ final class NewsVM: ObservableObject {
     
     // MARK: - Settings Persistence
     private func loadSettings() {
+        // First, load from local UserDefaults as fallback
+        loadLocalSettings()
+        
+        // If user is authenticated, try to load from backend
+        if ApiClient.isAuthenticated {
+            Task {
+                await loadRemoteSettings()
+            }
+        }
+    }
+    
+    private func loadLocalSettings() {
         let defaults = UserDefaults.standard
         
-        // Load playback rate
-        if let savedRate = defaults.object(forKey: "playbackRate") as? Double {
+        // Migrate old keys to new format if they exist
+        let hasOldKeys = defaults.object(forKey: "playbackRate") != nil ||
+                        defaults.string(forKey: "selectedVoice") != nil ||
+                        defaults.object(forKey: "upliftingNewsOnly") != nil ||
+                        defaults.array(forKey: "lastFetchedTopics") != nil
+        
+        if hasOldKeys {
+            // Migrate old keys to new format
+            if let oldRate = defaults.object(forKey: "playbackRate") as? Double {
+                defaults.set(oldRate, forKey: "FetchNews_playbackRate")
+            }
+            if let oldVoice = defaults.string(forKey: "selectedVoice") {
+                defaults.set(oldVoice, forKey: "FetchNews_selectedVoice")
+            }
+            if defaults.object(forKey: "upliftingNewsOnly") != nil {
+                let oldUplifting = defaults.bool(forKey: "upliftingNewsOnly")
+                defaults.set(oldUplifting, forKey: "FetchNews_upliftingNewsOnly")
+            }
+            if let oldTopics = defaults.array(forKey: "lastFetchedTopics") {
+                defaults.set(oldTopics, forKey: "FetchNews_lastFetchedTopics")
+            }
+            
+            // Clear old keys after migration
+            defaults.removeObject(forKey: "playbackRate")
+            defaults.removeObject(forKey: "selectedVoice")
+            defaults.removeObject(forKey: "upliftingNewsOnly")
+            defaults.removeObject(forKey: "lastFetchedTopics")
+            defaults.synchronize()
+        }
+        
+        // Load settings from UserDefaults
+        if let savedRate = defaults.object(forKey: "FetchNews_playbackRate") as? Double {
             playbackRate = savedRate
         }
         
-        // Load selected voice
-        if let savedVoice = defaults.string(forKey: "selectedVoice") {
+        if let savedVoice = defaults.string(forKey: "FetchNews_selectedVoice"), 
+           availableVoices.contains(savedVoice) {
             selectedVoice = savedVoice
         }
         
-        // Load content filter setting
-        upliftingNewsOnly = defaults.bool(forKey: "upliftingNewsOnly")
+        upliftingNewsOnly = defaults.bool(forKey: "FetchNews_upliftingNewsOnly")
         
-        // Load last fetched topics
-        if let savedTopics = defaults.array(forKey: "lastFetchedTopics") as? [String] {
+        if let savedTopics = defaults.array(forKey: "FetchNews_lastFetchedTopics") as? [String] {
             lastFetchedTopics = Set(savedTopics)
         }
     }
     
+    private func loadRemoteSettings() async {
+        do {
+            let preferences = try await ApiClient.getUserPreferences()
+            
+            // Update local properties with backend values
+            if availableVoices.contains(preferences.selectedVoice) {
+                selectedVoice = preferences.selectedVoice
+            }
+            
+            playbackRate = preferences.playbackRate
+            upliftingNewsOnly = preferences.upliftingNewsOnly
+            lastFetchedTopics = Set(preferences.lastFetchedTopics)
+            
+            // Save to local UserDefaults as backup
+            saveLocalSettings()
+        } catch {
+            // Silently fall back to local settings
+        }
+    }
+    
     private func saveSettings() {
+        // Always save to local UserDefaults first
+        saveLocalSettings()
+        
+        // If user is authenticated, also save to backend
+        if ApiClient.isAuthenticated {
+            Task {
+                await saveRemoteSettings()
+            }
+        }
+    }
+    
+    private func saveLocalSettings() {
         let defaults = UserDefaults.standard
-        defaults.set(playbackRate, forKey: "playbackRate")
-        defaults.set(selectedVoice, forKey: "selectedVoice")
-        defaults.set(upliftingNewsOnly, forKey: "upliftingNewsOnly")
-        defaults.set(Array(lastFetchedTopics), forKey: "lastFetchedTopics")
+        
+        // Validate values before saving
+        let validPlaybackRate = max(0.5, min(2.0, playbackRate)) // Clamp between 0.5 and 2.0
+        let validVoice = availableVoices.contains(selectedVoice) ? selectedVoice : "Alloy"
+        
+        // Save settings
+        defaults.set(validPlaybackRate, forKey: "FetchNews_playbackRate")
+        defaults.set(validVoice, forKey: "FetchNews_selectedVoice")
+        defaults.set(upliftingNewsOnly, forKey: "FetchNews_upliftingNewsOnly")
+        defaults.set(Array(lastFetchedTopics), forKey: "FetchNews_lastFetchedTopics")
+        
+        defaults.synchronize()
+    }
+    
+    private func saveRemoteSettings() async {
+        do {
+            let preferences = UserPreferences(
+                selectedVoice: selectedVoice,
+                playbackRate: playbackRate,
+                upliftingNewsOnly: upliftingNewsOnly,
+                lastFetchedTopics: Array(lastFetchedTopics)
+            )
+            
+            _ = try await ApiClient.updateUserPreferences(preferences)
+        } catch {
+            // Silently fail - local settings are already saved
+        }
     }
 
     func setPlaybackRate(_ r: Double) {
@@ -175,12 +269,6 @@ final class NewsVM: ObservableObject {
     }
     
     func setVoice(_ v: String) {
-        print("🔊 setVoice called: '\(v)'")
-        print("🔊 Current selectedVoice: '\(selectedVoice)'")
-        print("🔊 Current currentSummaryVoice: '\(currentSummaryVoice)'")
-        print("🔊 Has combined summary: \(combined != nil)")
-        print("🔊 Current needsNewAudio: \(needsNewAudio)")
-        
         selectedVoice = v // This will trigger didSet and saveSettings()
         
         // Check if we have a current summary
@@ -188,17 +276,12 @@ final class NewsVM: ObservableObject {
             if currentSummaryVoice != v {
                 // Voice changed to a different voice - need new audio
                 needsNewAudio = true
-                print("🔊 Voice changed from '\(currentSummaryVoice)' to '\(v)', needsNewAudio set to true")
             } else {
                 // Voice changed back to the original voice - no need for new audio
                 needsNewAudio = false
-                print("🔊 Voice changed back to original '\(currentSummaryVoice)', needsNewAudio set to false")
             }
-        } else {
-            print("🔊 No summary present, keeping needsNewAudio as \(needsNewAudio)")
         }
         
-        print("🔊 Final needsNewAudio: \(needsNewAudio)")
         isDirty = true
     }
     
@@ -208,8 +291,6 @@ final class NewsVM: ObservableObject {
     }
     
     func testVoice() async {
-        print("🎵 Testing voice: \(selectedVoice)")
-        
         // Stop any current voice preview
         voicePreviewPlayer?.pause()
         voicePreviewPlayer = nil
@@ -217,7 +298,6 @@ final class NewsVM: ObservableObject {
         
         // Check if we have a cached introduction for this voice
         if let cachedUrl = cachedVoiceIntroductions[selectedVoice] {
-            print("🎵 Using cached voice introduction for: \(selectedVoice)")
             // Play cached introduction
             await playCachedVoiceIntroduction(url: cachedUrl)
             return
@@ -225,25 +305,19 @@ final class NewsVM: ObservableObject {
         
         // Generate new voice introduction
         let introductionText = "Hi, I'm \(selectedVoice), your personal news presenter."
-        print("🎵 Generating new voice introduction: '\(introductionText)'")
         
         do {
             let url = try await ApiClient.tts(text: introductionText, voice: selectedVoice, speed: 1.0)
             if let audioUrl = url {
-                print("🎵 Voice test generated successfully for: \(selectedVoice)")
-                print("🎵 Audio URL from API: \(audioUrl)")
-                
                 // Cache the introduction
                 cachedVoiceIntroductions[selectedVoice] = audioUrl
                 saveCachedVoiceIntroductions()
                 
                 // Play the introduction
                 await playCachedVoiceIntroduction(url: audioUrl)
-            } else {
-                print("🎵 Voice test failed - no audio URL returned for: \(selectedVoice)")
             }
         } catch {
-            print("🎵 Failed to generate voice test for \(selectedVoice): \(error)")
+            // Silently fail voice test
         }
     }
     
@@ -279,19 +353,8 @@ final class NewsVM: ObservableObject {
     
     
     private func playCachedVoiceIntroduction(url: String) async {
-        print("🎵 Playing cached voice introduction from: \(url)")
-        
         // Check if URL is valid
-        guard let audioUrl = URL(string: url) else { 
-            print("🎵 Invalid audio URL: \(url)")
-            return 
-        }
-        
-        print("🎵 Audio URL components:")
-        print("🎵   - Scheme: \(audioUrl.scheme ?? "nil")")
-        print("🎵   - Host: \(audioUrl.host ?? "nil")")
-        print("🎵   - Path: \(audioUrl.path)")
-        print("🎵   - Full URL: \(audioUrl.absoluteString)")
+        guard let audioUrl = URL(string: url) else { return }
         
         let playerItem = AVPlayerItem(url: audioUrl)
         voicePreviewPlayer = AVPlayer(playerItem: playerItem)
@@ -301,11 +364,7 @@ final class NewsVM: ObservableObject {
             forName: .AVPlayerItemFailedToPlayToEndTime,
             object: playerItem,
             queue: .main
-        ) { [weak self] notification in
-            print("🎵 Voice preview failed to play")
-            if let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error {
-                print("🎵 Playback error: \(error.localizedDescription)")
-            }
+        ) { [weak self] _ in
             self?.isPlayingVoicePreview = false
             self?.voicePreviewPlayer = nil
         }
@@ -316,7 +375,6 @@ final class NewsVM: ObservableObject {
             object: playerItem,
             queue: .main
         ) { [weak self] _ in
-            print("🎵 Voice preview finished playing")
             self?.isPlayingVoicePreview = false
             self?.voicePreviewPlayer = nil
         }
@@ -324,7 +382,6 @@ final class NewsVM: ObservableObject {
         // Play the introduction
         isPlayingVoicePreview = true
         voicePreviewPlayer?.play()
-        print("🎵 Voice preview started playing")
     }
     
     func cancelCurrentRequest() {
@@ -446,11 +503,9 @@ final class NewsVM: ObservableObject {
             } catch {
                 // Don't show error if task was cancelled
                 if Task.isCancelled {
-                    print("Fetch cancelled")
                     return
                 }
                 
-                print("Fetch error:", error)
                 isDirty = true
                 
                 // Handle different types of errors
@@ -624,7 +679,7 @@ final class NewsVM: ObservableObject {
                 self.customTopics = topics
             }
         } catch {
-            print("Failed to load custom topics: \(error)")
+            // Silently fail - custom topics are optional
         }
     }
     
@@ -635,7 +690,7 @@ final class NewsVM: ObservableObject {
                 self.customTopics = updatedTopics
             }
         } catch {
-            print("Failed to add custom topic: \(error)")
+            // Silently fail - user can try again
         }
     }
     
@@ -646,7 +701,7 @@ final class NewsVM: ObservableObject {
                 self.customTopics = updatedTopics
             }
         } catch {
-            print("Failed to remove custom topic: \(error)")
+            // Silently fail - user can try again
         }
     }
     
@@ -657,7 +712,7 @@ final class NewsVM: ObservableObject {
                 self.customTopics = updatedTopics
             }
         } catch {
-            print("Failed to update custom topics: \(error)")
+            // Silently fail - user can try again
         }
     }
     
@@ -680,7 +735,7 @@ final class NewsVM: ObservableObject {
         do {
             try await ApiClient.addSummaryToHistory(summaryData: summaryData)
         } catch {
-            print("Failed to save summary to history: \(error)")
+            // Silently fail - history saving is optional
         }
     }
 }
