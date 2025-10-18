@@ -779,9 +779,6 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .sheet(isPresented: $showingAdmin) {
-                AdminView()
-            }
         }
     }
 }
