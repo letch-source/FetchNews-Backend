@@ -16,6 +16,11 @@ struct ResetPasswordView: View {
     @State private var showingAlert = false
     @State private var alertMessage = ""
     @State private var isLoading = false
+    @FocusState private var focusedField: Field?
+    
+    enum Field {
+        case newPassword, confirmPassword
+    }
     
     var body: some View {
         NavigationView {
@@ -45,6 +50,11 @@ struct ResetPasswordView: View {
                                 .font(.headline)
                             SecureField("Enter new password", text: $newPassword)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .focused($focusedField, equals: .newPassword)
+                                .submitLabel(.next)
+                                .onSubmit {
+                                    focusedField = .confirmPassword
+                                }
                         }
                         
                         VStack(alignment: .leading, spacing: 8) {
@@ -52,6 +62,13 @@ struct ResetPasswordView: View {
                                 .font(.headline)
                             SecureField("Confirm new password", text: $confirmPassword)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .focused($focusedField, equals: .confirmPassword)
+                                .submitLabel(.go)
+                                .onSubmit {
+                                    Task {
+                                        await resetPassword()
+                                    }
+                                }
                         }
                     }
                     
@@ -94,12 +111,18 @@ struct ResetPasswordView: View {
             }
         }
         .onTapGesture {
-            hideKeyboard()
+            focusedField = nil
         }
         .alert("Reset Password", isPresented: $showingAlert) {
             Button("OK") { }
         } message: {
             Text(alertMessage)
+        }
+        .onAppear {
+            // Auto-focus new password field for immediate keyboard appearance
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                focusedField = .newPassword
+            }
         }
         }
     }

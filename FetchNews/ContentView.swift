@@ -359,7 +359,7 @@ struct ContentView: View {
                                 Image(systemName: "clock")
                                     .font(.caption)
                                     .foregroundColor(.orange)
-                                Text("\(max(0, 1 - user.dailyUsageCount)) summary remaining today")
+                                Text("\(max(0, 10 - user.dailyUsageCount)) summaries remaining today")
                                     .font(.caption)
                                     .foregroundColor(.orange)
                             }
@@ -740,6 +740,7 @@ struct SettingsView: View {
                         if !user.isPremium {
                             Button("Upgrade to Premium") {
                                 vm.showSubscriptionView()
+                                dismiss() // Dismiss settings to show premium tab immediately
                             }
                             .foregroundColor(.yellow)
                         }
@@ -750,14 +751,6 @@ struct SettingsView: View {
                         }
                         .foregroundColor(.red)
                         
-                        // Testing buttons (only show in debug builds)
-                        #if DEBUG
-                        Button(user.isPremium ? "Set Free (Testing)" : "Set Premium (Testing)") {
-                            authVM.setPremiumForTesting(!user.isPremium)
-                        }
-                        .foregroundColor(.blue)
-                        .font(.caption)
-                        #endif
                         
                         // Admin Panel (only show for specific admin email)
                         if user.email == "finlaysmith@gmail.com" {

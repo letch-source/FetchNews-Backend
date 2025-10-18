@@ -14,6 +14,7 @@ struct ForgotPasswordView: View {
     @State private var showingAlert = false
     @State private var alertMessage = ""
     @State private var isLoading = false
+    @FocusState private var isEmailFocused: Bool
     
     var body: some View {
         NavigationView {
@@ -45,6 +46,13 @@ struct ForgotPasswordView: View {
                             .keyboardType(.emailAddress)
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
+                            .focused($isEmailFocused)
+                            .submitLabel(.go)
+                            .onSubmit {
+                                Task {
+                                    await sendResetEmail()
+                                }
+                            }
                     }
                     
                     // Send reset button
@@ -86,12 +94,18 @@ struct ForgotPasswordView: View {
             }
         }
         .onTapGesture {
-            hideKeyboard()
+            isEmailFocused = false
         }
         .alert("Reset Password", isPresented: $showingAlert) {
             Button("OK") { }
         } message: {
             Text(alertMessage)
+        }
+        .onAppear {
+            // Auto-focus email field for immediate keyboard appearance
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isEmailFocused = true
+            }
         }
         }
     }

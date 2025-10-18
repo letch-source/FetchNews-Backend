@@ -16,6 +16,7 @@ struct SubscriptionView: View {
     @State private var isPurchasing = false
     @State private var showingError = false
     @State private var errorMessage = ""
+    @State private var showingBetaSuccess = false
     
     var body: some View {
         NavigationView {
@@ -83,7 +84,7 @@ struct SubscriptionView: View {
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                 .scaleEffect(0.8)
                         }
-                        Text(isPurchasing ? "Processing..." : "Start Free Trial")
+                        Text(isPurchasing ? "Processing..." : "Upgrade")
                             .font(.headline)
                             .fontWeight(.semibold)
                     }
@@ -121,26 +122,31 @@ struct SubscriptionView: View {
         } message: {
             Text(errorMessage)
         }
+        .alert("Upgraded for free. Thanks for beta testing!", isPresented: $showingBetaSuccess) {
+            Button("Awesome!") {
+                dismiss()
+            }
+        }
     }
     
     private func purchasePremium() async {
-        guard let product = storeKitManager.premiumProduct else {
-            errorMessage = "Product not available. Please try again later."
-            showingError = true
-            return
-        }
-        
         isPurchasing = true
         
+        // Simulate processing time
+        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+        
         do {
-            let transaction = try await storeKitManager.purchase(product)
-            if transaction != nil {
-                // Purchase successful, refresh user data
-                await authVM.refreshUser()
-                dismiss()
-            }
+            // Upgrade user to premium for free (beta testing)
+            try await ApiClient.setUserPremiumStatus(email: authVM.currentUser?.email ?? "", isPremium: true)
+            
+            // Refresh user data
+            await authVM.refreshUser()
+            
+            // Show success message
+            showingBetaSuccess = true
+            
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Failed to upgrade account: \(error.localizedDescription)"
             showingError = true
         }
         

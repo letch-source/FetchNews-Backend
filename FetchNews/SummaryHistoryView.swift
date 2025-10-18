@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AVFoundation
 
 struct SummaryHistoryView: View {
     @Environment(\.dismiss) private var dismiss
@@ -45,12 +46,12 @@ struct SummaryHistoryView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List {
-                        ForEach(summaryHistory) { entry in
+                        ForEach(Array(summaryHistory.enumerated()), id: \.element.id) { index, entry in
                             SummaryHistoryRow(entry: entry) {
                                 selectedSummary = entry
-                                showingSummaryDetail = true
                             }
                         }
+                        .onDelete(perform: deleteSummary)
                     }
                     .listStyle(PlainListStyle())
                 }
@@ -64,25 +65,13 @@ struct SummaryHistoryView: View {
                     }
                 }
                 
-                if !summaryHistory.isEmpty {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Clear All") {
-                            Task {
-                                await clearHistory()
-                            }
-                        }
-                        .foregroundColor(.red)
-                    }
-                }
             }
         }
         .task {
             await loadSummaryHistory()
         }
-        .sheet(isPresented: $showingSummaryDetail) {
-            if let summary = selectedSummary {
-                SummaryDetailView(entry: summary)
-            }
+        .sheet(item: $selectedSummary) { summary in
+            SummaryDetailView(entry: summary)
         }
         .alert("Error", isPresented: .constant(errorMessage != nil)) {
             Button("OK") {
@@ -106,6 +95,24 @@ struct SummaryHistoryView: View {
             await MainActor.run {
                 self.errorMessage = "Failed to load summary history: \(error.localizedDescription)"
                 self.isLoading = false
+            }
+        }
+    }
+    
+    private func deleteSummary(at offsets: IndexSet) {
+        Task {
+            for index in offsets {
+                let summaryToDelete = summaryHistory[index]
+                do {
+                    try await ApiClient.deleteSummaryFromHistory(summaryId: summaryToDelete.id)
+                    await MainActor.run {
+                        self.summaryHistory.remove(at: index)
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.errorMessage = "Failed to delete summary: \(error.localizedDescription)"
+                    }
+                }
             }
         }
     }
@@ -163,23 +170,6 @@ struct SummaryHistoryRow: View {
                     }
                     
                     Spacer()
-                    
-                    // Length
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock.fill")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                        Text(entry.length.capitalized)
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-                    
-                    // Audio indicator
-                    if entry.audioUrl != nil {
-                        Image(systemName: "speaker.wave.2.fill")
-                            .font(.caption)
-                            .foregroundColor(.green)
-                    }
                 }
             }
             .padding(.vertical, 4)
@@ -221,14 +211,6 @@ struct SummaryDetailView: View {
                                 .foregroundColor(.secondary)
                             
                             Spacer()
-                            
-                            Text(entry.length.capitalized)
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
-                                .background(Color.orange.opacity(0.1))
-                                .cornerRadius(4)
                         }
                     }
                     
@@ -254,6 +236,16 @@ struct SummaryDetailView: View {
                         }
                     }
                     
+                    // Audio Player
+                    if let audioUrl = entry.audioUrl, !audioUrl.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Audio")
+                                .font(.headline)
+                            
+                            AudioPlayerView(audioUrl: audioUrl)
+                        }
+                    }
+                    
                     // Summary
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Summary")
@@ -262,6 +254,29 @@ struct SummaryDetailView: View {
                         Text(entry.summary)
                             .font(.body)
                             .lineSpacing(4)
+                    }
+                    
+                    // Sources
+                    if let sources = entry.sources, !sources.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Sources")
+                                .font(.headline)
+                            
+                            ForEach(sources, id: \.self) { source in
+                                HStack {
+                                    Image(systemName: "link")
+                                        .font(.caption)
+                                        .foregroundColor(.blue)
+                                    
+                                    Text(source)
+                                        .font(.body)
+                                        .foregroundColor(.blue)
+                                    
+                                    Spacer()
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
                     }
                 }
                 .padding()
@@ -290,6 +305,119 @@ struct SummaryDetailView: View {
         }
         
         return timestamp
+    }
+}
+
+struct AudioPlayerView: View {
+    let audioUrl: String
+    @State private var isPlaying = false
+    @State private var player: AVPlayer?
+    @State private var currentTime: TimeInterval = 0
+    @State private var duration: TimeInterval = 0
+    @State private var timeObserver: Any?
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            // Play/Pause Button
+            Button(action: togglePlayPause) {
+                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 50))
+                    .foregroundColor(.blue)
+            }
+            
+            // Progress Bar
+            VStack(spacing: 4) {
+                Slider(value: $currentTime, in: 0...duration, onEditingChanged: { editing in
+                    if !editing {
+                        let time = CMTime(seconds: currentTime, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+                        player?.seek(to: time)
+                    }
+                })
+                .accentColor(.blue)
+                
+                HStack {
+                    Text(formatTime(currentTime))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    Text(formatTime(duration))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .onAppear {
+            setupAudioPlayer()
+        }
+        .onDisappear {
+            stopAudio()
+        }
+    }
+    
+    private func setupAudioPlayer() {
+        guard let url = URL(string: audioUrl) else { return }
+        
+        let playerItem = AVPlayerItem(url: url)
+        player = AVPlayer(playerItem: playerItem)
+        
+        // Set up time observer
+        let timeScale = CMTimeScale(NSEC_PER_SEC)
+        let time = CMTime(seconds: 0.1, preferredTimescale: timeScale)
+        timeObserver = player?.addPeriodicTimeObserver(forInterval: time, queue: .main) { [self] time in
+            currentTime = time.seconds
+        }
+        
+        // Get duration
+        if let duration = playerItem.asset.duration.seconds.isFinite ? playerItem.asset.duration.seconds : nil {
+            self.duration = duration
+        }
+        
+        // Set up completion observer
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: playerItem,
+            queue: .main
+        ) { [self] _ in
+            isPlaying = false
+            currentTime = 0
+            player?.seek(to: .zero)
+        }
+    }
+    
+    private func togglePlayPause() {
+        print("Toggle play/pause called, isPlaying: \(isPlaying), player: \(player != nil)")
+        guard let player = player else { 
+            print("No audio player available")
+            return 
+        }
+        
+        if isPlaying {
+            print("Pausing audio")
+            player.pause()
+        } else {
+            print("Playing audio")
+            player.play()
+        }
+        
+        isPlaying.toggle()
+    }
+    
+    private func stopAudio() {
+        player?.pause()
+        if let timeObserver = timeObserver {
+            player?.removeTimeObserver(timeObserver)
+            self.timeObserver = nil
+        }
+        isPlaying = false
+        currentTime = 0
+    }
+    
+    private func formatTime(_ time: TimeInterval) -> String {
+        let minutes = Int(time) / 60
+        let seconds = Int(time) % 60
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 

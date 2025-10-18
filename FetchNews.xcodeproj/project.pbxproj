@@ -11,6 +11,7 @@
 		176425592E4E9081005C8526 /* ApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 176425562E4E8CA5005C8526 /* ApiClient.swift */; };
 		1764255A2E4E9085005C8526 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 176425552E4E8C80005C8526 /* Models.swift */; };
 		1764255B2E4E9089005C8526 /* AuthVM.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1764255C2E4E8C90005C8526 /* AuthVM.swift */; };
+		1764255E2E4E9089005C8526 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1764255D2E4E8C90005C8526 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -38,6 +39,7 @@
 		176425562E4E8CA5005C8526 /* ApiClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApiClient.swift; sourceTree = "<group>"; };
 		176425572E4E8CBD005C8526 /* NewsVM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsVM.swift; sourceTree = "<group>"; };
 		1764255C2E4E8C90005C8526 /* AuthVM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthVM.swift; sourceTree = "<group>"; };
+		1764255D2E4E8C90005C8526 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -96,6 +98,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		17428E762EA1C9DD004F201C /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				1764255D2E4E8C90005C8526 /* Assets.xcassets */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
 		1764251F2E4E8A3F005C8526 = {
 			isa = PBXGroup;
 			children = (
@@ -104,6 +114,7 @@
 				176425382E4E8A41005C8526 /* FetchNewsTests */,
 				176425422E4E8A41005C8526 /* FetchNewsUITests */,
 				176425292E4E8A3F005C8526 /* Products */,
+				17428E762EA1C9DD004F201C /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -248,6 +259,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1764255E2E4E9089005C8526 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -435,7 +447,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = 834624ZZ4N;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -466,7 +478,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = 834624ZZ4N;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -495,7 +507,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 14;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
 				MARKETING_VERSION = 1.0;
@@ -513,7 +525,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 14;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
 				MARKETING_VERSION = 1.0;
@@ -530,7 +542,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 14;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.finlaysmith.FetchNewsUITests;
@@ -546,7 +558,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 14;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.finlaysmith.FetchNewsUITests;

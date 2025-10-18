@@ -283,7 +283,7 @@ final class NewsVM: ObservableObject {
         
         // Check if user can fetch news (prevent unnecessary API calls)
         if let authVM = authVM, !authVM.canFetchNews {
-            lastError = "You've reached your daily limit of 1 summary. Upgrade to Premium for unlimited access."
+            lastError = "You've reached your daily limit of 10 summaries. Upgrade to Premium for unlimited access."
             return
         }
         
@@ -321,7 +321,7 @@ final class NewsVM: ObservableObject {
                 if !cleanedCombinedSummary.isEmpty && cleanedCombinedSummary != "(No summary provided.)" {
                     self.combined = Combined(
                         id: resp.combined?.id ?? resp.items.first?.id ?? "combined",
-                        title: (resp.combined?.title ?? resp.items.first?.title ?? "Summary").condenseWhitespace(),
+                        title: (resp.combined?.title ?? "Summary").condenseWhitespace(),
                         summary: cleanedCombinedSummary,
                         audioUrl: nil
                     )
@@ -376,6 +376,12 @@ final class NewsVM: ObservableObject {
                 }
 
                 isDirty = false
+                
+                // Save summary to history only on success
+                await saveSummaryToHistory()
+                
+                // Refresh user data to update usage count
+                await authVM?.refreshUser()
             } catch {
                 // Don't show error if task was cancelled
                 if Task.isCancelled {
@@ -406,9 +412,6 @@ final class NewsVM: ObservableObject {
             }
 
             phase = .idle; isBusy = false
-            
-            // Save summary to history
-            await saveSummaryToHistory()
         }
     }
 
@@ -608,7 +611,9 @@ final class NewsVM: ObservableObject {
             "summary": summary.summary,
             "topics": Array(selectedTopics),
             "length": length.rawValue,
-            "audioUrl": summary.audioUrl ?? ""
+            "wordCount": length.rawValue,
+            "audioUrl": summary.audioUrl ?? "",
+            "sources": items.compactMap { $0.source }.filter { !$0.isEmpty }
         ]
         
         do {

@@ -182,6 +182,24 @@ struct SummaryHistoryEntry: Codable, Identifiable {
     let length: String
     let timestamp: String
     let audioUrl: String?
+    let sources: [String]?
+    
+    // Custom decoder to handle missing sources field gracefully
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.title = try container.decode(String.self, forKey: .title)
+        self.summary = try container.decode(String.self, forKey: .summary)
+        self.topics = try container.decode([String].self, forKey: .topics)
+        self.length = try container.decode(String.self, forKey: .length)
+        self.timestamp = try container.decode(String.self, forKey: .timestamp)
+        self.audioUrl = try container.decodeIfPresent(String.self, forKey: .audioUrl)
+        self.sources = try container.decodeIfPresent([String].self, forKey: .sources)
+    }
+    
+    private enum CodingKeys: String, CodingKey {
+        case id, title, summary, topics, length, timestamp, audioUrl, sources
+    }
 }
 
 struct AuthResponse: Codable {

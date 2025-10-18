@@ -18,11 +18,15 @@ struct AuthView: View {
     @State private var showingForgotPassword = false
     @State private var showingResetPassword = false
     @State private var resetToken = ""
+    @FocusState private var focusedField: Field?
+    
+    enum Field {
+        case email, password, confirmPassword
+    }
     
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 30) {
+            VStack(spacing: 30) {
                     // Header
                     VStack(spacing: 16) {
                         Image(systemName: "newspaper.fill")
@@ -50,8 +54,10 @@ struct AuthView: View {
                             .keyboardType(.emailAddress)
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
-                            .onTapGesture {
-                                // Allow text field to be tapped
+                            .focused($focusedField, equals: .email)
+                            .submitLabel(.next)
+                            .onSubmit {
+                                focusedField = .password
                             }
                     }
                     
@@ -61,8 +67,16 @@ struct AuthView: View {
                             .font(.headline)
                         SecureField("Enter your password", text: $password)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .onTapGesture {
-                                // Allow text field to be tapped
+                            .focused($focusedField, equals: .password)
+                            .submitLabel(isLoginMode ? .go : .next)
+                            .onSubmit {
+                                if isLoginMode {
+                                    Task {
+                                        await performAuth()
+                                    }
+                                } else {
+                                    focusedField = .confirmPassword
+                                }
                             }
                     }
                     
@@ -73,8 +87,12 @@ struct AuthView: View {
                                 .font(.headline)
                             SecureField("Confirm your password", text: $confirmPassword)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .onTapGesture {
-                                    // Allow text field to be tapped
+                                .focused($focusedField, equals: .confirmPassword)
+                                .submitLabel(.go)
+                                .onSubmit {
+                                    Task {
+                                        await performAuth()
+                                    }
                                 }
                         }
                     }
@@ -148,9 +166,10 @@ struct AuthView: View {
             }
             .navigationTitle("")
             .navigationBarHidden(true)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
         .onTapGesture {
-            hideKeyboard()
+            focusedField = nil
         }
         .alert("Authentication Error", isPresented: $showingAlert) {
             Button("OK") { }
@@ -165,6 +184,11 @@ struct AuthView: View {
             ResetPasswordView(resetToken: $resetToken, showingResetPassword: $showingResetPassword)
                 .environmentObject(authVM)
         }
+        .onAppear {
+            // Auto-focus email field for immediate keyboard appearance
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                focusedField = .email
+            }
         }
     }
     

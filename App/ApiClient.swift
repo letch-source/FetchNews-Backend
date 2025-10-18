@@ -388,6 +388,28 @@ final class ApiClient {
         }
     }
     
+    static func deleteSummaryFromHistory(summaryId: String) async throws {
+        let endpoint = "/api/summary-history/\(summaryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? summaryId)"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "DELETE"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode != 200 {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+    }
+    
     // MARK: - Admin Functions
     
     static func setUserPremiumStatus(email: String, isPremium: Bool) async throws {
