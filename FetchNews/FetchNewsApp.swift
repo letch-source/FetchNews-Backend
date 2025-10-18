@@ -21,7 +21,7 @@ struct FetchNewsApp: App {
                         Image("Launch Logo")
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 60, height: 60)
+                            .frame(width: 100, height: 100)
                         
                         Text("Fetch News")
                             .font(.largeTitle)

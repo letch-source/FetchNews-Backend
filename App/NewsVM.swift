@@ -30,7 +30,9 @@ final class NewsVM: ObservableObject {
     @Published var customTopics: [String] = []
     
     // Last fetched topics for "Fetch again" functionality
-    @Published var lastFetchedTopics: Set<String> = []
+    @Published var lastFetchedTopics: Set<String> = [] {
+        didSet { saveSettings() }
+    }
     
     // User location
     @Published var userLocation: String = ""
@@ -149,6 +151,11 @@ final class NewsVM: ObservableObject {
         
         // Load content filter setting
         upliftingNewsOnly = defaults.bool(forKey: "upliftingNewsOnly")
+        
+        // Load last fetched topics
+        if let savedTopics = defaults.array(forKey: "lastFetchedTopics") as? [String] {
+            lastFetchedTopics = Set(savedTopics)
+        }
     }
     
     private func saveSettings() {
@@ -156,6 +163,7 @@ final class NewsVM: ObservableObject {
         defaults.set(playbackRate, forKey: "playbackRate")
         defaults.set(selectedVoice, forKey: "selectedVoice")
         defaults.set(upliftingNewsOnly, forKey: "upliftingNewsOnly")
+        defaults.set(Array(lastFetchedTopics), forKey: "lastFetchedTopics")
     }
 
     func setPlaybackRate(_ r: Double) {

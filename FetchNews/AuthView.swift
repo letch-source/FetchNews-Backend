@@ -34,7 +34,7 @@ struct AuthView: View {
                             Image("Launch Logo")
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
-                                .frame(width: 60, height: 60)
+                                .frame(width: 100, height: 100)
                             
                             Text("Fetch News")
                                 .font(.largeTitle)
@@ -54,6 +54,7 @@ struct AuthView: View {
                             .font(.headline)
                         TextField("Enter your email", text: $email)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .textContentType(.emailAddress)
                             .keyboardType(.emailAddress)
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
@@ -70,6 +71,7 @@ struct AuthView: View {
                             .font(.headline)
                         SecureField("Enter your password", text: $password)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .textContentType(isLoginMode ? .password : .newPassword)
                             .focused($focusedField, equals: .password)
                             .submitLabel(isLoginMode ? .go : .next)
                             .onSubmit {
@@ -90,6 +92,7 @@ struct AuthView: View {
                                 .font(.headline)
                             SecureField("Confirm your password", text: $confirmPassword)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .textContentType(.newPassword)
                                 .focused($focusedField, equals: .confirmPassword)
                                 .submitLabel(.go)
                                 .onSubmit {
