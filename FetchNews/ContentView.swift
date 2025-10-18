@@ -58,7 +58,6 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var showingLocation = false
     @State private var showingCustomTopics = false
-    @State private var showingAdmin = false
     @State private var showingHistory = false
     @State private var expandSummary = false
     @State private var isScrubbing = false
@@ -332,9 +331,6 @@ struct ContentView: View {
         }
         .sheet(isPresented: $vm.showingSubscriptionView) {
             SubscriptionView().environmentObject(vm)
-        }
-        .sheet(isPresented: $showingAdmin) {
-            AdminView()
         }
         .sheet(isPresented: $showingHistory) {
             SummaryHistoryView()
@@ -660,7 +656,6 @@ struct SettingsView: View {
     @EnvironmentObject var vm: NewsVM
     @EnvironmentObject var authVM: AuthVM
     @Environment(\.dismiss) private var dismiss
-    @State private var showingAdmin = false
     private let speeds: [Double] = [0.8, 1.0, 1.25, 1.5, 1.75, 2.0]
 
     var body: some View {
@@ -750,16 +745,6 @@ struct SettingsView: View {
                             dismiss()
                         }
                         .foregroundColor(.red)
-                        
-                        
-                        // Admin Panel (only show for specific admin email)
-                        if user.email == "finlaysmith@gmail.com" {
-                            Button("Admin Panel") {
-                                showingAdmin = true
-                            }
-                            .foregroundColor(.red)
-                            .font(.caption)
-                        }
                     }
                 }
             }

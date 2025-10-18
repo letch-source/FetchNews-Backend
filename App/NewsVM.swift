@@ -58,10 +58,16 @@ final class NewsVM: ObservableObject {
     @Published var currentTime: Double = 0     // seconds
     @Published var duration: Double = 0        // seconds
 
-    // Settings
-    @Published var playbackRate: Double = 1.0
-    @Published var selectedVoice: String = "Alloy"
-    @Published var upliftingNewsOnly: Bool = false
+    // Settings (with UserDefaults persistence)
+    @Published var playbackRate: Double = 1.0 {
+        didSet { saveSettings() }
+    }
+    @Published var selectedVoice: String = "Alloy" {
+        didSet { saveSettings() }
+    }
+    @Published var upliftingNewsOnly: Bool = false {
+        didSet { saveSettings() }
+    }
     
     // Available voices
     let availableVoices: [String] = ["Alloy", "Echo", "Fable", "Onyx", "Nova", "Shimmer"]
@@ -76,6 +82,11 @@ final class NewsVM: ObservableObject {
     private var voicePreviewPlayer: AVPlayer?
     private var cachedVoiceIntroductions: [String: String] = [:] // voice -> audio URL
 
+    // MARK: - Initialization
+    init() {
+        loadSettings()
+    }
+    
     // MARK: - Intents
     func initializeIfNeeded() async {
         // Any heavy initialization that was previously done in init
@@ -110,9 +121,34 @@ final class NewsVM: ObservableObject {
             UserDefaults.standard.set(data, forKey: "cachedVoiceIntroductions")
         }
     }
+    
+    // MARK: - Settings Persistence
+    private func loadSettings() {
+        let defaults = UserDefaults.standard
+        
+        // Load playback rate
+        if let savedRate = defaults.object(forKey: "playbackRate") as? Double {
+            playbackRate = savedRate
+        }
+        
+        // Load selected voice
+        if let savedVoice = defaults.string(forKey: "selectedVoice") {
+            selectedVoice = savedVoice
+        }
+        
+        // Load content filter setting
+        upliftingNewsOnly = defaults.bool(forKey: "upliftingNewsOnly")
+    }
+    
+    private func saveSettings() {
+        let defaults = UserDefaults.standard
+        defaults.set(playbackRate, forKey: "playbackRate")
+        defaults.set(selectedVoice, forKey: "selectedVoice")
+        defaults.set(upliftingNewsOnly, forKey: "upliftingNewsOnly")
+    }
 
     func setPlaybackRate(_ r: Double) {
-        playbackRate = r
+        playbackRate = r // This will trigger didSet and saveSettings()
         if let p = player, p.timeControlStatus == .playing {
             p.rate = Float(r)
             updateNowPlaying(isPlaying: true)
@@ -126,7 +162,7 @@ final class NewsVM: ObservableObject {
         print("🔊 Has combined summary: \(combined != nil)")
         print("🔊 Current needsNewAudio: \(needsNewAudio)")
         
-        selectedVoice = v
+        selectedVoice = v // This will trigger didSet and saveSettings()
         
         // Check if we have a current summary
         if combined != nil {
@@ -148,7 +184,7 @@ final class NewsVM: ObservableObject {
     }
     
     func setUpliftingNewsOnly(_ enabled: Bool) {
-        upliftingNewsOnly = enabled
+        upliftingNewsOnly = enabled // This will trigger didSet and saveSettings()
         isDirty = true
     }
     
