@@ -31,9 +31,10 @@ struct AuthView: View {
                     VStack(spacing: 30) {
                         // Header
                         VStack(spacing: 16) {
-                            Image(systemName: "newspaper.fill")
-                                .font(.system(size: 60))
-                                .foregroundColor(.blue)
+                            Image("Launch Logo")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 60, height: 60)
                             
                             Text("Fetch News")
                                 .font(.largeTitle)

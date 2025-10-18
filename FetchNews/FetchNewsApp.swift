@@ -18,9 +18,10 @@ struct FetchNewsApp: App {
                 if authVM.isInitializing {
                     // Show loading screen while checking authentication
                     VStack(spacing: 20) {
-                        Image(systemName: "newspaper.fill")
-                            .font(.system(size: 60))
-                            .foregroundColor(.blue)
+                        Image("Launch Logo")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 60, height: 60)
                         
                         Text("Fetch News")
                             .font(.largeTitle)
