@@ -14,14 +14,24 @@ struct CustomTopicView: View {
     @State private var showingAlert = false
     @State private var alertMessage = ""
     
-    let predefinedTopics = [
-        "Technology", "Science", "Business", "Health", "Sports", "Entertainment",
-        "Politics", "World", "Local", "Environment", "Education", "Finance"
+    // Regular topics that users can already select (from ContentView)
+    let regularTopics = [
+        "business", "entertainment", "general", "health", "science", "sports", "technology", "world"
     ]
     
-    // Filter out topics that are already in custom topics
+    // Different popular topics for custom topics (not overlapping with regular topics)
+    let predefinedTopics = [
+        "Politics", "Local", "Environment", "Education", "Finance", "Travel",
+        "Food", "Fashion", "Art", "Music", "Gaming", "Cryptocurrency",
+        "Real Estate", "Automotive", "Fitness", "Weather", "Space", "AI"
+    ]
+    
+    // Filter out topics that are already in custom topics OR are regular topics
     var availablePredefinedTopics: [String] {
-        predefinedTopics.filter { !vm.customTopics.contains($0) }
+        predefinedTopics.filter { topic in
+            !vm.customTopics.contains(topic) && 
+            !regularTopics.contains(topic.lowercased())
+        }
     }
     
     var body: some View {
@@ -103,7 +113,7 @@ struct CustomTopicView: View {
                 // Predefined topics section (only show if there are available topics)
                 if !availablePredefinedTopics.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Popular Topics")
+                        Text("Suggested Topics")
                             .font(.headline)
                             .padding(.horizontal)
                         
@@ -170,6 +180,13 @@ struct CustomTopicView: View {
         
         if vm.customTopics.contains(trimmedTopic) {
             alertMessage = "This topic already exists."
+            showingAlert = true
+            return
+        }
+        
+        // Check if it's a regular topic that users can already select
+        if regularTopics.contains(trimmedTopic.lowercased()) {
+            alertMessage = "This topic is already available in the main topics list."
             showingAlert = true
             return
         }
