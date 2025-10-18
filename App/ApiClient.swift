@@ -232,14 +232,17 @@ final class ApiClient {
     }
     
     static func removeCustomTopic(_ topic: String) async throws -> [String] {
-        let endpoint = "/api/custom-topics/\(topic.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? topic)"
+        let endpoint = "/api/custom-topics/remove"
         var req = URLRequest(url: base.appendingPathComponent(endpoint))
-        req.httpMethod = "DELETE"
+        req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         if let token = authToken {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+        
+        let body = ["topic": topic]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
         
         let (data, response) = try await session.data(for: req)
         

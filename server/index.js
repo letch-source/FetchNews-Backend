@@ -354,7 +354,7 @@ Requirements:
           content: prompt
         }
       ],
-      max_tokens: Math.min(wordCount * 1.2, 1200), // Further reduced for faster response
+      max_tokens: Math.min(wordCount * 2, 2000), // Increased to allow for proper word count targets
       temperature: 0.6, // Reduced for more consistent, faster responses
     });
 

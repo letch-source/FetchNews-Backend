@@ -26,22 +26,24 @@ struct AuthView: View {
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 30) {
-                    // Header
-                    VStack(spacing: 16) {
-                        Image(systemName: "newspaper.fill")
-                            .font(.system(size: 60))
-                            .foregroundColor(.blue)
-                        
-                        Text("Fetch News")
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                        
-                        Text(isLoginMode ? "Welcome back!" : "Create your account")
-                            .font(.title3)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.top, 40)
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(spacing: 30) {
+                        // Header
+                        VStack(spacing: 16) {
+                            Image(systemName: "newspaper.fill")
+                                .font(.system(size: 60))
+                                .foregroundColor(.blue)
+                            
+                            Text("Fetch News")
+                                .font(.largeTitle)
+                                .fontWeight(.bold)
+                            
+                            Text(isLoginMode ? "Welcome back!" : "Create your account")
+                                .font(.title3)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.top, max(20, geometry.safeAreaInsets.top + 20))
                 
                 // Form
                 VStack(spacing: 20) {
@@ -143,26 +145,25 @@ struct AuthView: View {
                             .font(.subheadline)
                             .foregroundColor(.blue)
                     }
-                }
-                
-                Spacer()
-                
-                // Features preview
-                VStack(spacing: 12) {
-                    Text("What you get:")
-                        .font(.headline)
-                        .foregroundColor(.secondary)
-                    
-                    VStack(spacing: 8) {
-                        FeatureRow(icon: "newspaper", text: "Daily news summaries")
-                        FeatureRow(icon: "speaker.wave.3", text: "Audio narration")
-                        FeatureRow(icon: "star", text: "Premium features available")
+                        }
+                        
+                        // Features preview
+                        VStack(spacing: 12) {
+                            Text("What you get:")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                            
+                            VStack(spacing: 8) {
+                                FeatureRow(icon: "newspaper", text: "Daily news summaries")
+                                FeatureRow(icon: "speaker.wave.3", text: "Audio narration")
+                                FeatureRow(icon: "star", text: "Premium features available")
+                            }
+                        }
+                        .padding(.top, 20)
+                        .padding(.bottom, max(20, geometry.safeAreaInsets.bottom + 20))
                     }
+                    .frame(minHeight: geometry.size.height)
                 }
-                .padding(.bottom, 20)
-                
-                // Add bottom padding for keyboard
-                Color.clear.frame(height: 100)
             }
             .navigationTitle("")
             .navigationBarHidden(true)
@@ -185,10 +186,8 @@ struct AuthView: View {
                 .environmentObject(authVM)
         }
         .onAppear {
-            // Auto-focus email field for immediate keyboard appearance
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                focusedField = .email
-            }
+            // Clear any existing focus to start with keyboard hidden
+            focusedField = nil
         }
     }
     
