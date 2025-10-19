@@ -197,8 +197,14 @@ struct ScheduledSummaryEditorView: View {
                 dismiss()
             }
         } catch {
-            // Handle error silently for now
+            // Log the error for debugging
+            print("Error saving scheduled summary: \(error)")
+            print("Error details: \(error.localizedDescription)")
+            
+            // Show error to user instead of silently failing
             await MainActor.run {
+                // For now, still dismiss but log the error
+                // TODO: Show proper error alert to user
                 dismiss()
             }
         }
