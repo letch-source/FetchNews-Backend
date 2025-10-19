@@ -261,26 +261,34 @@ router.post('/execute', async (req, res) => {
     const now = new Date();
     const currentTime = now.toTimeString().slice(0, 5); // HH:mm format
     
-    console.log(`Checking for scheduled summaries at ${currentTime}`);
+    const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
+    console.log(`Checking for scheduled summaries at ${currentTime} on ${currentDay}`);
     
     // Find all users with scheduled summaries
     const users = await User.find({
       'preferences.scheduledSummaries': { $exists: true, $ne: [] }
     });
     
+    console.log(`Found ${users.length} users with scheduled summaries`);
+    
     let executedCount = 0;
+    let checkedCount = 0;
     
     for (const user of users) {
       const preferences = user.getPreferences();
       const scheduledSummaries = preferences.scheduledSummaries || [];
       
+      console.log(`User ${user.email} has ${scheduledSummaries.length} scheduled summaries`);
+      
       for (const summary of scheduledSummaries) {
-        // Check if it's the right time and day
-        const now = new Date();
-        const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
+        checkedCount++;
         const isCorrectDay = summary.days && summary.days.includes(currentDay);
+        const isCorrectTime = summary.time === currentTime;
+        const isEnabled = summary.isEnabled;
         
-        if (summary.isEnabled && summary.time === currentTime && isCorrectDay) {
+        console.log(`Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (current=${currentTime}), days=${JSON.stringify(summary.days)} (current=${currentDay}), shouldExecute=${isEnabled && isCorrectTime && isCorrectDay}`);
+        
+        if (isEnabled && isCorrectTime && isCorrectDay) {
           console.log(`Executing scheduled summary "${summary.name}" for user ${user.email} on ${currentDay}`);
           
           try {
@@ -302,9 +310,14 @@ router.post('/execute', async (req, res) => {
       }
     }
     
+    console.log(`Checked ${checkedCount} summaries, executed ${executedCount}`);
+    
     res.json({ 
-      message: `Executed ${executedCount} scheduled summaries at ${currentTime}`,
-      executedCount 
+      message: `Executed ${executedCount} scheduled summaries`,
+      executedCount,
+      checkedCount,
+      currentTime,
+      currentDay
     });
   } catch (error) {
     console.error('Error executing scheduled summaries:', error);
