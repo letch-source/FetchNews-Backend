@@ -10,7 +10,6 @@ import SwiftUI
 struct ScheduledSummariesView: View {
     @ObservedObject var vm: NewsVM
     @EnvironmentObject var authVM: AuthVM
-    @Environment(\.dismiss) var dismiss
     @State private var showingEditor = false
     @State private var editingSummary: ScheduledSummary?
     
@@ -126,15 +125,6 @@ struct ScheduledSummariesView: View {
             }
             .navigationTitle("Scheduled Summaries")
             .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: {
-                        dismiss()
-                    }) {
-                        Image(systemName: "chevron.left")
-                    }
-                }
-            }
         .sheet(isPresented: $showingEditor) {
             ScheduledSummaryEditorView(
                 summary: editingSummary,
