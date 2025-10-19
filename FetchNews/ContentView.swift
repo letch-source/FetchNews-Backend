@@ -764,6 +764,27 @@ struct SettingsView: View {
                                 }
                             }
                         }
+                        
+                        NavigationLink(destination: ScheduledSummariesView(vm: vm)) {
+                            HStack {
+                                Image(systemName: "clock")
+                                    .foregroundColor(.blue)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Scheduled Summaries")
+                                        .font(.body)
+                                    Text("Set up automatic news summaries")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                if !vm.scheduledSummaries.isEmpty {
+                                    Text("\(vm.scheduledSummaries.count) scheduled")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
                     }
                 }
                 

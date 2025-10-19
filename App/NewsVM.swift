@@ -47,6 +47,15 @@ final class NewsVM: ObservableObject {
     // Subscription UI
     @Published var showingSubscriptionView: Bool = false
     
+    // News sources settings UI
+    @Published var showingNewsSourcesSettings: Bool = false
+    
+    // Scheduled summaries
+    @Published var scheduledSummaries: [ScheduledSummary] = [] {
+        didSet { saveSettings() }
+    }
+    @Published var showingScheduledSummariesSettings: Bool = false
+    
     // Results
     @Published var combined: Combined?
     @Published var items: [Item] = []
@@ -212,6 +221,12 @@ final class NewsVM: ObservableObject {
         if let savedSources = defaults.array(forKey: "FetchNews_selectedNewsSources") as? [String] {
             selectedNewsSources = Set(savedSources)
         }
+        
+        // Load scheduled summaries
+        if let savedData = defaults.data(forKey: "FetchNews_scheduledSummaries"),
+           let savedSummaries = try? JSONDecoder().decode([ScheduledSummary].self, from: savedData) {
+            scheduledSummaries = savedSummaries
+        }
     }
     
     private func loadRemoteSettings() async {
@@ -227,6 +242,7 @@ final class NewsVM: ObservableObject {
             upliftingNewsOnly = preferences.upliftingNewsOnly
             lastFetchedTopics = Set(preferences.lastFetchedTopics)
             selectedNewsSources = Set(preferences.selectedNewsSources)
+            scheduledSummaries = preferences.scheduledSummaries
             
             // Save to local UserDefaults as backup
             saveLocalSettings()
@@ -261,6 +277,11 @@ final class NewsVM: ObservableObject {
         defaults.set(Array(lastFetchedTopics), forKey: "FetchNews_lastFetchedTopics")
         defaults.set(Array(selectedNewsSources), forKey: "FetchNews_selectedNewsSources")
         
+        // Save scheduled summaries
+        if let encoded = try? JSONEncoder().encode(scheduledSummaries) {
+            defaults.set(encoded, forKey: "FetchNews_scheduledSummaries")
+        }
+        
         defaults.synchronize()
     }
     
@@ -271,7 +292,8 @@ final class NewsVM: ObservableObject {
                 playbackRate: playbackRate,
                 upliftingNewsOnly: upliftingNewsOnly,
                 lastFetchedTopics: Array(lastFetchedTopics),
-                selectedNewsSources: Array(selectedNewsSources)
+                selectedNewsSources: Array(selectedNewsSources),
+                scheduledSummaries: scheduledSummaries
             )
             
             _ = try await ApiClient.updateUserPreferences(preferences)
@@ -417,6 +439,14 @@ final class NewsVM: ObservableObject {
         if let authVM = authVM, !authVM.canFetchNews {
             lastError = "You've reached your daily limit of 10 summaries. Upgrade to Premium for unlimited access."
             return
+        }
+        
+        // Check if premium user has selected at least 5 news sources
+        if let authVM = authVM, authVM.currentUser?.isPremium == true {
+            if selectedNewsSources.count > 0 && selectedNewsSources.count < 5 {
+                lastError = "Please select at least 5 news sources. You currently have \(selectedNewsSources.count) selected. Go to Settings > Premium Features > News Sources to select more."
+                return
+            }
         }
         
         // Cancel any existing request
@@ -688,6 +718,10 @@ final class NewsVM: ObservableObject {
     
     func showSubscriptionView() {
         showingSubscriptionView = true
+    }
+    
+    func showNewsSourcesSettings() {
+        showingNewsSourcesSettings = true
     }
     
     // MARK: - Custom Topics Management

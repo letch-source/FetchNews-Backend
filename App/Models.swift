@@ -261,6 +261,7 @@ struct UserPreferences: Codable {
     let upliftingNewsOnly: Bool
     let lastFetchedTopics: [String]
     let selectedNewsSources: [String]
+    let scheduledSummaries: [ScheduledSummary]
     
     enum CodingKeys: String, CodingKey {
         case selectedVoice
@@ -268,6 +269,7 @@ struct UserPreferences: Codable {
         case upliftingNewsOnly
         case lastFetchedTopics
         case selectedNewsSources
+        case scheduledSummaries
     }
 }
 
@@ -284,4 +286,37 @@ struct NewsSource: Codable, Identifiable {
 struct NewsSourcesResponse: Codable {
     let sources: [NewsSource]
     let sourcesByCategory: [String: [NewsSource]]
+}
+
+// MARK: - Scheduled Summaries
+
+struct ScheduledSummary: Codable, Identifiable {
+    let id: String
+    let name: String
+    let time: String // Format: "HH:mm"
+    let topics: [String]
+    let customTopics: [String]
+    let isEnabled: Bool
+    let createdAt: String
+    let lastRun: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case time
+        case topics
+        case customTopics
+        case isEnabled
+        case createdAt
+        case lastRun
+    }
+}
+
+struct ScheduledSummariesResponse: Codable {
+    let scheduledSummaries: [ScheduledSummary]
+}
+
+struct ScheduledSummaryTriggerResponse: Codable {
+    let message: String
+    let executedCount: Int
 }

@@ -45,7 +45,7 @@ struct FetchNewsApp: App {
                             }
                         }
                 } else {
-                    AuthView()
+                    WelcomeView()
                         .environmentObject(authVM)
                 }
             }

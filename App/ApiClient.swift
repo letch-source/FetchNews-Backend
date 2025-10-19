@@ -901,4 +901,84 @@ final class ApiClient {
         }
     }
     
+    // MARK: - Scheduled Summaries API
+    
+    static func getScheduledSummaries() async throws -> [ScheduledSummary] {
+        let endpoint = "/api/scheduled-summaries"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "GET"
+        if let token = authToken { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        let (data, response) = try await session.data(for: req)
+        guard let httpResponse = response as? HTTPURLResponse else { throw NetworkError.invalidResponse }
+        if httpResponse.statusCode == 200 {
+            let response = try JSONDecoder().decode(ScheduledSummariesResponse.self, from: data)
+            return response.scheduledSummaries
+        } else {
+            let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse?.error ?? "Failed to fetch scheduled summaries")
+        }
+    }
+    
+    static func createScheduledSummary(_ summary: ScheduledSummary) async throws -> ScheduledSummary {
+        let endpoint = "/api/scheduled-summaries"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = authToken { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        req.httpBody = try JSONEncoder().encode(summary)
+        let (data, response) = try await session.data(for: req)
+        guard let httpResponse = response as? HTTPURLResponse else { throw NetworkError.invalidResponse }
+        if httpResponse.statusCode == 201 {
+            return try JSONDecoder().decode(ScheduledSummary.self, from: data)
+        } else {
+            let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse?.error ?? "Failed to create scheduled summary")
+        }
+    }
+    
+    static func updateScheduledSummary(_ summary: ScheduledSummary) async throws -> ScheduledSummary {
+        let endpoint = "/api/scheduled-summaries/\(summary.id)"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "PUT"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = authToken { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        req.httpBody = try JSONEncoder().encode(summary)
+        let (data, response) = try await session.data(for: req)
+        guard let httpResponse = response as? HTTPURLResponse else { throw NetworkError.invalidResponse }
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(ScheduledSummary.self, from: data)
+        } else {
+            let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse?.error ?? "Failed to update scheduled summary")
+        }
+    }
+    
+        static func deleteScheduledSummary(id: String) async throws {
+            let endpoint = "/api/scheduled-summaries/\(id)"
+            var req = URLRequest(url: base.appendingPathComponent(endpoint))
+            req.httpMethod = "DELETE"
+            if let token = authToken { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+            let (data, response) = try await session.data(for: req)
+            guard let httpResponse = response as? HTTPURLResponse else { throw NetworkError.invalidResponse }
+            if httpResponse.statusCode != 200 {
+                let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+                throw NetworkError.serverError(errorResponse?.error ?? "Failed to delete scheduled summary")
+            }
+        }
+        
+        static func triggerScheduledSummaries() async throws -> ScheduledSummaryTriggerResponse {
+            let endpoint = "/api/scheduled-summaries/execute"
+            var req = URLRequest(url: base.appendingPathComponent(endpoint))
+            req.httpMethod = "POST"
+            if let token = authToken { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+            let (data, response) = try await session.data(for: req)
+            guard let httpResponse = response as? HTTPURLResponse else { throw NetworkError.invalidResponse }
+            if httpResponse.statusCode == 200 {
+                return try JSONDecoder().decode(ScheduledSummaryTriggerResponse.self, from: data)
+            } else {
+                let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+                throw NetworkError.serverError(errorResponse?.error ?? "Failed to trigger scheduled summaries")
+            }
+        }
+    
 }

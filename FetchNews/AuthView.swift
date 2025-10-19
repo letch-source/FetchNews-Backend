@@ -9,7 +9,7 @@ import SwiftUI
 
 struct AuthView: View {
     @EnvironmentObject var authVM: AuthVM
-    @State private var isLoginMode = true
+    @State private var isLoginMode: Bool
     @State private var email = ""
     @State private var password = ""
     @State private var confirmPassword = ""
@@ -22,6 +22,10 @@ struct AuthView: View {
     
     enum Field {
         case email, password, confirmPassword
+    }
+    
+    init(isLoginMode: Bool = true) {
+        self._isLoginMode = State(initialValue: isLoginMode)
     }
     
     var body: some View {
@@ -151,20 +155,7 @@ struct AuthView: View {
                     }
                         }
                         
-                        // Features preview
-                        VStack(spacing: 12) {
-                            Text("What you get:")
-                                .font(.headline)
-                                .foregroundColor(.secondary)
-                            
-                            VStack(spacing: 8) {
-                                FeatureRow(icon: "newspaper", text: "Daily news summaries")
-                                FeatureRow(icon: "speaker.wave.3", text: "Audio narration")
-                                FeatureRow(icon: "star", text: "Premium features available")
-                            }
-                        }
-                        .padding(.top, 20)
-                        .padding(.bottom, max(20, geometry.safeAreaInsets.bottom + 20))
+                        Spacer()
                     }
                     .frame(minHeight: geometry.size.height)
                 }
