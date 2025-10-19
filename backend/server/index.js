@@ -1577,6 +1577,8 @@ setInterval(async () => {
         const isCorrectTime = summary.time === currentTime;
         const isEnabled = summary.isEnabled;
         
+        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (current=${currentTime}), days=${JSON.stringify(summary.days)} (current=${currentDay}), shouldExecute=${isEnabled && isCorrectTime && isCorrectDay}`);
+        
         if (isEnabled && isCorrectTime && isCorrectDay) {
           console.log(`[SCHEDULER] Executing scheduled summary "${summary.name}" for user ${user.email} on ${currentDay}`);
           
