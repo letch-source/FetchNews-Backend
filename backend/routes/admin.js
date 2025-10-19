@@ -77,35 +77,35 @@ router.get('/overview', verifyAdminToken, async (req, res) => {
       });
       const revenue = paidPremiumUsers * 3.99;
       
-      // Get user growth data (last 7 days)
+      // Get user growth data (last 7 days) - using UTC to match user display
       const userGrowthData = [];
       const userGrowthLabels = [];
       for (let i = 6; i >= 0; i--) {
         const date = new Date();
-        date.setDate(date.getDate() - i);
-        date.setHours(0, 0, 0, 0);
+        date.setUTCDate(date.getUTCDate() - i);
+        date.setUTCHours(0, 0, 0, 0);
         
         const nextDate = new Date(date);
-        nextDate.setDate(nextDate.getDate() + 1);
+        nextDate.setUTCDate(nextDate.getUTCDate() + 1);
         
         const newUsers = await User.countDocuments({
           createdAt: { $gte: date, $lt: nextDate }
         });
         
         userGrowthData.push(newUsers);
-        userGrowthLabels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+        userGrowthLabels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }));
       }
       
-      // Get daily usage data (last 7 days)
+      // Get daily usage data (last 7 days) - using UTC to match user display
       const dailyUsageData = [];
       const dailyUsageLabels = [];
       for (let i = 6; i >= 0; i--) {
         const date = new Date();
-        date.setDate(date.getDate() - i);
-        date.setHours(0, 0, 0, 0);
+        date.setUTCDate(date.getUTCDate() - i);
+        date.setUTCHours(0, 0, 0, 0);
         
         const nextDate = new Date(date);
-        nextDate.setDate(nextDate.getDate() + 1);
+        nextDate.setUTCDate(nextDate.getUTCDate() + 1);
         
         const users = await User.find({
           lastUsageDate: { $gte: date, $lt: nextDate }
@@ -113,7 +113,7 @@ router.get('/overview', verifyAdminToken, async (req, res) => {
         
         const dailyUsage = users.reduce((sum, user) => sum + (user.dailyUsageCount || 0), 0);
         dailyUsageData.push(dailyUsage);
-        dailyUsageLabels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+        dailyUsageLabels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }));
       }
       
       stats = {
