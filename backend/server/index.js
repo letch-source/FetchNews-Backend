@@ -1542,9 +1542,6 @@ setInterval(async () => {
     
     console.log(`[SCHEDULER] Checking for scheduled summaries at ${currentTime} on ${currentDay}`);
     
-    // Import the scheduled summaries execution logic
-    const { executeScheduledSummaries } = require('../routes/scheduledSummaries');
-    
     // Find all users with scheduled summaries
     const User = require('../models/User');
     const users = await User.find({
