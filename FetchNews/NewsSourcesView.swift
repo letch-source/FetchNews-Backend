@@ -3,6 +3,7 @@ import SwiftUI
 struct NewsSourcesView: View {
     @ObservedObject var vm: NewsVM
     @ObservedObject var authVM: AuthVM
+    @Environment(\.dismiss) var dismiss
     @State private var searchText = ""
     @State private var selectedCategory = "All"
     @State private var isLoading = false
@@ -10,12 +11,17 @@ struct NewsSourcesView: View {
     @State private var errorMessage = ""
     
     private var filteredSources: [NewsSource] {
-        let sources = selectedCategory == "All" ? vm.availableNewsSources : (vm.newsSourcesByCategory[selectedCategory] ?? [])
+        let categorySources: [NewsSource]
+        if selectedCategory == "All" {
+            categorySources = vm.availableNewsSources
+        } else {
+            categorySources = vm.newsSourcesByCategory[selectedCategory] ?? []
+        }
         
         if searchText.isEmpty {
-            return sources
+            return categorySources
         } else {
-            return sources.filter { source in
+            return categorySources.filter { source in
                 source.name.localizedCaseInsensitiveContains(searchText) ||
                 source.description.localizedCaseInsensitiveContains(searchText)
             }
