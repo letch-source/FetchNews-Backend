@@ -296,6 +296,7 @@ struct ScheduledSummary: Codable, Identifiable {
     let time: String // Format: "HH:mm"
     let topics: [String]
     let customTopics: [String]
+    let days: [String] // Days of week: ["Monday", "Tuesday", etc.]
     let isEnabled: Bool
     let createdAt: String
     let lastRun: String?
@@ -306,6 +307,7 @@ struct ScheduledSummary: Codable, Identifiable {
         case time
         case topics
         case customTopics
+        case days
         case isEnabled
         case createdAt
         case lastRun

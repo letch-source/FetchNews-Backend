@@ -45,43 +45,48 @@ struct ScheduledSummariesView: View {
                     List {
                         // Existing scheduled summaries
                         ForEach(vm.scheduledSummaries) { summary in
-                            Button(action: {
-                                editingSummary = summary
-                                showingEditor = true
-                            }) {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(summary.name)
-                                            .font(.headline)
-                                            .foregroundColor(.primary)
-                                        
-                                        Text("\(formatTimeWithAMPM(summary.time)) • \(summary.topics.joined(separator: ", "))")
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(summary.name)
+                                        .font(.headline)
+                                        .foregroundColor(.primary)
+                                    
+                                    Text("\(formatTimeWithAMPM(summary.time)) • \(summary.topics.joined(separator: ", "))")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    
+                                    if !summary.customTopics.isEmpty {
+                                        Text("Custom: \(summary.customTopics.joined(separator: ", "))")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
-                                        
-                                        if !summary.customTopics.isEmpty {
-                                            Text("Custom: \(summary.customTopics.joined(separator: ", "))")
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                        }
                                     }
                                     
-                                    Spacer()
-                                    
-                                    VStack(alignment: .trailing, spacing: 4) {
-                                        Image(systemName: summary.isEnabled ? "checkmark.circle.fill" : "circle")
-                                            .foregroundColor(summary.isEnabled ? .green : .gray)
-                                        
-                                        if let lastRun = summary.lastRun {
-                                            Text("Last: \(formatDate(lastRun))")
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
-                                        }
+                                    if !summary.days.isEmpty {
+                                        Text("Days: \(summary.days.joined(separator: ", "))")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
                                     }
                                 }
-                                .padding(.vertical, 4)
+                                
+                                Spacer()
+                                
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    Image(systemName: summary.isEnabled ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(summary.isEnabled ? .green : .gray)
+                                    
+                                    if let lastRun = summary.lastRun {
+                                        Text("Last: \(formatDate(lastRun))")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
                             }
-                            .buttonStyle(PlainButtonStyle())
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                editingSummary = summary
+                                showingEditor = true
+                            }
                         }
                         .onDelete(perform: deleteScheduledSummary)
                         
@@ -124,8 +129,10 @@ struct ScheduledSummariesView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") {
+                    Button(action: {
                         dismiss()
+                    }) {
+                        Image(systemName: "chevron.left")
                     }
                 }
             }

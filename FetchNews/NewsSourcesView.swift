@@ -138,13 +138,14 @@ struct NewsSourcesView: View {
             .navigationTitle("News Sources")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    if (authVM.currentUser?.isPremium == true) && !vm.selectedNewsSources.isEmpty {
-                        Button("Save") {
-                            Task {
-                                await vm.updateSelectedNewsSources(Array(vm.selectedNewsSources))
-                            }
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: {
+                        Task {
+                            await vm.updateSelectedNewsSources(Array(vm.selectedNewsSources))
                         }
+                        dismiss()
+                    }) {
+                        Image(systemName: "chevron.left")
                     }
                 }
             }

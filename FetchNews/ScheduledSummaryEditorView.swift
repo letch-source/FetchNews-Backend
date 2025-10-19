@@ -17,10 +17,12 @@ struct ScheduledSummaryEditorView: View {
     @State private var selectedTime: Date = Date()
     @State private var selectedTopics: Set<String> = []
     @State private var selectedCustomTopics: Set<String> = []
+    @State private var selectedDays: Set<String> = []
     @State private var isEnabled: Bool = true
     @State private var isLoading: Bool = false
     
     private let allTopics = ["business", "entertainment", "general", "health", "science", "sports", "technology", "world"]
+    private let allDays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     
     var body: some View {
         NavigationView {
@@ -33,6 +35,27 @@ struct ScheduledSummaryEditorView: View {
                         .datePickerStyle(WheelDatePickerStyle())
                     
                     Toggle("Enabled", isOn: $isEnabled)
+                }
+                
+                Section(header: Text("Days of Week")) {
+                    ForEach(allDays, id: \.self) { day in
+                        HStack {
+                            Text(day)
+                            Spacer()
+                            if selectedDays.contains(day) {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if selectedDays.contains(day) {
+                                selectedDays.remove(day)
+                            } else {
+                                selectedDays.insert(day)
+                            }
+                        }
+                    }
                 }
                 
                 Section(header: Text("Regular Topics")) {
@@ -89,11 +112,13 @@ struct ScheduledSummaryEditorView: View {
             .navigationTitle(summary == nil ? "New Scheduled Summary" : "Edit Scheduled Summary")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: {
                         Task {
                             await saveScheduledSummary()
                         }
+                    }) {
+                        Image(systemName: "chevron.left")
                     }
                     .disabled(name.isEmpty || (selectedTopics.isEmpty && selectedCustomTopics.isEmpty) || isLoading)
                 }
@@ -111,6 +136,7 @@ struct ScheduledSummaryEditorView: View {
             isEnabled = summary.isEnabled
             selectedTopics = Set(summary.topics)
             selectedCustomTopics = Set(summary.customTopics)
+            selectedDays = Set(summary.days)
             
             // Parse time
             let formatter = DateFormatter()
@@ -123,6 +149,7 @@ struct ScheduledSummaryEditorView: View {
             name = "Daily News"
             selectedTime = Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date()) ?? Date()
             selectedTopics = ["general"]
+            selectedDays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] // Default to weekdays
         }
     }
     
@@ -141,6 +168,7 @@ struct ScheduledSummaryEditorView: View {
             time: timeString,
             topics: Array(selectedTopics),
             customTopics: Array(selectedCustomTopics),
+            days: Array(selectedDays),
             isEnabled: isEnabled,
             createdAt: summary?.createdAt ?? ISO8601DateFormatter().string(from: Date()),
             lastRun: summary?.lastRun
