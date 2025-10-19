@@ -5,6 +5,8 @@ services:
     rootDir: backend
     buildCommand: npm install
     startCommand: node server/index.js
+    # Note: rootDir is set to 'backend', so all commands run from backend/ directory
+    # No root package.json should be used - only backend/package.json
     envVars:
       - key: NODE_ENV
         value: production
