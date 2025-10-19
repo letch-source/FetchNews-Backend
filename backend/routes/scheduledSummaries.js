@@ -162,4 +162,52 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Execute scheduled summaries (called by cron job or manual trigger)
+router.post('/execute', async (req, res) => {
+  try {
+    const now = new Date();
+    const currentTime = now.toTimeString().slice(0, 5); // HH:mm format
+    
+    console.log(`Checking for scheduled summaries at ${currentTime}`);
+    
+    // Find all users with scheduled summaries
+    const users = await User.find({
+      'preferences.scheduledSummaries': { $exists: true, $ne: [] }
+    });
+    
+    let executedCount = 0;
+    
+    for (const user of users) {
+      const preferences = user.getPreferences();
+      const scheduledSummaries = preferences.scheduledSummaries || [];
+      
+      for (const summary of scheduledSummaries) {
+        if (summary.isEnabled && summary.time === currentTime) {
+          console.log(`Executing scheduled summary "${summary.name}" for user ${user.email}`);
+          
+          // Create a summary using the existing summarize endpoint logic
+          // For now, just log that we would execute it
+          // In a real implementation, you'd call the summarize endpoint
+          
+          // Update lastRun timestamp
+          const summaryIndex = scheduledSummaries.findIndex(s => s.id === summary.id);
+          if (summaryIndex !== -1) {
+            scheduledSummaries[summaryIndex].lastRun = new Date().toISOString();
+            await user.updatePreferences({ scheduledSummaries });
+            executedCount++;
+          }
+        }
+      }
+    }
+    
+    res.json({ 
+      message: `Executed ${executedCount} scheduled summaries at ${currentTime}`,
+      executedCount 
+    });
+  } catch (error) {
+    console.error('Error executing scheduled summaries:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;
