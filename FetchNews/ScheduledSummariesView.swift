@@ -139,11 +139,9 @@ struct ScheduledSummariesView: View {
             )
         }
         .onAppear {
-            // Load scheduled summaries if not already loaded
-            if vm.scheduledSummaries.isEmpty {
-                Task {
-                    await loadScheduledSummaries()
-                }
+            // Always load scheduled summaries from server to ensure we have the latest data
+            Task {
+                await loadScheduledSummaries()
             }
         }
     }
