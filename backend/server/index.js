@@ -1558,7 +1558,18 @@ setInterval(async () => {
     
     for (const user of users) {
       const preferences = user.getPreferences();
-      const scheduledSummaries = preferences.scheduledSummaries || [];
+      let scheduledSummaries = preferences.scheduledSummaries || [];
+      
+      // Clean up summaries with empty days arrays (they can't execute anyway)
+      const originalCount = scheduledSummaries.length;
+      scheduledSummaries = scheduledSummaries.filter(summary => 
+        summary.days && summary.days.length > 0
+      );
+      
+      if (scheduledSummaries.length !== originalCount) {
+        console.log(`[SCHEDULER] Cleaned up ${originalCount - scheduledSummaries.length} summaries with empty days for user ${user.email}`);
+        await user.updatePreferences({ scheduledSummaries });
+      }
       
       for (const summary of scheduledSummaries) {
         checkedCount++;

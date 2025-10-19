@@ -273,10 +273,23 @@ router.post('/execute', async (req, res) => {
     
     let executedCount = 0;
     let checkedCount = 0;
+    let cleanedCount = 0;
     
     for (const user of users) {
       const preferences = user.getPreferences();
-      const scheduledSummaries = preferences.scheduledSummaries || [];
+      let scheduledSummaries = preferences.scheduledSummaries || [];
+      
+      // Clean up summaries with empty days arrays (they can't execute anyway)
+      const originalCount = scheduledSummaries.length;
+      scheduledSummaries = scheduledSummaries.filter(summary => 
+        summary.days && summary.days.length > 0
+      );
+      
+      if (scheduledSummaries.length !== originalCount) {
+        console.log(`Cleaned up ${originalCount - scheduledSummaries.length} summaries with empty days for user ${user.email}`);
+        await user.updatePreferences({ scheduledSummaries });
+        cleanedCount += (originalCount - scheduledSummaries.length);
+      }
       
       console.log(`User ${user.email} has ${scheduledSummaries.length} scheduled summaries`);
       
@@ -310,12 +323,13 @@ router.post('/execute', async (req, res) => {
       }
     }
     
-    console.log(`Checked ${checkedCount} summaries, executed ${executedCount}`);
+    console.log(`Checked ${checkedCount} summaries, executed ${executedCount}, cleaned ${cleanedCount}`);
     
     res.json({ 
       message: `Executed ${executedCount} scheduled summaries`,
       executedCount,
       checkedCount,
+      cleanedCount,
       currentTime,
       currentDay
     });
