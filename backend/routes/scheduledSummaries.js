@@ -95,7 +95,26 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 
     const preferences = user.getPreferences();
-    const scheduledSummaries = preferences.scheduledSummaries || [];
+    let scheduledSummaries = preferences.scheduledSummaries || [];
+    
+    // Ensure all summaries have valid IDs (migration for old summaries without IDs)
+    let needsUpdate = false;
+    scheduledSummaries = scheduledSummaries.map(summary => {
+      if (!summary.id || summary.id.trim() === '') {
+        needsUpdate = true;
+        return {
+          ...summary,
+          id: `summary-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        };
+      }
+      return summary;
+    });
+    
+    // Save updated summaries if any were missing IDs
+    if (needsUpdate) {
+      await user.updatePreferences({ scheduledSummaries });
+      console.log(`Fixed missing IDs for ${scheduledSummaries.length} scheduled summaries for user ${user.email}`);
+    }
     
     res.json({ scheduledSummaries });
   } catch (error) {
