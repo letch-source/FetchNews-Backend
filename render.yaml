@@ -14,20 +14,3 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
-
-  - type: cron
-    name: fetchnews-scheduler
-    env: node
-    rootDir: backend
-    buildCommand: npm install
-    startCommand: node scheduler.js
-    schedule: "*/1 * * * *"  # Run every minute
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: JWT_SECRET
-        sync: false
-      - key: NEWSAPI_KEY
-        sync: false
-      - key: OPENAI_API_KEY
-        sync: false

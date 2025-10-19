@@ -326,3 +326,6 @@ router.post('/execute', async (req, res) => {
 });
 
 module.exports = router;
+
+// Export the executeScheduledSummary function for use by the main server
+module.exports.executeScheduledSummary = executeScheduledSummary;

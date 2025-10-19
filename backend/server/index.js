@@ -1532,9 +1532,75 @@ app.post("/api/tts", async (req, res) => {
   }
 });
 
+// --- Scheduled Summary Checker ---
+// Check for scheduled summaries every minute
+setInterval(async () => {
+  try {
+    const now = new Date();
+    const currentTime = now.toTimeString().slice(0, 5); // HH:mm format
+    const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
+    
+    console.log(`[SCHEDULER] Checking for scheduled summaries at ${currentTime} on ${currentDay}`);
+    
+    // Import the scheduled summaries execution logic
+    const { executeScheduledSummaries } = require('../routes/scheduledSummaries');
+    
+    // Find all users with scheduled summaries
+    const User = require('../models/User');
+    const users = await User.find({
+      'preferences.scheduledSummaries': { $exists: true, $ne: [] }
+    });
+    
+    console.log(`[SCHEDULER] Found ${users.length} users with scheduled summaries`);
+    
+    let executedCount = 0;
+    let checkedCount = 0;
+    
+    for (const user of users) {
+      const preferences = user.getPreferences();
+      const scheduledSummaries = preferences.scheduledSummaries || [];
+      
+      for (const summary of scheduledSummaries) {
+        checkedCount++;
+        const isCorrectDay = summary.days && summary.days.includes(currentDay);
+        const isCorrectTime = summary.time === currentTime;
+        const isEnabled = summary.isEnabled;
+        
+        if (isEnabled && isCorrectTime && isCorrectDay) {
+          console.log(`[SCHEDULER] Executing scheduled summary "${summary.name}" for user ${user.email} on ${currentDay}`);
+          
+          try {
+            // Import and call the execution function directly
+            const { executeScheduledSummary } = require('../routes/scheduledSummaries');
+            await executeScheduledSummary(user, summary);
+            console.log(`[SCHEDULER] Successfully executed scheduled summary "${summary.name}" for user ${user.email}`);
+            
+            // Update lastRun timestamp
+            const summaryIndex = scheduledSummaries.findIndex(s => s.id === summary.id);
+            if (summaryIndex !== -1) {
+              scheduledSummaries[summaryIndex].lastRun = new Date().toISOString();
+              await user.updatePreferences({ scheduledSummaries });
+              executedCount++;
+            }
+          } catch (error) {
+            console.error(`[SCHEDULER] Failed to execute scheduled summary "${summary.name}" for user ${user.email}:`, error);
+          }
+        }
+      }
+    }
+    
+    if (checkedCount > 0) {
+      console.log(`[SCHEDULER] Checked ${checkedCount} summaries, executed ${executedCount}`);
+    }
+  } catch (error) {
+    console.error('[SCHEDULER] Error checking scheduled summaries:', error);
+  }
+}, 60 * 1000); // Run every minute
+
 // --- Server start ---
 app.listen(PORT, () => {
   console.log(`Backend server running on port ${PORT}`);
+  console.log(`[SCHEDULER] Scheduled summary checker started - will check every minute`);
   if (!process.env.JWT_SECRET) {
     console.warn(
       "[WARN] JWT_SECRET is not set. Using an insecure fallback for development."
