@@ -2,22 +2,8 @@ services:
   - type: web
     name: fetchnews-backend
     env: node
-    buildCommand: |
-      if [ -d "backend" ]; then
-        cd backend && npm install
-      else
-        echo "Backend directory not found. Current directory contents:"
-        ls -la
-        exit 1
-      fi
-    startCommand: |
-      if [ -d "backend" ]; then
-        cd backend && node server/index.js
-      else
-        echo "Backend directory not found. Current directory contents:"
-        ls -la
-        exit 1
-      fi
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && node server/index.js
     envVars:
       - key: NODE_ENV
         value: production
