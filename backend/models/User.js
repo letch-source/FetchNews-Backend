@@ -89,7 +89,20 @@ const userSchema = new mongoose.Schema({
     selectedNewsSources: {
       type: [String],
       default: []
-    }
+    },
+    scheduledSummaries: [{
+      id: String,
+      name: String,
+      time: String,
+      topics: [String],
+      customTopics: [String],
+      isEnabled: {
+        type: Boolean,
+        default: true
+      },
+      createdAt: String,
+      lastRun: String
+    }]
   },
   summaryHistory: [{
     id: String,

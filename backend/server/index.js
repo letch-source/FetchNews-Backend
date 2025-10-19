@@ -106,6 +106,10 @@ app.use("/api/preferences", preferencesRoutes);
 // News sources routes
 app.use("/api/news-sources", newsSourcesRoutes);
 
+// Scheduled summaries routes
+const scheduledSummariesRoutes = require("../routes/scheduledSummaries");
+app.use("/api/scheduled-summaries", scheduledSummariesRoutes);
+
 // Serve admin website
 app.use("/admin", express.static(path.join(__dirname, "../../admin")));
 
