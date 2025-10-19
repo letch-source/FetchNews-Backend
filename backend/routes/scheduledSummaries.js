@@ -183,6 +183,9 @@ router.post('/', authenticateToken, async (req, res) => {
 // Update scheduled summary
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
+    console.log(`[UPDATE] Received update request for scheduled summary ID: ${req.params.id}`);
+    console.log(`[UPDATE] Request body:`, JSON.stringify(req.body, null, 2));
+    
     const user = await User.findById(req.user.id);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -233,6 +236,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
 
     // Update user preferences
     await user.updatePreferences({ scheduledSummaries });
+    
+    console.log(`[UPDATE] Successfully updated scheduled summary "${name}" for user ${user.email}`);
+    console.log(`[UPDATE] Updated summary:`, JSON.stringify(scheduledSummaries[summaryIndex], null, 2));
 
     res.json(scheduledSummaries[summaryIndex]);
   } catch (error) {
