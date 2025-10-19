@@ -83,6 +83,9 @@ struct ScheduledSummaryEditorView: View {
                     EmptyView()
                 }
             }
+            .onTapGesture {
+                hideKeyboard()
+            }
             .navigationTitle(summary == nil ? "New Scheduled Summary" : "Edit Scheduled Summary")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -173,6 +176,10 @@ struct ScheduledSummaryEditorView: View {
         }
         
         isLoading = false
+    }
+    
+    private func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 }
 
