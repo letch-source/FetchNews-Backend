@@ -21,17 +21,45 @@ async function executeScheduledSummary(user, summary) {
       selectedSources = preferences.selectedNewsSources || [];
     }
     
-    // For now, we'll create a simple summary by fetching articles and creating a basic summary
-    // In a full implementation, you'd call the actual summarize endpoint logic
-    
     console.log(`Creating scheduled summary for topics: ${allTopics.join(', ')}`);
     console.log(`Using ${selectedSources.length} selected sources`);
+    
+    // Import the summarization functions from the main server
+    const { fetchArticlesForTopic, summarizeArticles } = require('../server/index');
+    
+    // Get user's location for geo-targeted news
+    const userLocation = user.location || {};
+    const geo = userLocation.geo || null;
+    
+    // Fetch articles for each topic
+    const allArticles = [];
+    for (const topic of allTopics) {
+      try {
+        const articles = await fetchArticlesForTopic(topic, geo, 5, selectedSources);
+        allArticles.push(...articles);
+      } catch (error) {
+        console.error(`Failed to fetch articles for topic ${topic}:`, error);
+      }
+    }
+    
+    if (allArticles.length === 0) {
+      throw new Error('No articles found for scheduled summary topics');
+    }
+    
+    // Create a real summary using the same logic as the regular summarize endpoint
+    const combinedSummary = await summarizeArticles(
+      allTopics.join(', '), 
+      geo, 
+      allArticles, 
+      200, // Default word count
+      false // goodNewsOnly
+    );
     
     // Create a summary entry in the user's summary history
     const summaryEntry = {
       id: `scheduled-${Date.now()}`,
       title: summary.name,
-      summary: `Scheduled summary for ${allTopics.join(', ')} topics. This summary was automatically generated at ${new Date().toLocaleString()}.`,
+      summary: combinedSummary,
       topics: allTopics,
       createdAt: new Date().toISOString(),
       isScheduled: true

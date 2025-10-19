@@ -1544,3 +1544,9 @@ app.listen(PORT, () => {
     console.log(`CORS allowed origin: ${FRONTEND_ORIGIN}`);
   }
 });
+
+// Export functions for use by other modules (like scheduled summaries)
+module.exports = {
+  fetchArticlesForTopic,
+  summarizeArticles
+};
