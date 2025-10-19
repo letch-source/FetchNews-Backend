@@ -222,11 +222,8 @@ final class NewsVM: ObservableObject {
             selectedNewsSources = Set(savedSources)
         }
         
-        // Load scheduled summaries
-        if let savedData = defaults.data(forKey: "FetchNews_scheduledSummaries"),
-           let savedSummaries = try? JSONDecoder().decode([ScheduledSummary].self, from: savedData) {
-            scheduledSummaries = savedSummaries
-        }
+        // Scheduled summaries are loaded from server only (not local storage)
+        // to ensure they're accessible across all devices
     }
     
     private func loadRemoteSettings() async {
@@ -277,10 +274,8 @@ final class NewsVM: ObservableObject {
         defaults.set(Array(lastFetchedTopics), forKey: "FetchNews_lastFetchedTopics")
         defaults.set(Array(selectedNewsSources), forKey: "FetchNews_selectedNewsSources")
         
-        // Save scheduled summaries
-        if let encoded = try? JSONEncoder().encode(scheduledSummaries) {
-            defaults.set(encoded, forKey: "FetchNews_scheduledSummaries")
-        }
+        // Scheduled summaries are not saved locally - they're managed on the server
+        // to ensure they're accessible across all devices
         
         defaults.synchronize()
     }

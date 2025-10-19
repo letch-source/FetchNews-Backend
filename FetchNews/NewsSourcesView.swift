@@ -143,18 +143,6 @@ struct NewsSourcesView: View {
             }
             .navigationTitle("News Sources")
             .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: {
-                        Task {
-                            await vm.updateSelectedNewsSources(Array(vm.selectedNewsSources))
-                        }
-                        dismiss()
-                    }) {
-                        Image(systemName: "chevron.left")
-                    }
-                }
-            }
             .onAppear {
                 if (authVM.currentUser?.isPremium == true) && vm.availableNewsSources.isEmpty {
                     Task {
@@ -162,6 +150,12 @@ struct NewsSourcesView: View {
                         await vm.loadAvailableNewsSources()
                         isLoading = false
                     }
+                }
+            }
+            .onDisappear {
+                // Save news source preferences when leaving the view
+                Task {
+                    await vm.updateSelectedNewsSources(Array(vm.selectedNewsSources))
                 }
             }
             .alert("Error", isPresented: $showingError) {
