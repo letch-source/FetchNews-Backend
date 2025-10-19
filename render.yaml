@@ -2,8 +2,9 @@ services:
   - type: web
     name: fetchnews-backend
     env: node
-    buildCommand: cd backend && npm install
-    startCommand: cd backend && node server/index.js
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server/index.js
     envVars:
       - key: NODE_ENV
         value: production
