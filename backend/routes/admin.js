@@ -172,7 +172,8 @@ router.get('/users', verifyAdminToken, async (req, res) => {
         dailyUsageCount: user.dailyUsageCount,
         createdAt: user.createdAt,
         subscriptionId: user.subscriptionId,
-        subscriptionExpiresAt: user.subscriptionExpiresAt
+        subscriptionExpiresAt: user.subscriptionExpiresAt,
+        deviceInfo: user.deviceInfo
       }));
     } else {
       // Fallback for when database is not available
@@ -185,7 +186,8 @@ router.get('/users', verifyAdminToken, async (req, res) => {
         dailyUsageCount: user.dailyUsageCount,
         createdAt: user.createdAt,
         subscriptionId: user.subscriptionId,
-        subscriptionExpiresAt: user.subscriptionExpiresAt
+        subscriptionExpiresAt: user.subscriptionExpiresAt,
+        deviceInfo: user.deviceInfo
       }));
     }
 

@@ -43,6 +43,24 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: 'UTC'
   },
+  deviceInfo: {
+    deviceModel: {
+      type: String,
+      default: null
+    },
+    deviceName: {
+      type: String,
+      default: null
+    },
+    systemVersion: {
+      type: String,
+      default: null
+    },
+    appVersion: {
+      type: String,
+      default: null
+    }
+  },
   customTopics: {
     type: [String],
     default: []
@@ -276,6 +294,23 @@ userSchema.methods.updateSubscription = function(isPremium, subscriptionId = nul
   this.isPremium = isPremium;
   this.subscriptionId = subscriptionId;
   this.subscriptionExpiresAt = expiresAt;
+  return this.save();
+};
+
+// Update device information
+userSchema.methods.updateDeviceInfo = function(deviceInfo) {
+  if (deviceInfo.deviceModel) {
+    this.deviceInfo.deviceModel = deviceInfo.deviceModel;
+  }
+  if (deviceInfo.deviceName) {
+    this.deviceInfo.deviceName = deviceInfo.deviceName;
+  }
+  if (deviceInfo.systemVersion) {
+    this.deviceInfo.systemVersion = deviceInfo.systemVersion;
+  }
+  if (deviceInfo.appVersion) {
+    this.deviceInfo.appVersion = deviceInfo.appVersion;
+  }
   return this.save();
 };
 
