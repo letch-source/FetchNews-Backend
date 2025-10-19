@@ -29,15 +29,19 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const { name, time, topics, customTopics, isEnabled } = req.body;
+    const { name, time, topics, customTopics, days, isEnabled } = req.body;
     
     // Validate input
-    if (!name || !time || !topics || !Array.isArray(topics)) {
-      return res.status(400).json({ error: 'Missing required fields: name, time, topics' });
+    if (!name || !time || !topics || !Array.isArray(topics) || !days || !Array.isArray(days)) {
+      return res.status(400).json({ error: 'Missing required fields: name, time, topics, days' });
     }
 
     if (topics.length === 0 && (!customTopics || customTopics.length === 0)) {
       return res.status(400).json({ error: 'At least one topic must be selected' });
+    }
+
+    if (days.length === 0) {
+      return res.status(400).json({ error: 'At least one day must be selected' });
     }
 
     // Validate time format (HH:mm)
@@ -53,6 +57,7 @@ router.post('/', authenticateToken, async (req, res) => {
       time,
       topics: topics || [],
       customTopics: customTopics || [],
+      days: days || [],
       isEnabled: isEnabled !== undefined ? isEnabled : true,
       createdAt: new Date().toISOString(),
       lastRun: null
@@ -82,15 +87,19 @@ router.put('/:id', authenticateToken, async (req, res) => {
     }
 
     const { id } = req.params;
-    const { name, time, topics, customTopics, isEnabled } = req.body;
+    const { name, time, topics, customTopics, days, isEnabled } = req.body;
     
     // Validate input
-    if (!name || !time || !topics || !Array.isArray(topics)) {
-      return res.status(400).json({ error: 'Missing required fields: name, time, topics' });
+    if (!name || !time || !topics || !Array.isArray(topics) || !days || !Array.isArray(days)) {
+      return res.status(400).json({ error: 'Missing required fields: name, time, topics, days' });
     }
 
     if (topics.length === 0 && (!customTopics || customTopics.length === 0)) {
       return res.status(400).json({ error: 'At least one topic must be selected' });
+    }
+
+    if (days.length === 0) {
+      return res.status(400).json({ error: 'At least one day must be selected' });
     }
 
     // Validate time format (HH:mm)
@@ -116,6 +125,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
       time,
       topics: topics || [],
       customTopics: customTopics || [],
+      days: days || [],
       isEnabled: isEnabled !== undefined ? isEnabled : scheduledSummaries[summaryIndex].isEnabled
     };
 
@@ -182,8 +192,13 @@ router.post('/execute', async (req, res) => {
       const scheduledSummaries = preferences.scheduledSummaries || [];
       
       for (const summary of scheduledSummaries) {
-        if (summary.isEnabled && summary.time === currentTime) {
-          console.log(`Executing scheduled summary "${summary.name}" for user ${user.email}`);
+        // Check if it's the right time and day
+        const now = new Date();
+        const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
+        const isCorrectDay = summary.days && summary.days.includes(currentDay);
+        
+        if (summary.isEnabled && summary.time === currentTime && isCorrectDay) {
+          console.log(`Executing scheduled summary "${summary.name}" for user ${user.email} on ${currentDay}`);
           
           // Create a summary using the existing summarize endpoint logic
           // For now, just log that we would execute it

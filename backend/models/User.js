@@ -96,6 +96,7 @@ const userSchema = new mongoose.Schema({
       time: String,
       topics: [String],
       customTopics: [String],
+      days: [String],
       isEnabled: {
         type: Boolean,
         default: true
