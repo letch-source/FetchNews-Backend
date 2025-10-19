@@ -130,7 +130,7 @@ struct ScheduledSummaryEditorView: View {
     }
     
     private func setupInitialValues() {
-        if let summary = summary {
+        if let summary = summary, !summary.id.isEmpty {
             // Editing existing summary
             name = summary.name
             isEnabled = summary.isEnabled
@@ -175,7 +175,7 @@ struct ScheduledSummaryEditorView: View {
         )
         
         do {
-            if summary == nil {
+            if summary == nil || summary!.id.isEmpty {
                 // Create new
                 print("Creating new scheduled summary")
                 let createdSummary = try await ApiClient.createScheduledSummary(newSummary)

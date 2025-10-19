@@ -10,7 +10,6 @@ import SwiftUI
 struct ScheduledSummariesView: View {
     @ObservedObject var vm: NewsVM
     @EnvironmentObject var authVM: AuthVM
-    @State private var showingEditor = false
     @State private var editingSummary: ScheduledSummary?
     
     var body: some View {
@@ -30,7 +29,6 @@ struct ScheduledSummariesView: View {
                             .padding(.horizontal)
                         Button("Upgrade to Premium") {
                             vm.showSubscriptionView()
-                            dismiss()
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(.yellow)
@@ -83,15 +81,23 @@ struct ScheduledSummariesView: View {
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 editingSummary = summary
-                                showingEditor = true
                             }
                         }
                         .onDelete(perform: deleteScheduledSummary)
                         
                         // Add new scheduled summary button
                         Button(action: {
-                            editingSummary = nil
-                            showingEditor = true
+                            editingSummary = ScheduledSummary(
+                                id: "",
+                                name: "",
+                                time: "",
+                                topics: [],
+                                customTopics: [],
+                                days: [],
+                                isEnabled: true,
+                                createdAt: "",
+                                lastRun: nil
+                            )
                         }) {
                             HStack {
                                 Image(systemName: "plus.circle.fill")
@@ -125,9 +131,9 @@ struct ScheduledSummariesView: View {
             }
             .navigationTitle("Scheduled Summaries")
             .navigationBarTitleDisplayMode(.large)
-        .sheet(isPresented: $showingEditor) {
+        .sheet(item: $editingSummary) { summary in
             ScheduledSummaryEditorView(
-                summary: editingSummary,
+                summary: summary,
                 vm: vm,
                 authVM: authVM
             )
