@@ -15,8 +15,7 @@ struct ScheduledSummariesView: View {
     @State private var editingSummary: ScheduledSummary?
     
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
+        VStack(spacing: 0) {
                 if !(authVM.currentUser?.isPremium == true) {
                     // Premium gate
                     VStack(spacing: 16) {
@@ -44,7 +43,7 @@ struct ScheduledSummariesView: View {
                     // Scheduled summaries list
                     List {
                         // Existing scheduled summaries
-                        ForEach(vm.scheduledSummaries) { summary in
+                        ForEach(vm.scheduledSummaries, id: \.id) { summary in
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(summary.name)
@@ -136,7 +135,6 @@ struct ScheduledSummariesView: View {
                     }
                 }
             }
-        }
         .sheet(isPresented: $showingEditor) {
             ScheduledSummaryEditorView(
                 summary: editingSummary,
