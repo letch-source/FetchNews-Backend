@@ -244,6 +244,9 @@ userSchema.methods.updatePreferences = async function(preferences) {
   if (preferences.selectedNewsSources) {
     this.preferences.selectedNewsSources = preferences.selectedNewsSources;
   }
+  if (preferences.scheduledSummaries) {
+    this.preferences.scheduledSummaries = preferences.scheduledSummaries;
+  }
   
   await this.save();
   return this.preferences;
