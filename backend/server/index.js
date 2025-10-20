@@ -212,8 +212,8 @@ const CORE_CATEGORIES = new Set([
 async function fetchArticlesEverything(qParts, maxResults, selectedSources = []) {
   const q = encodeURIComponent(qParts.filter(Boolean).join(" "));
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
-  // Extend to 24 hours for more variety
-  const from = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  // Extend to 7 days for more variety (24 hours was too restrictive)
+  const from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`;
   console.log(`[DEBUG] Mediastack URL: ${url}`);
   const resp = await fetch(url);
@@ -412,11 +412,30 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   const isGeneral = normalizedTopic === "general";
 
   if (isGeneral) {
-    console.log(`General topic: using simplified approach`);
-    // For general news, just use the everything endpoint with broad keywords (like our test)
+    console.log(`General topic: using simplified approach without date filter`);
+    // For general news, use a simple approach without date filtering (like our test endpoint)
     try {
-      articles = await fetchArticlesEverything(["news", "headlines"], pageSize, selectedSources);
-      console.log(`General topic: fetched ${articles.length} articles using everything endpoint`);
+      const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}`;
+      console.log(`[DEBUG] General topic URL: ${url}`);
+      const resp = await fetch(url);
+      
+      if (!resp.ok) {
+        throw new Error(`Mediastack error: ${resp.status}`);
+      }
+      
+      const data = await resp.json();
+      console.log(`[DEBUG] General topic response:`, JSON.stringify(data, null, 2));
+      
+      // Map Mediastack response to expected format
+      articles = (data.data || []).map(article => ({
+        title: article.title,
+        description: article.description,
+        url: article.url,
+        publishedAt: article.published_at,
+        source: { id: article.source, name: article.source }
+      }));
+      
+      console.log(`General topic: fetched ${articles.length} articles using simple approach`);
     } catch (error) {
       console.error(`Error fetching general news:`, error);
       // Fallback to category-based approach
