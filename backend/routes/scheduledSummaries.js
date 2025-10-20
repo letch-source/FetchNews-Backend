@@ -97,23 +97,41 @@ router.get('/', authenticateToken, async (req, res) => {
     const preferences = user.getPreferences();
     let scheduledSummaries = preferences.scheduledSummaries || [];
     
-    // Ensure all summaries have valid IDs (migration for old summaries without IDs)
+    // Ensure all summaries have valid IDs and required fields (migration for old summaries)
     let needsUpdate = false;
     scheduledSummaries = scheduledSummaries.map(summary => {
+      let updated = false;
+      let updatedSummary = { ...summary };
+      
+      // Ensure ID exists
       if (!summary.id || summary.id.trim() === '') {
-        needsUpdate = true;
-        return {
-          ...summary,
-          id: `summary-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-        };
+        updatedSummary.id = `summary-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        updated = true;
       }
-      return summary;
+      
+      // Ensure createdAt exists
+      if (!summary.createdAt) {
+        updatedSummary.createdAt = new Date().toISOString();
+        updated = true;
+      }
+      
+      // Ensure lastRun exists (can be null)
+      if (summary.lastRun === undefined) {
+        updatedSummary.lastRun = null;
+        updated = true;
+      }
+      
+      if (updated) {
+        needsUpdate = true;
+      }
+      
+      return updatedSummary;
     });
     
     // Save updated summaries if any were missing IDs
     if (needsUpdate) {
       await user.updatePreferences({ scheduledSummaries });
-      console.log(`Fixed missing IDs for ${scheduledSummaries.length} scheduled summaries for user ${user.email}`);
+      console.log(`Fixed missing fields for ${scheduledSummaries.length} scheduled summaries for user ${user.email}`);
     }
     
     console.log(`[API] Returning ${scheduledSummaries.length} scheduled summaries for user ${user.email}`);
