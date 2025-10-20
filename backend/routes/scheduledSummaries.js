@@ -109,6 +109,42 @@ router.get('/', authenticateToken, async (req, res) => {
         updated = true;
       }
       
+      // Ensure name exists
+      if (!summary.name || summary.name.trim() === '') {
+        updatedSummary.name = `Scheduled Summary ${Date.now()}`;
+        updated = true;
+      }
+      
+      // Ensure time exists
+      if (!summary.time || summary.time.trim() === '') {
+        updatedSummary.time = '09:00';
+        updated = true;
+      }
+      
+      // Ensure topics array exists
+      if (!summary.topics || !Array.isArray(summary.topics)) {
+        updatedSummary.topics = [];
+        updated = true;
+      }
+      
+      // Ensure customTopics array exists
+      if (!summary.customTopics || !Array.isArray(summary.customTopics)) {
+        updatedSummary.customTopics = [];
+        updated = true;
+      }
+      
+      // Ensure days array exists
+      if (!summary.days || !Array.isArray(summary.days)) {
+        updatedSummary.days = [];
+        updated = true;
+      }
+      
+      // Ensure isEnabled exists
+      if (summary.isEnabled === undefined) {
+        updatedSummary.isEnabled = true;
+        updated = true;
+      }
+      
       // Ensure createdAt exists
       if (!summary.createdAt) {
         updatedSummary.createdAt = new Date().toISOString();
@@ -139,7 +175,7 @@ router.get('/', authenticateToken, async (req, res) => {
     
     // Log each summary's fields for debugging
     scheduledSummaries.forEach((summary, index) => {
-      console.log(`[API] Summary ${index}: id=${summary.id ? 'present' : 'MISSING'}, createdAt=${summary.createdAt ? 'present' : 'MISSING'}, lastRun=${summary.lastRun !== undefined ? 'present' : 'MISSING'}`);
+      console.log(`[API] Summary ${index}: id=${summary.id ? 'present' : 'MISSING'}, name=${summary.name ? 'present' : 'MISSING'}, time=${summary.time ? 'present' : 'MISSING'}, topics=${Array.isArray(summary.topics) ? 'present' : 'MISSING'}, days=${Array.isArray(summary.days) ? 'present' : 'MISSING'}, isEnabled=${summary.isEnabled !== undefined ? 'present' : 'MISSING'}, createdAt=${summary.createdAt ? 'present' : 'MISSING'}, lastRun=${summary.lastRun !== undefined ? 'present' : 'MISSING'}`);
     });
     res.json({ scheduledSummaries });
   } catch (error) {
