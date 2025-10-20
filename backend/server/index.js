@@ -128,7 +128,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   throw new Error('JWT_SECRET environment variable is required');
 }
-const NEWSAPI_KEY = process.env.NEWSAPI_KEY || "";
+const MEDIASTACK_KEY = process.env.MEDIASTACK_KEY || "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 
 // --- In-memory data store fallback (replace with SQLite later) ---
@@ -214,19 +214,29 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [])
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
   // Extend to 24 hours for more variety
   const from = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const url = `https://newsapi.org/v2/everything?q=${q}&language=en&sortBy=publishedAt&pageSize=${pageSize}&from=${from}`;
-  const resp = await fetch(url, { headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } });
+  const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`;
+  const resp = await fetch(url);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    throw new Error(`NewsAPI error: ${resp.status} ${text}`);
+    throw new Error(`Mediastack error: ${resp.status} ${text}`);
   }
   const data = await resp.json();
-  console.log(`NewsAPI returned ${data.articles?.length || 0} articles`);
-  if (selectedSources && selectedSources.length > 0 && data.articles?.length > 0) {
-    const sources = [...new Set(data.articles.map(a => a.source?.id).filter(Boolean))];
+  console.log(`Mediastack returned ${data.data?.length || 0} articles`);
+  
+  // Map Mediastack response to match expected format
+  const articles = (data.data || []).map(article => ({
+    title: article.title,
+    description: article.description,
+    url: article.url,
+    publishedAt: article.published_at,
+    source: { id: article.source, name: article.source }
+  }));
+  
+  if (selectedSources && selectedSources.length > 0 && articles.length > 0) {
+    const sources = [...new Set(articles.map(a => a.source?.id).filter(Boolean))];
     console.log(`Articles came from sources: ${sources.join(", ")}`);
   }
-  return Array.isArray(data.articles) ? data.articles : [];
+  return articles;
 }
 
 // Function to ensure variety by getting articles from multiple sources with progressive time expansion
@@ -253,13 +263,21 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
       
       try {
         // Use everything endpoint with time filter for more control
-        const url = `https://newsapi.org/v2/everything?sources=${source}&from=${from}&sortBy=publishedAt&pageSize=1&language=en`;
-        const resp = await fetch(url, { headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } });
+        const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&date=${from}&sort=published_desc&limit=1&languages=en`;
+        const resp = await fetch(url);
         
         if (resp.ok) {
           const data = await resp.json();
-          if (data.articles && data.articles.length > 0) {
-            articles.push(data.articles[0]);
+          if (data.data && data.data.length > 0) {
+            // Map Mediastack response to expected format
+            const article = {
+              title: data.data[0].title,
+              description: data.data[0].description,
+              url: data.data[0].url,
+              publishedAt: data.data[0].published_at,
+              source: { id: data.data[0].source, name: data.data[0].source }
+            };
+            articles.push(article);
             usedSources.add(source);
             console.log(`Got article from ${source} (${hours}h window)`);
           }
@@ -314,34 +332,43 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
   const params = new URLSearchParams();
   
-  // NewsAPI doesn't allow mixing sources with category/country parameters
+  // Mediastack parameter mapping
   if (selectedSources && selectedSources.length > 0) {
     console.log(`Filtering by sources: ${selectedSources.join(",")}`);
     params.set("sources", selectedSources.join(","));
-    // When using sources, we can't use category or country
   } else {
     console.log(`No source filtering applied (using all sources)`);
-    // When not using sources, we can use category and country
-    if (category) params.set("category", category);
-    if (countryCode) params.set("country", String(countryCode).toLowerCase());
+    if (category) params.set("categories", category);
+    if (countryCode) params.set("countries", String(countryCode).toLowerCase());
   }
   
-  if (extraQuery) params.set("q", extraQuery);
-  params.set("pageSize", String(pageSize));
-  const url = `https://newsapi.org/v2/top-headlines?${params.toString()}`;
-  console.log(`Final NewsAPI URL: ${url}`);
-  const resp = await fetch(url, { headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } });
+  if (extraQuery) params.set("keywords", extraQuery);
+  params.set("limit", String(pageSize));
+  params.set("languages", "en");
+  const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&${params.toString()}`;
+  console.log(`Final Mediastack URL: ${url}`);
+  const resp = await fetch(url);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    throw new Error(`NewsAPI error: ${resp.status} ${text}`);
+    throw new Error(`Mediastack error: ${resp.status} ${text}`);
   }
   const data = await resp.json();
-  console.log(`NewsAPI returned ${data.articles?.length || 0} articles`);
-  if (selectedSources && selectedSources.length > 0 && data.articles?.length > 0) {
-    const sources = [...new Set(data.articles.map(a => a.source?.id).filter(Boolean))];
+  console.log(`Mediastack returned ${data.data?.length || 0} articles`);
+  
+  // Map Mediastack response to match expected format
+  const articles = (data.data || []).map(article => ({
+    title: article.title,
+    description: article.description,
+    url: article.url,
+    publishedAt: article.published_at,
+    source: { id: article.source, name: article.source }
+  }));
+  
+  if (selectedSources && selectedSources.length > 0 && articles.length > 0) {
+    const sources = [...new Set(articles.map(a => a.source?.id).filter(Boolean))];
     console.log(`Articles came from sources: ${sources.join(", ")}`);
   }
-  return Array.isArray(data.articles) ? data.articles : [];
+  return articles;
 }
 
 async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = []) {
@@ -353,8 +380,8 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   if (city) queryParts.push(city);
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
 
-  if (!NEWSAPI_KEY) {
-    return { articles: [], note: "Missing NEWSAPI_KEY" };
+  if (!MEDIASTACK_KEY) {
+    return { articles: [], note: "Missing MEDIASTACK_KEY" };
   }
 
   // Check cache first
@@ -768,7 +795,7 @@ app.get("/api/health", (req, res) => {
   res.json({
     status: "ok",
     jwtConfigured: !!process.env.JWT_SECRET, // true means you're using a real secret
-    newsConfigured: !!process.env.NEWSAPI_KEY,
+    newsConfigured: !!process.env.MEDIASTACK_KEY,
     ttsConfigured: !!process.env.OPENAI_API_KEY,
   });
 });

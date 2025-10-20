@@ -14,20 +14,16 @@ router.get('/available', authenticateToken, async (req, res) => {
       });
     }
 
-    const NEWSAPI_KEY = process.env.NEWSAPI_KEY;
-    if (!NEWSAPI_KEY) {
-      return res.status(500).json({ error: 'NewsAPI key not configured' });
+    const MEDIASTACK_KEY = process.env.MEDIASTACK_KEY;
+    if (!MEDIASTACK_KEY) {
+      return res.status(500).json({ error: 'Mediastack key not configured' });
     }
 
-    // Fetch sources from NewsAPI
-    const response = await fetch('https://newsapi.org/v2/top-headlines/sources?language=en', {
-      headers: {
-        'Authorization': `Bearer ${NEWSAPI_KEY}`
-      }
-    });
+    // Fetch sources from Mediastack
+    const response = await fetch(`http://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&languages=en`);
 
     if (!response.ok) {
-      throw new Error(`NewsAPI error: ${response.status}`);
+      throw new Error(`Mediastack error: ${response.status}`);
     }
 
     const data = await response.json();
