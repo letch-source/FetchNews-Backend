@@ -1635,7 +1635,14 @@ setInterval(async () => {
         // Convert scheduled time to UTC for comparison
         // Assume user is in PST/PDT (UTC-8/UTC-7) - we'll need to make this dynamic later
         const userTimezone = 'America/Los_Angeles'; // PST/PDT
-        const scheduledTimeUTC = new Date(`2025-01-01 ${summary.time} ${userTimezone}`).toISOString().slice(11, 16);
+        const [hours, minutes] = summary.time.split(':');
+        const scheduledDate = new Date();
+        scheduledDate.setUTCFullYear(2025, 0, 1); // January 1, 2025
+        scheduledDate.setUTCHours(parseInt(hours), parseInt(minutes), 0, 0);
+        
+        // Convert from PST/PDT to UTC (add 8 hours for PST, 7 for PDT)
+        // For simplicity, using PST offset (UTC-8)
+        const scheduledTimeUTC = new Date(scheduledDate.getTime() + (8 * 60 * 60 * 1000)).toISOString().slice(11, 16);
         const isCorrectTime = scheduledTimeUTC === currentTime;
         const isEnabled = summary.isEnabled;
         
