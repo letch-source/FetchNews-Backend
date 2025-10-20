@@ -813,6 +813,39 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Test Mediastack API endpoint
+app.get("/api/test-mediastack", async (req, res) => {
+  try {
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=5`;
+    console.log(`[TEST] Testing Mediastack URL: ${url}`);
+    const resp = await fetch(url);
+    
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      return res.status(500).json({ 
+        error: `Mediastack API error: ${resp.status}`, 
+        details: text,
+        url: url
+      });
+    }
+    
+    const data = await resp.json();
+    console.log(`[TEST] Mediastack test response:`, JSON.stringify(data, null, 2));
+    
+    res.json({
+      success: true,
+      articlesCount: data.data?.length || 0,
+      response: data
+    });
+  } catch (error) {
+    console.error('[TEST] Mediastack test error:', error);
+    res.status(500).json({ 
+      error: 'Mediastack test failed', 
+      details: error.message 
+    });
+  }
+});
+
 // Signup
 app.post("/api/auth/signup", (req, res) => {
   const { email, password } = req.body || {};
