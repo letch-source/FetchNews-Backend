@@ -166,8 +166,17 @@ router.get('/', authenticateToken, async (req, res) => {
     
     // Save updated summaries if any were missing IDs
     if (needsUpdate) {
+      console.log(`[MIGRATION] Saving updated summaries for user ${user.email}`);
+      console.log(`[MIGRATION] Updated summaries:`, JSON.stringify(scheduledSummaries, null, 2));
       await user.updatePreferences({ scheduledSummaries });
-      console.log(`Fixed missing fields for ${scheduledSummaries.length} scheduled summaries for user ${user.email}`);
+      console.log(`[MIGRATION] Successfully saved ${scheduledSummaries.length} scheduled summaries for user ${user.email}`);
+      
+      // Reload the user to get the updated data
+      await user.save();
+      const updatedUser = await User.findById(req.user.id);
+      const updatedPreferences = updatedUser.getPreferences();
+      scheduledSummaries = updatedPreferences.scheduledSummaries || [];
+      console.log(`[MIGRATION] Reloaded summaries from database:`, JSON.stringify(scheduledSummaries, null, 2));
     }
     
     console.log(`[API] Returning ${scheduledSummaries.length} scheduled summaries for user ${user.email}`);
