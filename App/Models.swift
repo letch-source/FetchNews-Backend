@@ -333,8 +333,8 @@ struct ScheduledSummary: Codable, Identifiable {
         // Generate ID if missing
         let id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         
-        let name = try container.decode(String.self, forKey: .name)
-        let time = try container.decode(String.self, forKey: .time)
+        let name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Scheduled Summary"
+        let time = try container.decodeIfPresent(String.self, forKey: .time) ?? "09:00"
         let topics = try container.decodeIfPresent([String].self, forKey: .topics) ?? []
         let customTopics = try container.decodeIfPresent([String].self, forKey: .customTopics) ?? []
         let days = try container.decodeIfPresent([String].self, forKey: .days) ?? []
