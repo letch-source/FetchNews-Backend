@@ -166,12 +166,19 @@ struct ScheduledSummariesView: View {
     
     private func loadScheduledSummaries() async {
         do {
+            print("🔍 Loading scheduled summaries from API...")
             let summaries = try await ApiClient.getScheduledSummaries()
+            print("✅ Received \(summaries.count) scheduled summaries from API")
+            for summary in summaries {
+                print("📋 Summary: \(summary.name) - \(summary.time) - \(summary.days) - enabled: \(summary.isEnabled)")
+            }
             await MainActor.run {
                 vm.scheduledSummaries = summaries
+                print("📱 Updated vm.scheduledSummaries with \(vm.scheduledSummaries.count) summaries")
             }
         } catch {
-            // Handle error silently for now
+            print("❌ Error loading scheduled summaries: \(error)")
+            print("❌ Error details: \(error.localizedDescription)")
         }
     }
     
