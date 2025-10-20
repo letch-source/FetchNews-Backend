@@ -1631,10 +1631,15 @@ setInterval(async () => {
       for (const summary of scheduledSummaries) {
         checkedCount++;
         const isCorrectDay = summary.days && summary.days.includes(currentDay);
-        const isCorrectTime = summary.time === currentTime;
+        
+        // Convert scheduled time to UTC for comparison
+        // Assume user is in PST/PDT (UTC-8/UTC-7) - we'll need to make this dynamic later
+        const userTimezone = 'America/Los_Angeles'; // PST/PDT
+        const scheduledTimeUTC = new Date(`2025-01-01 ${summary.time} ${userTimezone}`).toISOString().slice(11, 16);
+        const isCorrectTime = scheduledTimeUTC === currentTime;
         const isEnabled = summary.isEnabled;
         
-        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (current=${currentTime}), days=${JSON.stringify(summary.days)} (current=${currentDay}), shouldExecute=${isEnabled && isCorrectTime && isCorrectDay}`);
+        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (local) -> ${scheduledTimeUTC} (UTC) (current=${currentTime}), days=${JSON.stringify(summary.days)} (current=${currentDay}), shouldExecute=${isEnabled && isCorrectTime && isCorrectDay}`);
         
         if (isEnabled && isCorrectTime && isCorrectDay) {
           console.log(`[SCHEDULER] Executing scheduled summary "${summary.name}" for user ${user.email} on ${currentDay}`);
