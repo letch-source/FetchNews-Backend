@@ -1599,6 +1599,8 @@ setInterval(async () => {
     const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
     
     console.log(`[SCHEDULER] Checking for scheduled summaries at ${currentTime} on ${currentDay}`);
+    console.log(`[SCHEDULER] Server timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
+    console.log(`[SCHEDULER] Full server time: ${now.toString()}`);
     
     // Find all users with scheduled summaries
     const User = require('../models/User');
