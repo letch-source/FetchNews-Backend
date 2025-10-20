@@ -35,13 +35,22 @@ async function executeScheduledSummary(user, summary) {
     const allArticles = [];
     for (const topic of allTopics) {
       try {
-        const articles = await fetchArticlesForTopic(topic, geo, 5, selectedSources);
-        console.log(`[SCHEDULER] Fetched ${Array.isArray(articles) ? articles.length : 'non-array'} articles for topic ${topic}`);
-        if (Array.isArray(articles)) {
-          allArticles.push(...articles);
+        const result = await fetchArticlesForTopic(topic, geo, 5, selectedSources);
+        console.log(`[SCHEDULER] Fetched result for topic ${topic}:`, typeof result);
+        
+        // Handle both array and object responses
+        let articles = [];
+        if (Array.isArray(result)) {
+          articles = result;
+        } else if (result && result.articles && Array.isArray(result.articles)) {
+          articles = result.articles;
         } else {
-          console.error(`[SCHEDULER] fetchArticlesForTopic returned non-array for topic ${topic}:`, typeof articles, articles);
+          console.error(`[SCHEDULER] Unexpected result format for topic ${topic}:`, result);
+          continue;
         }
+        
+        console.log(`[SCHEDULER] Adding ${articles.length} articles for topic ${topic}`);
+        allArticles.push(...articles);
       } catch (error) {
         console.error(`Failed to fetch articles for topic ${topic}:`, error);
       }
