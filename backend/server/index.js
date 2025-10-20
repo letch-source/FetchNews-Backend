@@ -813,6 +813,11 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Simple test endpoint
+app.get("/api/test", (req, res) => {
+  res.json({ message: "Test endpoint working", timestamp: new Date().toISOString() });
+});
+
 // Test Mediastack API endpoint
 app.get("/api/test-mediastack", async (req, res) => {
   try {
