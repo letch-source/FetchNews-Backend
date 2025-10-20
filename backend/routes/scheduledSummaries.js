@@ -61,7 +61,11 @@ async function executeScheduledSummary(user, summary) {
       title: summary.name,
       summary: combinedSummary,
       topics: allTopics,
+      length: "200", // Default word count
+      timestamp: new Date().toISOString(),
       createdAt: new Date().toISOString(),
+      audioUrl: null, // Will be generated if TTS is enabled
+      sources: allArticles.map(article => article.source?.name || article.source?.id || 'Unknown'),
       isScheduled: true
     };
     
@@ -78,7 +82,9 @@ async function executeScheduledSummary(user, summary) {
     
     await user.save();
     
-    console.log(`Scheduled summary "${summary.name}" created and saved to user's history`);
+    console.log(`[SCHEDULER] Scheduled summary "${summary.name}" created and saved to user's history`);
+    console.log(`[SCHEDULER] Summary entry:`, JSON.stringify(summaryEntry, null, 2));
+    console.log(`[SCHEDULER] User now has ${user.summaryHistory.length} summaries in history`);
     
   } catch (error) {
     console.error('Error executing scheduled summary:', error);
