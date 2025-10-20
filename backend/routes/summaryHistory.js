@@ -25,6 +25,9 @@ router.get('/', authenticateToken, async (req, res) => {
       timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp
     }));
     
+    console.log(`[API] Returning ${formattedHistory.length} summaries for user ${user.email}`);
+    console.log(`[API] Summary titles:`, formattedHistory.map(s => s.title));
+    
     res.json({ summaryHistory: formattedHistory });
   } catch (error) {
     console.error('Get summary history error:', error);
