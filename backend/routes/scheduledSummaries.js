@@ -99,72 +99,76 @@ router.get('/', authenticateToken, async (req, res) => {
     
     console.log(`[API] Original scheduled summaries from database:`, JSON.stringify(scheduledSummaries, null, 2));
     
-    // Ensure all summaries have valid IDs and required fields (migration for old summaries)
+    // Check if migration is needed (only run if data is actually missing)
     let needsUpdate = false;
-    scheduledSummaries = scheduledSummaries.map(summary => {
-      let updated = false;
-      let updatedSummary = { ...summary };
-      
-      // Ensure ID exists
-      if (!summary.id || summary.id.trim() === '') {
-        updatedSummary.id = `summary-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        updated = true;
-      }
-      
-      // Ensure name exists (only if completely missing)
-      if (!summary.name) {
-        updatedSummary.name = `Scheduled Summary ${Date.now()}`;
-        updated = true;
-      }
-      
-      // Ensure time exists (only if completely missing)
-      if (!summary.time) {
-        updatedSummary.time = '09:00';
-        updated = true;
-      }
-      
-      // Ensure topics array exists (only if completely missing)
-      if (!summary.topics) {
-        updatedSummary.topics = [];
-        updated = true;
-      }
-      
-      // Ensure customTopics array exists (only if completely missing)
-      if (!summary.customTopics) {
-        updatedSummary.customTopics = [];
-        updated = true;
-      }
-      
-      // Ensure days array exists (only if completely missing)
-      if (!summary.days) {
-        updatedSummary.days = [];
-        updated = true;
-      }
-      
-      // Ensure isEnabled exists (only if completely missing)
-      if (summary.isEnabled === undefined) {
-        updatedSummary.isEnabled = true;
-        updated = true;
-      }
-      
-      // Ensure createdAt exists
-      if (!summary.createdAt) {
-        updatedSummary.createdAt = new Date().toISOString();
-        updated = true;
-      }
-      
-      // Ensure lastRun exists (can be null)
-      if (summary.lastRun === undefined) {
-        updatedSummary.lastRun = null;
-        updated = true;
-      }
-      
-      if (updated) {
-        needsUpdate = true;
-      }
-      
-      return updatedSummary;
-    });
+    const hasMissingFields = scheduledSummaries.some(summary => 
+      !summary.id || !summary.name || !summary.time || 
+      !summary.topics || !summary.days || 
+      summary.isEnabled === undefined || !summary.createdAt || 
+      summary.lastRun === undefined
+    );
+    
+    if (hasMissingFields) {
+      console.log(`[MIGRATION] Detected missing fields, running migration...`);
+      scheduledSummaries = scheduledSummaries.map(summary => {
+        let updated = false;
+        let updatedSummary = { ...summary };
+        
+        // Only update fields that are actually missing
+        if (!summary.id || summary.id.trim() === '') {
+          updatedSummary.id = `summary-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          updated = true;
+        }
+        
+        if (!summary.name) {
+          updatedSummary.name = `Scheduled Summary ${Date.now()}`;
+          updated = true;
+        }
+        
+        if (!summary.time) {
+          updatedSummary.time = '09:00';
+          updated = true;
+        }
+        
+        if (!summary.topics) {
+          updatedSummary.topics = [];
+          updated = true;
+        }
+        
+        if (!summary.customTopics) {
+          updatedSummary.customTopics = [];
+          updated = true;
+        }
+        
+        if (!summary.days) {
+          updatedSummary.days = [];
+          updated = true;
+        }
+        
+        if (summary.isEnabled === undefined) {
+          updatedSummary.isEnabled = true;
+          updated = true;
+        }
+        
+        if (!summary.createdAt) {
+          updatedSummary.createdAt = new Date().toISOString();
+          updated = true;
+        }
+        
+        if (summary.lastRun === undefined) {
+          updatedSummary.lastRun = null;
+          updated = true;
+        }
+        
+        if (updated) {
+          needsUpdate = true;
+        }
+        
+        return updatedSummary;
+      });
+    } else {
+      console.log(`[MIGRATION] No missing fields detected, skipping migration`);
+    }
     
     // Save updated summaries if any were missing IDs
     if (needsUpdate) {
