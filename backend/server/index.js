@@ -412,52 +412,22 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   const isGeneral = normalizedTopic === "general";
 
   if (isGeneral) {
-    // If we have selected sources, prioritize variety over categories
-    if (selectedSources && selectedSources.length > 0) {
-      console.log(`General topic with selected sources - ensuring variety`);
-      const varietyArticles = await fetchArticlesWithVariety(selectedSources, 7);
-      if (varietyArticles.length > 0) {
-        articles = varietyArticles;
-        console.log(`General topic: fetched ${articles.length} articles with variety from ${selectedSources.length} sources`);
+    console.log(`General topic: using simplified approach`);
+    // For general news, just use the everything endpoint with broad keywords (like our test)
+    try {
+      articles = await fetchArticlesEverything(["news", "headlines"], pageSize, selectedSources);
+      console.log(`General topic: fetched ${articles.length} articles using everything endpoint`);
+    } catch (error) {
+      console.error(`Error fetching general news:`, error);
+      // Fallback to category-based approach
+      try {
+        articles = await fetchTopHeadlinesByCategory("general", countryCode, pageSize, undefined, selectedSources);
+        console.log(`General topic: fallback fetched ${articles.length} articles using category`);
+      } catch (fallbackError) {
+        console.error(`Fallback also failed:`, fallbackError);
+        articles = [];
       }
     }
-    
-    // Fallback to category-based approach if variety didn't work or no sources selected
-    if (articles.length === 0) {
-      console.log(`General topic: using category-based approach`);
-      const otherTopics = ["business", "entertainment", "health", "science", "sports", "technology", "world"];
-      const promises = otherTopics.map(async (category) => {
-        try {
-          if (category === "world") {
-            // World is not a NewsAPI category, use everything search
-            const worldArticles = await fetchArticlesEverything(["world"], 1, selectedSources);
-            return worldArticles.slice(0, 1);
-          } else {
-            // Use category-based search for other topics
-            const categoryArticles = await fetchTopHeadlinesByCategory(category, countryCode, 1, undefined, selectedSources);
-            return categoryArticles.slice(0, 1);
-          }
-        } catch (error) {
-          console.error(`Error fetching ${category} articles for general topic:`, error);
-          return [];
-        }
-      });
-    
-    try {
-      const results = await Promise.allSettled(promises);
-      articles = results
-        .filter(result => result.status === 'fulfilled')
-        .flatMap(result => result.value)
-        .filter(article => article && article.title); // Filter out empty results
-      
-      console.log(`General topic: fetched ${articles.length} articles from ${otherTopics.length} categories`);
-      console.log(`General topic articles:`, articles.map(a => `${a.title} (${a.source})`));
-    } catch (error) {
-      console.error('Error in parallel general topic fetch:', error);
-      // Fallback to regular general category
-      articles = await fetchTopHeadlinesByCategory("general", countryCode, pageSize, undefined, selectedSources);
-    }
-    } // End of fallback approach
   } else if (isLocal) {
     // Parallel API calls for better performance
     const promises = [];
