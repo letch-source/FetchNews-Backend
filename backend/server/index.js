@@ -215,16 +215,12 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [])
   // Extend to 7 days for more variety (24 hours was too restrictive)
   const from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`;
-  console.log(`[DEBUG] Mediastack URL: ${url}`);
   const resp = await fetch(url);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    console.log(`[DEBUG] Mediastack error response: ${resp.status} ${text}`);
     throw new Error(`Mediastack error: ${resp.status} ${text}`);
   }
   const data = await resp.json();
-  console.log(`[DEBUG] Mediastack response:`, JSON.stringify(data, null, 2));
-  console.log(`Mediastack returned ${data.data?.length || 0} articles`);
   
   // Map Mediastack response to match expected format
   const articles = (data.data || []).map(article => ({
@@ -412,30 +408,25 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   const isGeneral = normalizedTopic === "general";
 
   if (isGeneral) {
-    console.log(`General topic: using simplified approach without date filter`);
-    // For general news, use a simple approach without date filtering (like our test endpoint)
-    try {
-      const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}`;
-      console.log(`[DEBUG] General topic URL: ${url}`);
-      const resp = await fetch(url);
-      
-      if (!resp.ok) {
-        throw new Error(`Mediastack error: ${resp.status}`);
-      }
-      
-      const data = await resp.json();
-      console.log(`[DEBUG] General topic response:`, JSON.stringify(data, null, 2));
-      
-      // Map Mediastack response to expected format
-      articles = (data.data || []).map(article => ({
-        title: article.title,
-        description: article.description,
-        url: article.url,
-        publishedAt: article.published_at,
-        source: { id: article.source, name: article.source }
-      }));
-      
-      console.log(`General topic: fetched ${articles.length} articles using simple approach`);
+  // For general news, use a simple approach without date filtering
+  try {
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}`;
+    const resp = await fetch(url);
+    
+    if (!resp.ok) {
+      throw new Error(`Mediastack error: ${resp.status}`);
+    }
+    
+    const data = await resp.json();
+    
+    // Map Mediastack response to expected format
+    articles = (data.data || []).map(article => ({
+      title: article.title,
+      description: article.description,
+      url: article.url,
+      publishedAt: article.published_at,
+      source: { id: article.source, name: article.source }
+    }));
     } catch (error) {
       console.error(`Error fetching general news:`, error);
       // Fallback to category-based approach

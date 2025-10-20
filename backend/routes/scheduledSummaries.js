@@ -116,6 +116,8 @@ router.get('/', authenticateToken, async (req, res) => {
       console.log(`Fixed missing IDs for ${scheduledSummaries.length} scheduled summaries for user ${user.email}`);
     }
     
+    console.log(`[API] Returning ${scheduledSummaries.length} scheduled summaries for user ${user.email}`);
+    console.log(`[API] Summaries:`, JSON.stringify(scheduledSummaries, null, 2));
     res.json({ scheduledSummaries });
   } catch (error) {
     console.error('Error fetching scheduled summaries:', error);
