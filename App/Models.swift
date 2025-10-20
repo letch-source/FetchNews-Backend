@@ -312,6 +312,26 @@ struct ScheduledSummary: Codable, Identifiable {
         case createdAt
         case lastRun
     }
+    
+    // Custom initializer to handle missing fields gracefully
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        // Generate ID if missing
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        
+        name = try container.decode(String.self, forKey: .name)
+        time = try container.decode(String.self, forKey: .time)
+        topics = try container.decodeIfPresent([String].self, forKey: .topics) ?? []
+        customTopics = try container.decodeIfPresent([String].self, forKey: .customTopics) ?? []
+        days = try container.decodeIfPresent([String].self, forKey: .days) ?? []
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        
+        // Generate createdAt if missing
+        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ISO8601DateFormatter().string(from: Date())
+        
+        lastRun = try container.decodeIfPresent(String.self, forKey: .lastRun)
+    }
 }
 
 struct ScheduledSummariesResponse: Codable {

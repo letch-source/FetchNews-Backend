@@ -179,6 +179,17 @@ struct ScheduledSummariesView: View {
         } catch {
             print("❌ Error loading scheduled summaries: \(error)")
             print("❌ Error details: \(error.localizedDescription)")
+            
+            // If it's a decoding error, try to load with empty array and let backend migration handle it
+            if error.localizedDescription.contains("keyNotFound") {
+                print("🔄 Decoding error detected, trying to trigger backend migration...")
+                await MainActor.run {
+                    vm.scheduledSummaries = []
+                }
+                // Try again after a short delay to let backend migration run
+                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                await loadScheduledSummaries()
+            }
         }
     }
     
