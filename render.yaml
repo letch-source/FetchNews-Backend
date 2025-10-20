@@ -2,17 +2,15 @@ services:
   - type: web
     name: fetchnews-backend
     env: node
-    rootDir: backend
-    buildCommand: npm install
-    startCommand: node server/index.js
-    # Note: rootDir is set to 'backend', so all commands run from backend/ directory
-    # No root package.json should be used - only backend/package.json
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && node server/index.js
+    # Note: Using cd commands instead of rootDir due to nested git repository issue
     envVars:
       - key: NODE_ENV
         value: production
       - key: JWT_SECRET
         sync: false
-      - key: NEWSAPI_KEY
+      - key: MEDIASTACK_KEY
         sync: false
       - key: OPENAI_API_KEY
         sync: false
