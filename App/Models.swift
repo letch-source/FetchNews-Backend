@@ -313,24 +313,40 @@ struct ScheduledSummary: Codable, Identifiable {
         case lastRun
     }
     
+    // Regular initializer for creating instances in code
+    init(id: String, name: String, time: String, topics: [String], customTopics: [String], days: [String], isEnabled: Bool, createdAt: String, lastRun: String?) {
+        self.id = id
+        self.name = name
+        self.time = time
+        self.topics = topics
+        self.customTopics = customTopics
+        self.days = days
+        self.isEnabled = isEnabled
+        self.createdAt = createdAt
+        self.lastRun = lastRun
+    }
+    
     // Custom initializer to handle missing fields gracefully
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         
         // Generate ID if missing
-        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        let id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         
-        name = try container.decode(String.self, forKey: .name)
-        time = try container.decode(String.self, forKey: .time)
-        topics = try container.decodeIfPresent([String].self, forKey: .topics) ?? []
-        customTopics = try container.decodeIfPresent([String].self, forKey: .customTopics) ?? []
-        days = try container.decodeIfPresent([String].self, forKey: .days) ?? []
-        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        let name = try container.decode(String.self, forKey: .name)
+        let time = try container.decode(String.self, forKey: .time)
+        let topics = try container.decodeIfPresent([String].self, forKey: .topics) ?? []
+        let customTopics = try container.decodeIfPresent([String].self, forKey: .customTopics) ?? []
+        let days = try container.decodeIfPresent([String].self, forKey: .days) ?? []
+        let isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         
         // Generate createdAt if missing
-        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ISO8601DateFormatter().string(from: Date())
+        let createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ISO8601DateFormatter().string(from: Date())
         
-        lastRun = try container.decodeIfPresent(String.self, forKey: .lastRun)
+        let lastRun = try container.decodeIfPresent(String.self, forKey: .lastRun)
+        
+        // Use the regular initializer
+        self.init(id: id, name: name, time: time, topics: topics, customTopics: customTopics, days: days, isEnabled: isEnabled, createdAt: createdAt, lastRun: lastRun)
     }
 }
 
