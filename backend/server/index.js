@@ -215,12 +215,15 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [])
   // Extend to 24 hours for more variety
   const from = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`;
+  console.log(`[DEBUG] Mediastack URL: ${url}`);
   const resp = await fetch(url);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
+    console.log(`[DEBUG] Mediastack error response: ${resp.status} ${text}`);
     throw new Error(`Mediastack error: ${resp.status} ${text}`);
   }
   const data = await resp.json();
+  console.log(`[DEBUG] Mediastack response:`, JSON.stringify(data, null, 2));
   console.log(`Mediastack returned ${data.data?.length || 0} articles`);
   
   // Map Mediastack response to match expected format
@@ -308,13 +311,21 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
     if (usedSources.size >= targetVariety) break;
     
     try {
-      const url = `https://newsapi.org/v2/top-headlines?sources=${source}&pageSize=1`;
-      const resp = await fetch(url, { headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } });
+      const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&limit=1&languages=en`;
+      const resp = await fetch(url);
       
       if (resp.ok) {
         const data = await resp.json();
-        if (data.articles && data.articles.length > 0) {
-          articles.push(data.articles[0]);
+        if (data.data && data.data.length > 0) {
+          // Map Mediastack response to expected format
+          const article = {
+            title: data.data[0].title,
+            description: data.data[0].description,
+            url: data.data[0].url,
+            publishedAt: data.data[0].published_at,
+            source: { id: data.data[0].source, name: data.data[0].source }
+          };
+          articles.push(article);
           usedSources.add(source);
           console.log(`Got article from ${source} (no time filter)`);
         }
@@ -346,13 +357,15 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
   params.set("limit", String(pageSize));
   params.set("languages", "en");
   const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&${params.toString()}`;
-  console.log(`Final Mediastack URL: ${url}`);
+  console.log(`[DEBUG] Final Mediastack URL: ${url}`);
   const resp = await fetch(url);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
+    console.log(`[DEBUG] Mediastack error response: ${resp.status} ${text}`);
     throw new Error(`Mediastack error: ${resp.status} ${text}`);
   }
   const data = await resp.json();
+  console.log(`[DEBUG] Mediastack category response:`, JSON.stringify(data, null, 2));
   console.log(`Mediastack returned ${data.data?.length || 0} articles`);
   
   // Map Mediastack response to match expected format
