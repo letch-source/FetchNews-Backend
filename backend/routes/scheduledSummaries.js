@@ -136,6 +136,11 @@ router.get('/', authenticateToken, async (req, res) => {
     
     console.log(`[API] Returning ${scheduledSummaries.length} scheduled summaries for user ${user.email}`);
     console.log(`[API] Summaries:`, JSON.stringify(scheduledSummaries, null, 2));
+    
+    // Log each summary's fields for debugging
+    scheduledSummaries.forEach((summary, index) => {
+      console.log(`[API] Summary ${index}: id=${summary.id ? 'present' : 'MISSING'}, createdAt=${summary.createdAt ? 'present' : 'MISSING'}, lastRun=${summary.lastRun !== undefined ? 'present' : 'MISSING'}`);
+    });
     res.json({ scheduledSummaries });
   } catch (error) {
     console.error('Error fetching scheduled summaries:', error);
