@@ -97,6 +97,8 @@ router.get('/', authenticateToken, async (req, res) => {
     const preferences = user.getPreferences();
     let scheduledSummaries = preferences.scheduledSummaries || [];
     
+    console.log(`[API] Original scheduled summaries from database:`, JSON.stringify(scheduledSummaries, null, 2));
+    
     // Ensure all summaries have valid IDs and required fields (migration for old summaries)
     let needsUpdate = false;
     scheduledSummaries = scheduledSummaries.map(summary => {
@@ -109,37 +111,37 @@ router.get('/', authenticateToken, async (req, res) => {
         updated = true;
       }
       
-      // Ensure name exists
-      if (!summary.name || summary.name.trim() === '') {
+      // Ensure name exists (only if completely missing)
+      if (!summary.name) {
         updatedSummary.name = `Scheduled Summary ${Date.now()}`;
         updated = true;
       }
       
-      // Ensure time exists
-      if (!summary.time || summary.time.trim() === '') {
+      // Ensure time exists (only if completely missing)
+      if (!summary.time) {
         updatedSummary.time = '09:00';
         updated = true;
       }
       
-      // Ensure topics array exists
-      if (!summary.topics || !Array.isArray(summary.topics)) {
+      // Ensure topics array exists (only if completely missing)
+      if (!summary.topics) {
         updatedSummary.topics = [];
         updated = true;
       }
       
-      // Ensure customTopics array exists
-      if (!summary.customTopics || !Array.isArray(summary.customTopics)) {
+      // Ensure customTopics array exists (only if completely missing)
+      if (!summary.customTopics) {
         updatedSummary.customTopics = [];
         updated = true;
       }
       
-      // Ensure days array exists
-      if (!summary.days || !Array.isArray(summary.days)) {
+      // Ensure days array exists (only if completely missing)
+      if (!summary.days) {
         updatedSummary.days = [];
         updated = true;
       }
       
-      // Ensure isEnabled exists
+      // Ensure isEnabled exists (only if completely missing)
       if (summary.isEnabled === undefined) {
         updatedSummary.isEnabled = true;
         updated = true;
