@@ -36,7 +36,12 @@ async function executeScheduledSummary(user, summary) {
     for (const topic of allTopics) {
       try {
         const articles = await fetchArticlesForTopic(topic, geo, 5, selectedSources);
-        allArticles.push(...articles);
+        console.log(`[SCHEDULER] Fetched ${Array.isArray(articles) ? articles.length : 'non-array'} articles for topic ${topic}`);
+        if (Array.isArray(articles)) {
+          allArticles.push(...articles);
+        } else {
+          console.error(`[SCHEDULER] fetchArticlesForTopic returned non-array for topic ${topic}:`, typeof articles, articles);
+        }
       } catch (error) {
         console.error(`Failed to fetch articles for topic ${topic}:`, error);
       }
