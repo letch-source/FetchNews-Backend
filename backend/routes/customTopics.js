@@ -58,34 +58,7 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Remove a custom topic
-router.delete('/:topic', authenticateToken, async (req, res) => {
-  try {
-    const { topic } = req.params;
-    const user = req.user;
-    
-    if (!topic) {
-      return res.status(400).json({ error: 'Topic is required' });
-    }
-    
-    let customTopics;
-    if (mongoose.connection.readyState === 1) {
-      customTopics = await user.removeCustomTopic(topic);
-    } else {
-      customTopics = await fallbackAuth.removeCustomTopic(user, topic);
-    }
-    
-    res.json({ 
-      message: 'Custom topic removed successfully',
-      customTopics 
-    });
-  } catch (error) {
-    console.error('Remove custom topic error:', error);
-    res.status(500).json({ error: 'Failed to remove custom topic' });
-  }
-});
-
-// Delete multiple custom topics
+// Delete multiple custom topics (must be before /:topic route)
 router.delete('/bulk', authenticateToken, async (req, res) => {
   try {
     const { topics } = req.body;
@@ -170,6 +143,33 @@ router.put('/', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Update custom topics error:', error);
     res.status(500).json({ error: 'Failed to update custom topics' });
+  }
+});
+
+// Remove a single custom topic (must be after /bulk route)
+router.delete('/:topic', authenticateToken, async (req, res) => {
+  try {
+    const { topic } = req.params;
+    const user = req.user;
+    
+    if (!topic) {
+      return res.status(400).json({ error: 'Topic is required' });
+    }
+    
+    let customTopics;
+    if (mongoose.connection.readyState === 1) {
+      customTopics = await user.removeCustomTopic(topic);
+    } else {
+      customTopics = await fallbackAuth.removeCustomTopic(user, topic);
+    }
+    
+    res.json({ 
+      message: 'Custom topic removed successfully',
+      customTopics 
+    });
+  } catch (error) {
+    console.error('Remove custom topic error:', error);
+    res.status(500).json({ error: 'Failed to remove custom topic' });
   }
 });
 
