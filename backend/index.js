@@ -12,17 +12,17 @@ const OpenAI = require("openai");
 const rateLimit = require("express-rate-limit");
 const cache = require("./cache");
 const mongoose = require("mongoose");
-const connectDB = require("../config/database");
-const { authenticateToken, optionalAuth } = require("../middleware/auth");
-const authRoutes = require("../routes/auth");
-const subscriptionRoutes = require("../routes/subscriptions");
-const customTopicsRoutes = require("../routes/customTopics");
-const summaryHistoryRoutes = require("../routes/summaryHistory");
-const adminRoutes = require("../routes/admin");
-const preferencesRoutes = require("../routes/preferences");
-const newsSourcesRoutes = require("../routes/newsSources");
-const fallbackAuth = require("../utils/fallbackAuth");
-const User = require("../models/User");
+const connectDB = require("./config/database");
+const { authenticateToken, optionalAuth } = require("./middleware/auth");
+const authRoutes = require("./routes/auth");
+const subscriptionRoutes = require("./routes/subscriptions");
+const customTopicsRoutes = require("./routes/customTopics");
+const summaryHistoryRoutes = require("./routes/summaryHistory");
+const adminRoutes = require("./routes/admin");
+const preferencesRoutes = require("./routes/preferences");
+const newsSourcesRoutes = require("./routes/newsSources");
+const fallbackAuth = require("./utils/fallbackAuth");
+const User = require("./models/User");
 
 // Connect to MongoDB
 connectDB();
