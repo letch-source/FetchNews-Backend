@@ -2167,9 +2167,12 @@ async function extractTrendingTopicsWithChatGPT(articles) {
 7. International relations or global events
 8. Environmental or climate-related news
 
-Avoid generic terms like "news", "report", "update", "latest", or weather-related terms unless they're truly significant events.
+IMPORTANT: Each topic should be a complete, coherent phrase (1-3 words) that makes sense on its own. Avoid generic terms like "news", "report", "update", "latest", or weather-related terms unless they're truly significant events.
 
-Return ONLY a comma-separated list of 8 topics, each 1-3 words long, in order of importance:
+Examples of good topics: "Federal Reserve", "Tesla Stock", "Olympic Games", "Climate Summit"
+Examples of bad topics: "Meta", "Fights", "Million", "Penalty" (too fragmented)
+
+Return ONLY a comma-separated list of 8 complete, coherent topics, in order of importance:
 
 Articles:
 ${articlesText}`;
@@ -2212,7 +2215,15 @@ ${articlesText}`;
     }
     
     // Parse the comma-separated response
-    const topics = content.split(',').map(topic => topic.trim()).filter(topic => topic.length > 0);
+    let topics = content.split(',').map(topic => topic.trim()).filter(topic => topic.length > 0);
+    
+    // Clean up fragmented topics by filtering out single words that are likely fragments
+    const stopWords = ['meta', 'fights', 'million', 'penalty', 'over', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'];
+    topics = topics.filter(topic => {
+      const words = topic.toLowerCase().split(' ');
+      // Keep topics that have 2+ words, or single words that aren't stop words
+      return words.length >= 2 || !stopWords.includes(words[0]);
+    });
     
     console.log(`[TRENDING] ChatGPT extracted ${topics.length} topics: ${topics.join(', ')}`);
     
