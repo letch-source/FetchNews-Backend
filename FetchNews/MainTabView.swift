@@ -76,7 +76,7 @@ struct CustomBottomNavigation: View {
                 
                 // Spacer for center button
                 Spacer()
-                    .frame(width: 60) // Space for floating button
+                    .frame(width: 80) // Space for floating button + 10px spacing on each side
                 
                 // History Tab
                 Button(action: { selectedTab = 2 }) {
