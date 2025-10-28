@@ -39,6 +39,12 @@ router.get('/', authenticateToken, async (req, res) => {
       url: source.url
     }));
     
+    // Log sources to render log
+    console.log(`[NEWS SOURCES] Retrieved ${newsSources.length} sources from Mediastack:`);
+    newsSources.forEach((source, index) => {
+      console.log(`[NEWS SOURCES] ${index + 1}. ${source.name} (${source.id}) - ${source.category} - ${source.country}`);
+    });
+    
     res.json({ newsSources });
   } catch (error) {
     console.error('Get news sources error:', error);
