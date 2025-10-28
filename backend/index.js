@@ -106,7 +106,79 @@ app.use("/api/preferences", preferencesRoutes);
 // News sources routes
 app.use("/api/news-sources", newsSourcesRoutes);
 
-// Function to extract trending topics from news articles
+// Function to extract breaking news topics from headlines
+function extractBreakingNewsTopics(articles) {
+  const topicCounts = {};
+  const seenTopics = new Set();
+  
+  // Focus on headlines only for breaking news
+  articles.forEach(article => {
+    const headline = article.title || '';
+    if (!headline) return;
+    
+    // Extract key topics from headlines
+    const topics = extractTopicsFromHeadline(headline);
+    
+    topics.forEach(topic => {
+      const normalizedTopic = topic.toLowerCase();
+      if (!seenTopics.has(normalizedTopic)) {
+        seenTopics.add(normalizedTopic);
+        topicCounts[topic] = (topicCounts[topic] || 0) + 1;
+      }
+    });
+  });
+  
+  // Sort by frequency and return top topics
+  const sortedTopics = Object.entries(topicCounts)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 6)
+    .map(([topic]) => topic);
+  
+  return sortedTopics.length >= 3 ? sortedTopics : [];
+}
+
+// Extract meaningful topics from a single headline
+function extractTopicsFromHeadline(headline) {
+  const topics = [];
+  
+  // 1. Extract proper nouns and capitalized terms (most important for breaking news)
+  const properNouns = headline.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g) || [];
+  properNouns.forEach(phrase => {
+    if (phrase.length >= 3 && phrase.length <= 30 && !isGenericWord(phrase)) {
+      topics.push(phrase);
+    }
+  });
+  
+  // 2. Extract key phrases (2-3 words) that are likely breaking news topics
+  const words = headline.toLowerCase().match(/\b[a-z]{3,}\b/g) || [];
+  const stopWords = new Set([
+    'the', 'and', 'for', 'with', 'from', 'this', 'that', 'will', 'said', 'says',
+    'breaking', 'news', 'update', 'latest', 'reports', 'report', 'story', 'stories',
+    'chairman', 'finalised', 'commission', 'likely', 'formed', 'next', 'pay'
+  ]);
+  
+  for (let i = 0; i < words.length - 1; i++) {
+    if (!stopWords.has(words[i]) && !stopWords.has(words[i + 1])) {
+      const phrase = `${words[i]} ${words[i + 1]}`;
+      if (phrase.length >= 6 && phrase.length <= 25) {
+        topics.push(phrase.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '));
+      }
+    }
+  }
+  
+  return topics;
+}
+
+// Check if a word is too generic for trending topics
+function isGenericWord(word) {
+  const genericWords = new Set([
+    'Report', 'News', 'Update', 'Latest', 'Breaking', 'Story', 'Stories',
+    'Chairman', 'Finalised', 'Commission', 'Likely', 'Formed', 'Next', 'Pay'
+  ]);
+  return genericWords.has(word);
+}
+
+// Legacy function for general trending topics (kept for fallback)
 function extractTrendingTopics(articles) {
   const topicCounts = {};
   const stopWords = new Set([
@@ -1867,8 +1939,9 @@ async function updateTrendingTopics() {
       return;
     }
 
-    // Get news from multiple sources and categories for better diversity
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=100&sort=published_desc&categories=general,business,technology,sports,entertainment,health,science`;
+    // Get recent breaking news headlines (simplified approach)
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=30&sort=published_desc`;
+    
     const response = await fetch(url);
     
     if (!response.ok) {
@@ -1880,8 +1953,9 @@ async function updateTrendingTopics() {
     if (!data.data || !Array.isArray(data.data)) {
       throw new Error('Invalid response from Mediastack API');
     }
-
-    const trendingTopics = extractTrendingTopics(data.data);
+    
+    const trendingTopics = extractBreakingNewsTopics(data.data);
+    
     trendingTopicsCache = trendingTopics;
     lastTrendingUpdate = new Date();
     
@@ -1894,8 +1968,8 @@ async function updateTrendingTopics() {
 // Run immediately on startup
 updateTrendingTopics();
 
-// Then run every hour
-setInterval(updateTrendingTopics, 60 * 60 * 1000); // 1 hour
+// Then run every 30 minutes for breaking news
+setInterval(updateTrendingTopics, 30 * 60 * 1000); // 30 minutes
 
 // --- Deployment Protection ---
 const DEPLOYMENT_MODE = process.env.DEPLOYMENT_MODE || 'development';
