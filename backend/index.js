@@ -124,38 +124,97 @@ function extractTrendingTopics(articles) {
     'company', 'companies', 'business', 'businesses', 'organization', 'organizations',
     'government', 'official', 'officials', 'president', 'minister', 'mayor', 'governor',
     'state', 'states', 'country', 'countries', 'city', 'cities', 'town', 'towns',
-    'philadelphia', 'dreamforce', 'conference', 'conferences', 'event', 'events'
+    'philadelphia', 'dreamforce', 'conference', 'conferences', 'event', 'events',
+    'new', 'high', 'here', 'there', 'where', 'when', 'why', 'how', 'what', 'who',
+    // Military/defense terms that might dominate
+    'uss', 'ddg', 'burke', 'roosevelt', 'conducts', 'sea', 'anchor', 'evolution',
+    'navy', 'military', 'defense', 'forces', 'army', 'air', 'force', 'marine'
   ]);
 
   // Process each article
   articles.forEach(article => {
-    const text = `${article.title || ''} ${article.description || ''}`.toLowerCase();
+    const title = article.title || '';
+    const description = article.description || '';
     
-    // Extract words (3+ characters, not stop words, not numbers, not single letters)
+    // Extract topics from title (more important) and description
+    const titleText = title.toLowerCase();
+    const descText = description.toLowerCase();
+    
+    // 1. Extract proper nouns and capitalized terms from titles (most important)
+    const properNouns = title.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g) || [];
+    properNouns.forEach(phrase => {
+      const cleanPhrase = phrase.toLowerCase();
+      if (cleanPhrase.length >= 3 && cleanPhrase.length <= 30 && 
+          !stopWords.has(cleanPhrase) && 
+          !cleanPhrase.includes('conference') &&
+          !cleanPhrase.includes('philadelphia') &&
+          !cleanPhrase.includes('dreamforce')) {
+        topicCounts[cleanPhrase] = (topicCounts[cleanPhrase] || 0) + 3; // Weight titles higher
+      }
+    });
+    
+    // 2. Extract 2-word phrases (bigrams) that are likely topics
+    const text = `${titleText} ${descText}`;
     const words = text.match(/\b[a-z]{3,}\b/g) || [];
     
+    for (let i = 0; i < words.length - 1; i++) {
+      const phrase = `${words[i]} ${words[i + 1]}`;
+      if (!stopWords.has(words[i]) && !stopWords.has(words[i + 1]) &&
+          words[i].length >= 3 && words[i + 1].length >= 3 &&
+          phrase.length <= 25) {
+        topicCounts[phrase] = (topicCounts[phrase] || 0) + 1;
+      }
+    }
+    
+    // 3. Extract meaningful single words (less weight)
     words.forEach(word => {
-      // Additional filtering
       if (!stopWords.has(word) && 
-          word.length >= 3 && 
-          word.length <= 20 && // Avoid very long words
-          !/^\d+$/.test(word) && // Not just numbers
-          !word.includes('conference') && // Avoid conference-related words
-          !word.includes('philadelphia') && // Avoid specific unwanted words
+          word.length >= 4 && 
+          word.length <= 15 &&
+          !/^\d+$/.test(word) &&
+          !word.includes('conference') &&
+          !word.includes('philadelphia') &&
           !word.includes('dreamforce')) {
-        topicCounts[word] = (topicCounts[word] || 0) + 1;
+        topicCounts[word] = (topicCounts[word] || 0) + 0.5; // Lower weight for single words
       }
     });
   });
 
-  // Sort by frequency and return top topics (capped at 6)
-  const topics = Object.entries(topicCounts)
+  // Filter and sort topics
+  const filteredTopics = Object.entries(topicCounts)
+    .filter(([topic, count]) => {
+      // Only include topics that appear at least twice or are multi-word
+      return count >= 2 || topic.includes(' ');
+    })
     .sort(([,a], [,b]) => b - a)
-    .slice(0, 6)
-    .map(([topic]) => topic.charAt(0).toUpperCase() + topic.slice(1));
+    .slice(0, 8) // Get more candidates
+    .map(([topic]) => {
+      // Capitalize properly
+      return topic.split(' ').map(word => 
+        word.charAt(0).toUpperCase() + word.slice(1)
+      ).join(' ');
+    });
 
-  // If we don't have enough good topics, return empty array
-  return topics.length >= 3 ? topics : [];
+  // Return top 6 topics, prioritizing multi-word phrases
+  const multiWordTopics = filteredTopics.filter(topic => topic.includes(' '));
+  const singleWordTopics = filteredTopics.filter(topic => !topic.includes(' '));
+  
+  // Mix multi-word and single-word topics for better diversity
+  const finalTopics = [];
+  const maxTopics = 6;
+  
+  // Add multi-word topics first (up to 4)
+  for (let i = 0; i < Math.min(4, multiWordTopics.length); i++) {
+    finalTopics.push(multiWordTopics[i]);
+  }
+  
+  // Add single-word topics to fill remaining slots
+  for (let i = 0; i < singleWordTopics.length && finalTopics.length < maxTopics; i++) {
+    finalTopics.push(singleWordTopics[i]);
+  }
+  
+  // Only return if we have at least 3 good topics
+  return finalTopics.length >= 3 ? finalTopics : [];
 }
 
 // Trending topics endpoint
@@ -1808,7 +1867,8 @@ async function updateTrendingTopics() {
       return;
     }
 
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=50&sort=published_desc`;
+    // Get news from multiple sources and categories for better diversity
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=100&sort=published_desc&categories=general,business,technology,sports,entertainment,health,science`;
     const response = await fetch(url);
     
     if (!response.ok) {
