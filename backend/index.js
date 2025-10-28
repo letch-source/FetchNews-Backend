@@ -971,13 +971,11 @@ Articles:
 ${articleTexts}
 
 Requirements:
-- Start with "${timeGreeting}, here's your ${upliftingPrefix}${topicsText} news update."
 - Cover key stories in conversational tone
 - Connect related stories naturally
 - Focus on most significant developments
 - Target ${wordCount} words exactly
 - For short summaries (≤200 words), be very concise and stick to the word limit
-- End with "That's it for your news summary, brought to you by Fetch News."
 - End at a complete sentence, but prioritize staying within the word count`;
 
     console.log(`Sending ${articles.length} articles to ChatGPT for summarization`);
@@ -1037,10 +1035,42 @@ Requirements:
     const titles = articles.slice(0, 3).map(a => a.title || "").filter(Boolean);
     const topicsText = Array.isArray(topic) ? topic.join(", ") : topic;
     const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
-    return `${timeGreeting}, here's your ${upliftingPrefix}${topicsText} news update. ${titles.join('. ')}. That's it for your news summary, brought to you by Fetch News.`;
+    return `Here's your ${upliftingPrefix}${topicsText} news. ${titles.join('. ')}.`;
   }
 }
 
+
+// Helper function to add intro and outro to final summary
+function addIntroAndOutro(summary, topics, goodNewsOnly = false, user = null) {
+  if (!summary || summary.trim().length === 0) {
+    return summary;
+  }
+  
+  // Get user's timezone for personalized greeting
+  const userTimezone = user?.preferences?.timezone || 'America/New_York';
+  const now = new Date();
+  const userTime = new Date(now.toLocaleString("en-US", {timeZone: userTimezone}));
+  const hour = userTime.getHours();
+  
+  let timeGreeting;
+  if (hour < 12) {
+    timeGreeting = "Good morning";
+  } else if (hour < 17) {
+    timeGreeting = "Good afternoon";
+  } else {
+    timeGreeting = "Good evening";
+  }
+  
+  // Format topics for the intro
+  const topicsText = Array.isArray(topics) ? topics.join(", ") : topics;
+  const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
+  
+  // Add intro and outro
+  const intro = `${timeGreeting}, here's your ${upliftingPrefix}${topicsText} news update. `;
+  const outro = " That's it for your news summary, brought to you by Fetch News.";
+  
+  return intro + summary.trim() + outro;
+}
 
 // Uplifting news filter: identify positive, inspiring articles
 function isUpliftingNews(article) {
@@ -1597,15 +1627,11 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       return null;
     })() : null;
     
-    // For single topic, just use the summary as-is (no overall intro needed)
-    let combinedText;
-    if (topics.length === 1) {
-      combinedText = combinedPieces.join(" ").trim();
-    } else {
-      // For multi-topic, create separate segments
-    const topicsLabel = formatTopicList(topics, firstGeoData);
-      combinedText = combinedPieces.join(" ").trim();
-    }
+    // Combine all topic summaries
+    let combinedText = combinedPieces.join(" ").trim();
+    
+    // Add intro and outro to the final summary (once per summary, not per topic)
+    combinedText = addIntroAndOutro(combinedText, topics, goodNewsOnly, req.user);
 
     // Increment user usage for successful request (if authenticated)
     if (req.user) {
@@ -1802,8 +1828,11 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
           }
         }
 
-        // For multi-topic, each piece already has its own intro, so just join them
-        const combinedText = combinedPieces.join(" ").trim();
+        // Combine all topic summaries
+        let combinedText = combinedPieces.join(" ").trim();
+        
+        // Add intro and outro to the final summary (once per summary, not per topic)
+        combinedText = addIntroAndOutro(combinedText, topics, goodNewsOnly, req.user);
 
         // Generate a better title based on topics
         let title = "Summary";
