@@ -344,8 +344,8 @@ final class ApiClient {
             do {
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
-                let response = try decoder.decode(SummaryHistoryResponse.self, from: data)
-                return response.summaryHistory
+                let summaryHistory = try decoder.decode([SummaryHistoryEntry].self, from: data)
+                return summaryHistory
             } catch {
                 print("Summary History JSON Decoding Error: \(error)")
                 if let decodingError = error as? DecodingError {

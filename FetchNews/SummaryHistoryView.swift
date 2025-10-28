@@ -58,14 +58,6 @@ struct SummaryHistoryView: View {
             }
             .navigationTitle("Summary History")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Close") {
-                        dismiss()
-                    }
-                }
-                
-            }
         }
         .task {
             await loadSummaryHistory()
