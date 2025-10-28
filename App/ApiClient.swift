@@ -845,7 +845,7 @@ final class ApiClient {
     // MARK: - News Sources API
     
     static func getAvailableNewsSources() async throws -> NewsSourcesResponse {
-        let endpoint = "/api/news-sources/available"
+        let endpoint = "/api/news-sources"
         var req = URLRequest(url: base.appendingPathComponent(endpoint))
         req.httpMethod = "GET"
         
@@ -860,7 +860,10 @@ final class ApiClient {
         }
         
         if httpResponse.statusCode == 200 {
-            return try JSONDecoder().decode(NewsSourcesResponse.self, from: data)
+            let response = try JSONDecoder().decode(NewsSourcesResponse.self, from: data)
+            // Group sources by category for the frontend
+            let sourcesByCategory = Dictionary(grouping: response.sources) { $0.category }
+            return NewsSourcesResponse(sources: response.sources, sourcesByCategory: sourcesByCategory)
         } else {
             let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
             throw NetworkError.serverError(errorResponse?.error ?? "Failed to fetch news sources")
@@ -868,31 +871,13 @@ final class ApiClient {
     }
     
     static func getSelectedNewsSources() async throws -> [String] {
-        let endpoint = "/api/news-sources/selected"
-        var req = URLRequest(url: base.appendingPathComponent(endpoint))
-        req.httpMethod = "GET"
-        
-        if let token = authToken {
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        
-        let (data, response) = try await session.data(for: req)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError.invalidResponse
-        }
-        
-        if httpResponse.statusCode == 200 {
-            let response = try JSONDecoder().decode([String: [String]].self, from: data)
-            return response["selectedSources"] ?? []
-        } else {
-            let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
-            throw NetworkError.serverError(errorResponse?.error ?? "Failed to fetch selected news sources")
-        }
+        // Get selected news sources from user preferences
+        let preferences = try await getUserPreferences()
+        return preferences.selectedNewsSources
     }
     
     static func updateSelectedNewsSources(_ sources: [String]) async throws -> [String] {
-        let endpoint = "/api/news-sources/selected"
+        let endpoint = "/api/news-sources"
         var req = URLRequest(url: base.appendingPathComponent(endpoint))
         req.httpMethod = "PUT"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
