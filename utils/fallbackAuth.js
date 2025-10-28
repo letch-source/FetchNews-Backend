@@ -160,6 +160,30 @@ const fallbackAuth = {
     user.dailyUsageCount += 1;
     user.lastUsageDate = new Date();
     return user;
+  },
+  
+  getPreferences(user) {
+    return {
+      selectedVoice: user.selectedVoice || 'alloy',
+      playbackRate: user.playbackRate || 1.0,
+      upliftingNewsOnly: user.upliftingNewsOnly || false,
+      lastFetchedTopics: user.lastFetchedTopics || [],
+      selectedTopics: user.selectedTopics || [],
+      selectedNewsSources: user.selectedNewsSources || [],
+      scheduledSummaries: user.scheduledSummaries || []
+    };
+  },
+  
+  async updatePreferences(user, preferences) {
+    user.selectedVoice = preferences.selectedVoice || user.selectedVoice;
+    user.playbackRate = preferences.playbackRate || user.playbackRate;
+    user.upliftingNewsOnly = preferences.upliftingNewsOnly || user.upliftingNewsOnly;
+    user.lastFetchedTopics = preferences.lastFetchedTopics || user.lastFetchedTopics;
+    user.selectedTopics = preferences.selectedTopics || user.selectedTopics;
+    user.selectedNewsSources = preferences.selectedNewsSources || user.selectedNewsSources;
+    user.scheduledSummaries = preferences.scheduledSummaries || user.scheduledSummaries;
+    
+    return this.getPreferences(user);
   }
 };
 

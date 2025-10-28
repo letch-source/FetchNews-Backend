@@ -23,7 +23,7 @@ router.get('/', authenticateToken, async (req, res) => {
       timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp
     }));
     
-    res.json({ summaryHistory: formattedHistory });
+    res.json(formattedHistory);
   } catch (error) {
     console.error('Get summary history error:', error);
     res.status(500).json({ error: 'Failed to get summary history' });

@@ -58,6 +58,35 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  // User preferences
+  selectedVoice: {
+    type: String,
+    default: 'alloy'
+  },
+  playbackRate: {
+    type: Number,
+    default: 1.0
+  },
+  upliftingNewsOnly: {
+    type: Boolean,
+    default: false
+  },
+  lastFetchedTopics: {
+    type: [String],
+    default: []
+  },
+  selectedTopics: {
+    type: [String],
+    default: []
+  },
+  selectedNewsSources: {
+    type: [String],
+    default: []
+  },
+  scheduledSummaries: {
+    type: [Object],
+    default: []
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -195,6 +224,32 @@ userSchema.methods.clearPasswordResetToken = function() {
   this.resetPasswordToken = undefined;
   this.resetPasswordExpires = undefined;
   return this.save();
+};
+
+// Preferences management
+userSchema.methods.getPreferences = function() {
+  return {
+    selectedVoice: this.selectedVoice || 'alloy',
+    playbackRate: this.playbackRate || 1.0,
+    upliftingNewsOnly: this.upliftingNewsOnly || false,
+    lastFetchedTopics: this.lastFetchedTopics || [],
+    selectedTopics: this.selectedTopics || [],
+    selectedNewsSources: this.selectedNewsSources || [],
+    scheduledSummaries: this.scheduledSummaries || []
+  };
+};
+
+userSchema.methods.updatePreferences = async function(preferences) {
+  this.selectedVoice = preferences.selectedVoice || this.selectedVoice;
+  this.playbackRate = preferences.playbackRate || this.playbackRate;
+  this.upliftingNewsOnly = preferences.upliftingNewsOnly || this.upliftingNewsOnly;
+  this.lastFetchedTopics = preferences.lastFetchedTopics || this.lastFetchedTopics;
+  this.selectedTopics = preferences.selectedTopics || this.selectedTopics;
+  this.selectedNewsSources = preferences.selectedNewsSources || this.selectedNewsSources;
+  this.scheduledSummaries = preferences.scheduledSummaries || this.scheduledSummaries;
+  
+  await this.save();
+  return this.getPreferences();
 };
 
 module.exports = mongoose.model('User', userSchema);
