@@ -810,20 +810,38 @@ async function summarizeArticles(topic, geo, articles, wordCount, goodNewsOnly =
       return `${index + 1}. **${title}** (${source})\n${description}`;
     }).join("\n\n");
 
-    // Optimized podcaster-style prompt for faster processing
+    // Get user's timezone for personalized greeting
+    const userTimezone = req.user?.preferences?.timezone || 'America/New_York';
+    const now = new Date();
+    const userTime = new Date(now.toLocaleString("en-US", {timeZone: userTimezone}));
+    const hour = userTime.getHours();
+    
+    let timeGreeting;
+    if (hour < 12) {
+      timeGreeting = "Good morning";
+    } else if (hour < 17) {
+      timeGreeting = "Good afternoon";
+    } else {
+      timeGreeting = "Good evening";
+    }
+    
+    // Format topics for the intro
+    const topicsText = Array.isArray(topic) ? topic.join(", ") : topic;
     const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
-    const prompt = `Create a ${upliftingPrefix}${topic} news summary in podcast style.
+    
+    const prompt = `Create a ${upliftingPrefix}${topicsText} news summary in podcast style.
 
 Articles:
 ${articleTexts}
 
 Requirements:
-- Start with "Here's your ${upliftingPrefix}${topic} news."
+- Start with "${timeGreeting}, here's your ${upliftingPrefix}${topicsText} news update."
 - Cover key stories in conversational tone
 - Connect related stories naturally
 - Focus on most significant developments
 - Target ${wordCount} words exactly
 - For short summaries (≤200 words), be very concise and stick to the word limit
+- End with "That's it for your news summary, brought to you by Fetch News."
 - End at a complete sentence, but prioritize staying within the word count`;
 
     console.log(`Sending ${articles.length} articles to ChatGPT for summarization`);
@@ -863,10 +881,27 @@ Requirements:
   } catch (error) {
     console.error("ChatGPT summarization failed:", error);
     console.log("Falling back to simple summary");
+    
+    // Get user's timezone for personalized greeting (fallback)
+    const userTimezone = req.user?.preferences?.timezone || 'America/New_York';
+    const now = new Date();
+    const userTime = new Date(now.toLocaleString("en-US", {timeZone: userTimezone}));
+    const hour = userTime.getHours();
+    
+    let timeGreeting;
+    if (hour < 12) {
+      timeGreeting = "Good morning";
+    } else if (hour < 17) {
+      timeGreeting = "Good afternoon";
+    } else {
+      timeGreeting = "Good evening";
+    }
+    
     // Simple fallback: just use article titles
     const titles = articles.slice(0, 3).map(a => a.title || "").filter(Boolean);
+    const topicsText = Array.isArray(topic) ? topic.join(", ") : topic;
     const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
-    return `Here's your ${upliftingPrefix}${topic} news. ${titles.join('. ')}.`;
+    return `${timeGreeting}, here's your ${upliftingPrefix}${topicsText} news update. ${titles.join('. ')}. That's it for your news summary, brought to you by Fetch News.`;
   }
 }
 
