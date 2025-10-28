@@ -11,6 +11,9 @@ import SwiftUI
 struct FetchNewsApp: App {
     @StateObject private var vm = NewsVM()
     @StateObject private var authVM = AuthVM()
+    
+    // Toggle between new and old UI - set to false to use old ContentView
+    private let useNewUI = true
 
     var body: some Scene {
         WindowGroup {
@@ -33,17 +36,33 @@ struct FetchNewsApp: App {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(.systemBackground))
                 } else if authVM.isAuthenticated {
-                    ContentView()
-                        .environmentObject(vm)
-                        .environmentObject(authVM)
-                        .onAppear {
-                            // Skip heavy initialization during UI testing
-                            if ProcessInfo.processInfo.environment["UITESTING"] != "1" {
-                                Task {
-                                    await vm.initializeIfNeeded()
+                    if useNewUI {
+                        // New UI with bottom navigation
+                        MainTabView()
+                            .environmentObject(vm)
+                            .environmentObject(authVM)
+                            .onAppear {
+                                // Skip heavy initialization during UI testing
+                                if ProcessInfo.processInfo.environment["UITESTING"] != "1" {
+                                    Task {
+                                        await vm.initializeIfNeeded()
+                                    }
                                 }
                             }
-                        }
+                    } else {
+                        // Old UI (fallback)
+                        ContentView()
+                            .environmentObject(vm)
+                            .environmentObject(authVM)
+                            .onAppear {
+                                // Skip heavy initialization during UI testing
+                                if ProcessInfo.processInfo.environment["UITESTING"] != "1" {
+                                    Task {
+                                        await vm.initializeIfNeeded()
+                                    }
+                                }
+                            }
+                    }
                 } else {
                     WelcomeView()
                         .environmentObject(authVM)

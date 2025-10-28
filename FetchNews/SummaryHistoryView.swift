@@ -104,7 +104,7 @@ struct SummaryHistoryView: View {
             for index in offsets {
                 let summaryToDelete = summaryHistory[index]
                 do {
-                    try await ApiClient.deleteSummaryFromHistory(summaryId: summaryToDelete.id)
+                    let _ = try await ApiClient.deleteSummaryFromHistory(summaryId: summaryToDelete.id)
                     await MainActor.run {
                         self.summaryHistory.remove(at: index)
                     }
@@ -370,8 +370,17 @@ struct AudioPlayerView: View {
         }
         
         // Get duration
-        if let duration = playerItem.asset.duration.seconds.isFinite ? playerItem.asset.duration.seconds : nil {
-            self.duration = duration
+        Task {
+            do {
+                let duration = try await playerItem.asset.load(.duration)
+                if duration.seconds.isFinite {
+                    await MainActor.run {
+                        self.duration = duration.seconds
+                    }
+                }
+            } catch {
+                print("Failed to load duration: \(error)")
+            }
         }
         
         // Set up completion observer

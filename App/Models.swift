@@ -16,6 +16,7 @@ enum NetworkError: LocalizedError {
     case invalidResponse
     case serverError(String)
     case decodingError(Error)
+    case authenticationError(String)
     case unknown(Error)
     
     var errorDescription: String? {
@@ -32,6 +33,8 @@ enum NetworkError: LocalizedError {
             return "Server error: \(message)"
         case .decodingError(let error):
             return "Server response format error: \(error.localizedDescription)"
+        case .authenticationError(let message):
+            return message
         case .unknown(let error):
             return "Network error: \(error.localizedDescription)"
         }

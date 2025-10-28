@@ -15,6 +15,7 @@ import UIKit
 @MainActor
 final class NewsVM: ObservableObject {
     enum Phase: String { case idle, gather, summarize, tts }
+    enum FetchButtonState: String { case noSummary, fetching, hasSummary }
 
     // Selection & state
     @Published var selectedTopics: Set<String> = []
@@ -22,6 +23,17 @@ final class NewsVM: ObservableObject {
     @Published var phase: Phase = .idle
     @Published var isBusy: Bool = false
     @Published var isDirty: Bool = true
+    
+    // Fetch button state
+    var fetchButtonState: FetchButtonState {
+        if isBusy || phase != .idle {
+            return .fetching
+        } else if combined != nil {
+            return .hasSummary
+        } else {
+            return .noSummary
+        }
+    }
     
     // Reference to AuthVM for checking user limits
     weak var authVM: AuthVM?
@@ -402,8 +414,10 @@ final class NewsVM: ObservableObject {
             object: playerItem,
             queue: .main
         ) { [weak self] _ in
-            self?.isPlayingVoicePreview = false
-            self?.voicePreviewPlayer = nil
+            Task { @MainActor in
+                self?.isPlayingVoicePreview = false
+                self?.voicePreviewPlayer = nil
+            }
         }
         
         // Set up completion observer
@@ -412,8 +426,10 @@ final class NewsVM: ObservableObject {
             object: playerItem,
             queue: .main
         ) { [weak self] _ in
-            self?.isPlayingVoicePreview = false
-            self?.voicePreviewPlayer = nil
+            Task { @MainActor in
+                self?.isPlayingVoicePreview = false
+                self?.voicePreviewPlayer = nil
+            }
         }
         
         // Play the introduction
@@ -634,10 +650,12 @@ final class NewsVM: ObservableObject {
             forInterval: CMTime(seconds: 0.5, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
-            guard let self = self else { return }
-            self.currentTime = time.seconds
-            if let dur = p.currentItem?.duration.seconds, dur.isFinite {
-                self.duration = dur
+            Task { @MainActor in
+                guard let self = self else { return }
+                self.currentTime = time.seconds
+                if let dur = p.currentItem?.duration.seconds, dur.isFinite {
+                    self.duration = dur
+                }
             }
         }
 
@@ -647,10 +665,12 @@ final class NewsVM: ObservableObject {
             object: item,
             queue: .main
         ) { [weak self] _ in
-            guard let self = self else { return }
-            self.isPlaying = false
-            self.currentTime = self.duration
-            self.updateNowPlaying(isPlaying: false)
+            Task { @MainActor in
+                guard let self = self else { return }
+                self.isPlaying = false
+                self.currentTime = self.duration
+                self.updateNowPlaying(isPlaying: false)
+            }
         }
 
         updateNowPlaying(isPlaying: false)
@@ -703,9 +723,11 @@ final class NewsVM: ObservableObject {
         guard let p = player, seconds.isFinite, seconds >= 0 else { return }
         let cm = CMTime(seconds: seconds, preferredTimescale: 600)
         p.seek(to: cm, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-            guard let self = self else { return }
-            self.currentTime = seconds
-            self.updateNowPlaying(isPlaying: self.isPlaying)
+            Task { @MainActor in
+                guard let self = self else { return }
+                self.currentTime = seconds
+                self.updateNowPlaying(isPlaying: self.isPlaying)
+            }
         }
     }
     

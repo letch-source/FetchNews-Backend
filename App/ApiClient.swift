@@ -7,9 +7,14 @@
 
 import Foundation
 
+// Notification for token expiration
+extension Notification.Name {
+    static let tokenExpired = Notification.Name("tokenExpired")
+}
+
 final class ApiClient {
-    // Set to your Render backend base URL:
-    static let base = URL(string: "https://fetchnews-backend.onrender.com")!
+        // Production backend URL:
+        static let base = URL(string: "https://fetchnews-backend.onrender.com")!
     private static var authToken: String?
     
     // MARK: - Authentication Methods
@@ -364,6 +369,19 @@ final class ApiClient {
             if let jsonString = String(data: data, encoding: .utf8) {
                 print("Summary History API Error Response: \(jsonString)")
             }
+            
+            // Handle token expiration specifically
+            if httpResponse.statusCode == 401 {
+                let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+                if errorResponse.error.contains("Token expired") || errorResponse.error.contains("expired") {
+                    // Clear the stored token and user data
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(name: .tokenExpired, object: nil)
+                    }
+                    throw NetworkError.authenticationError("Your session has expired. Please log in again.")
+                }
+            }
+            
             let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
             throw NetworkError.serverError(errorResponse.error)
         }

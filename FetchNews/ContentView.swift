@@ -316,7 +316,7 @@ struct ContentView: View {
             }
         }
         // Now-playing bubble
-        .safeAreaInset(edge: .bottom) {
+        .overlay(alignment: .bottom) {
             if vm.canPlay {
                 NowPlayingBubble(
                     title: fetchedTitle,
@@ -335,6 +335,7 @@ struct ContentView: View {
                 )
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
+                .padding(.bottom, 80) // Space above navigation bar
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -370,76 +371,34 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Fetch News").font(.title2).bold()
-                    Text("Custom news updates").foregroundColor(.secondary)
+                    Text("Fetch News")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
                     
-                    // Usage indicator
-                    if let user = authVM.currentUser {
-                        if !user.isPremium {
-                            HStack(spacing: 4) {
-                                Image(systemName: "clock")
-                                    .font(.caption)
-                                    .foregroundColor(.orange)
-                                Text("\(max(0, 10 - user.dailyUsageCount)) summaries remaining today")
-                                    .font(.caption)
-                                    .foregroundColor(.orange)
-                            }
-                        } else {
-                            HStack(spacing: 4) {
-                                Image(systemName: "crown.fill")
-                                    .font(.caption)
-                                    .foregroundColor(.yellow)
-                                Text("Premium - Unlimited")
-                                    .font(.caption)
-                                    .foregroundColor(.yellow)
-                            }
-                        }
-                    }
+                    Text("News for Busy People")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
                 Spacer()
                 
-                HStack(spacing: 12) {
-                    // Location button - HIDDEN FOR NOW
-                    // Button { showingLocation = true } label: {
-                    //     Image(systemName: authVM.userLocation.isEmpty ? "location" : "location.fill")
-                    //         .imageScale(.large)
-                    //         .foregroundColor(.blue)
-                    // }
-                    // .accessibilityLabel("Set Location")
-                    
-                    // Custom topics button
-                    Button { showingCustomTopics = true } label: {
-                        Image(systemName: "plus.circle")
-                            .imageScale(.large)
-                            .padding(8)
+                // Premium indicator
+                if let user = authVM.currentUser, user.isPremium {
+                    Button("PREMIUM") {
+                        // Already premium, could show premium features
                     }
-                    .accessibilityLabel("Add Custom Topics")
-                    
-                    // Premium upgrade button removed from header (moved to settings)
-                    
-                    
-                    
-                    // History button
-                    Button { showingHistory = true } label: {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .imageScale(.large)
-                            .foregroundColor(.blue)
-                            .padding(8)
-                    }
-                    .accessibilityLabel("Summary History")
-                    
-                    // Settings button
-                    Button { showingSettings = true } label: {
-                        Image(systemName: "gearshape")
-                            .imageScale(.large)
-                            .padding(8)
-                    }
-                    .accessibilityLabel("Settings")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.yellow)
+                    .foregroundColor(.black)
+                    .cornerRadius(8)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
         .background(Color(.systemBackground))
     }
 }

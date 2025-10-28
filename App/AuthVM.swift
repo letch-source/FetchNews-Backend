@@ -24,6 +24,17 @@ final class AuthVM: ObservableObject {
         Task {
             await loadStoredAuthAsync()
         }
+        
+        // Listen for token expiration
+        NotificationCenter.default.addObserver(
+            forName: .tokenExpired,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleTokenExpiration()
+            }
+        }
     }
     
     // MARK: - Authentication Methods
@@ -67,6 +78,13 @@ final class AuthVM: ObservableObject {
         currentUser = nil
         UserDefaults.standard.removeObject(forKey: tokenKey)
         UserDefaults.standard.removeObject(forKey: userKey)
+        ApiClient.setAuthToken(nil)
+    }
+    
+    private func handleTokenExpiration() {
+        print("🔑 Token expired, logging out user")
+        logout()
+        errorMessage = "Your session has expired. Please log in again."
     }
     
     func refreshUser() async {

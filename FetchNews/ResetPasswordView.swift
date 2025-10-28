@@ -136,7 +136,7 @@ struct ResetPasswordView: View {
     
     private func resetPassword() async {
         isLoading = true
-        await authVM.resetPassword(token: resetToken, newPassword: newPassword)
+        let _ = await authVM.resetPassword(token: resetToken, newPassword: newPassword)
         isLoading = false
         
         if let error = authVM.errorMessage {
