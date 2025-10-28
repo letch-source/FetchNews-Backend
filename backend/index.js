@@ -1974,8 +1974,8 @@ async function updateTrendingTopics() {
       return;
     }
 
-    // Get recent breaking news headlines (simplified approach)
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=30&sort=published_desc`;
+    // Get recent breaking news headlines with enhanced parameters
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=30&sort=published_desc&keywords=breaking,urgent,alert,latest,news`;
     
     const response = await fetch(url);
     
