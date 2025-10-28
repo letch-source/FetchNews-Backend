@@ -6,25 +6,46 @@ const router = express.Router();
 // Get available news sources
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    // Return a basic list of news sources
-    // This is a placeholder - in a real implementation, this would come from a database or API
-    const newsSources = [
-      { id: 'bbc-news', name: 'BBC News' },
-      { id: 'cnn', name: 'CNN' },
-      { id: 'reuters', name: 'Reuters' },
-      { id: 'associated-press', name: 'Associated Press' },
-      { id: 'the-guardian', name: 'The Guardian' },
-      { id: 'washington-post', name: 'Washington Post' },
-      { id: 'new-york-times', name: 'New York Times' },
-      { id: 'usa-today', name: 'USA Today' },
-      { id: 'fox-news', name: 'Fox News' },
-      { id: 'nbc-news', name: 'NBC News' }
-    ];
+    const MEDIASTACK_KEY = process.env.MEDIASTACK_KEY;
+    
+    if (!MEDIASTACK_KEY) {
+      return res.status(503).json({ 
+        error: 'News sources not available',
+        message: 'Mediastack API key not configured'
+      });
+    }
+    
+    // Fetch sources from Mediastack API
+    const url = `http://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&languages=en&limit=100`;
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`Mediastack API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (!data.data || !Array.isArray(data.data)) {
+      throw new Error('Invalid response from Mediastack API');
+    }
+    
+    // Map Mediastack sources to our format
+    const newsSources = data.data.map(source => ({
+      id: source.id,
+      name: source.name,
+      category: source.category,
+      country: source.country,
+      language: source.language,
+      url: source.url
+    }));
     
     res.json({ newsSources });
   } catch (error) {
     console.error('Get news sources error:', error);
-    res.status(500).json({ error: 'Failed to get news sources' });
+    res.status(500).json({ 
+      error: 'Failed to get news sources',
+      details: error.message 
+    });
   }
 });
 
@@ -39,16 +60,20 @@ router.put('/', authenticateToken, async (req, res) => {
     }
     
     // Update user preferences with selected sources
-    // This is a placeholder - in a real implementation, this would save to database
-    user.preferences = user.preferences || {};
-    user.preferences.selectedNewsSources = selectedSources;
+    const User = require('../models/User');
+    const userDoc = await User.findById(user.id);
     
-    // Save user (this would be a database operation in real implementation)
-    // await user.save();
+    if (!userDoc) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Update the user's selected news sources
+    userDoc.selectedNewsSources = selectedSources;
+    await userDoc.save();
     
     res.json({ 
       message: 'News sources updated successfully',
-      selectedSources: user.preferences.selectedNewsSources 
+      selectedSources: selectedSources 
     });
   } catch (error) {
     console.error('Update news sources error:', error);
