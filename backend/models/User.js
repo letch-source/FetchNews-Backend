@@ -259,19 +259,38 @@ userSchema.methods.getPreferences = function() {
 };
 
 userSchema.methods.updatePreferences = async function(preferences) {
-  this.selectedVoice = preferences.selectedVoice || this.selectedVoice;
-  this.playbackRate = preferences.playbackRate || this.playbackRate;
-  this.upliftingNewsOnly = preferences.upliftingNewsOnly || this.upliftingNewsOnly;
-  this.lastFetchedTopics = preferences.lastFetchedTopics || this.lastFetchedTopics;
-  this.selectedTopics = preferences.selectedTopics || this.selectedTopics;
-  this.selectedNewsSources = preferences.selectedNewsSources || this.selectedNewsSources;
-  this.scheduledSummaries = preferences.scheduledSummaries || this.scheduledSummaries;
+  // Update string/number values (only if provided)
+  if (preferences.selectedVoice !== undefined) {
+    this.selectedVoice = preferences.selectedVoice;
+  }
+  if (preferences.playbackRate !== undefined) {
+    this.playbackRate = preferences.playbackRate;
+  }
+  
+  // Update boolean values (explicitly check for true/false)
+  if (preferences.upliftingNewsOnly !== undefined) {
+    this.upliftingNewsOnly = preferences.upliftingNewsOnly;
+  }
+  
+  // Update array values (only if provided)
+  if (preferences.lastFetchedTopics !== undefined) {
+    this.lastFetchedTopics = preferences.lastFetchedTopics;
+  }
+  if (preferences.selectedTopics !== undefined) {
+    this.selectedTopics = preferences.selectedTopics;
+  }
+  if (preferences.selectedNewsSources !== undefined) {
+    this.selectedNewsSources = preferences.selectedNewsSources;
+  }
+  if (preferences.scheduledSummaries !== undefined) {
+    this.scheduledSummaries = preferences.scheduledSummaries;
+  }
   
   // Update length in preferences object
   if (!this.preferences) {
     this.preferences = {};
   }
-  if (preferences.length) {
+  if (preferences.length !== undefined) {
     this.preferences.length = preferences.length;
   }
   

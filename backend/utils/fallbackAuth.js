@@ -177,19 +177,38 @@ const fallbackAuth = {
   },
   
   async updatePreferences(user, preferences) {
-    user.selectedVoice = preferences.selectedVoice || user.selectedVoice;
-    user.playbackRate = preferences.playbackRate || user.playbackRate;
-    user.upliftingNewsOnly = preferences.upliftingNewsOnly || user.upliftingNewsOnly;
-    user.lastFetchedTopics = preferences.lastFetchedTopics || user.lastFetchedTopics;
-    user.selectedTopics = preferences.selectedTopics || user.selectedTopics;
-    user.selectedNewsSources = preferences.selectedNewsSources || user.selectedNewsSources;
-    user.scheduledSummaries = preferences.scheduledSummaries || user.scheduledSummaries;
+    // Update string/number values (only if provided)
+    if (preferences.selectedVoice !== undefined) {
+      user.selectedVoice = preferences.selectedVoice;
+    }
+    if (preferences.playbackRate !== undefined) {
+      user.playbackRate = preferences.playbackRate;
+    }
+    
+    // Update boolean values (explicitly check for true/false)
+    if (preferences.upliftingNewsOnly !== undefined) {
+      user.upliftingNewsOnly = preferences.upliftingNewsOnly;
+    }
+    
+    // Update array values (only if provided)
+    if (preferences.lastFetchedTopics !== undefined) {
+      user.lastFetchedTopics = preferences.lastFetchedTopics;
+    }
+    if (preferences.selectedTopics !== undefined) {
+      user.selectedTopics = preferences.selectedTopics;
+    }
+    if (preferences.selectedNewsSources !== undefined) {
+      user.selectedNewsSources = preferences.selectedNewsSources;
+    }
+    if (preferences.scheduledSummaries !== undefined) {
+      user.scheduledSummaries = preferences.scheduledSummaries;
+    }
     
     // Update length in preferences object
     if (!user.preferences) {
       user.preferences = {};
     }
-    if (preferences.length) {
+    if (preferences.length !== undefined) {
       user.preferences.length = preferences.length;
     }
     
