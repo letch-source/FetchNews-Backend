@@ -15,12 +15,32 @@ router.get('/', authenticateToken, async (req, res) => {
       });
     }
     
-    // Fetch sources from Mediastack API
+    // Try to fetch sources from Mediastack API
     const url = `http://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&languages=en&limit=100`;
     const response = await fetch(url);
     
     if (!response.ok) {
-      throw new Error(`Mediastack API error: ${response.status}`);
+      console.log(`[NEWS SOURCES] Mediastack sources API error: ${response.status}, using fallback sources`);
+      
+      // Fallback: return a basic list of common news sources
+      const fallbackSources = [
+        { id: 'cnn', name: 'CNN', category: 'general', country: 'us', language: 'en', url: 'https://cnn.com' },
+        { id: 'bbc-news', name: 'BBC News', category: 'general', country: 'gb', language: 'en', url: 'https://bbc.com' },
+        { id: 'reuters', name: 'Reuters', category: 'general', country: 'us', language: 'en', url: 'https://reuters.com' },
+        { id: 'associated-press', name: 'Associated Press', category: 'general', country: 'us', language: 'en', url: 'https://ap.org' },
+        { id: 'bloomberg', name: 'Bloomberg', category: 'business', country: 'us', language: 'en', url: 'https://bloomberg.com' },
+        { id: 'the-washington-post', name: 'The Washington Post', category: 'general', country: 'us', language: 'en', url: 'https://washingtonpost.com' },
+        { id: 'the-new-york-times', name: 'The New York Times', category: 'general', country: 'us', language: 'en', url: 'https://nytimes.com' },
+        { id: 'usa-today', name: 'USA Today', category: 'general', country: 'us', language: 'en', url: 'https://usatoday.com' },
+        { id: 'npr', name: 'NPR', category: 'general', country: 'us', language: 'en', url: 'https://npr.org' }
+      ];
+      
+      console.log(`[NEWS SOURCES] Using fallback sources (${fallbackSources.length} sources):`);
+      fallbackSources.forEach((source, index) => {
+        console.log(`[NEWS SOURCES] ${index + 1}. ${source.name} (${source.id}) - ${source.category} - ${source.country}`);
+      });
+      
+      return res.json({ newsSources: fallbackSources });
     }
     
     const data = await response.json();

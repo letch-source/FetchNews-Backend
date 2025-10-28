@@ -262,8 +262,41 @@ userSchema.methods.updatePreferences = async function(preferences) {
     this.preferences.length = preferences.length;
   }
   
-  await this.save();
-  return this.getPreferences();
+  // Retry logic for version conflicts
+  let retries = 3;
+  while (retries > 0) {
+    try {
+      await this.save();
+      return this.getPreferences();
+    } catch (error) {
+      if (error.name === 'VersionError' && retries > 1) {
+        console.log(`[USER] Version conflict, retrying... (${retries - 1} retries left)`);
+        // Reload the document to get the latest version
+        const freshUser = await this.constructor.findById(this._id);
+        if (freshUser) {
+          // Update the fresh document with our changes
+          if (preferences.selectedVoice) freshUser.preferences.selectedVoice = preferences.selectedVoice;
+          if (preferences.playbackRate !== undefined) freshUser.preferences.playbackRate = preferences.playbackRate;
+          if (preferences.upliftingNewsOnly !== undefined) freshUser.preferences.upliftingNewsOnly = preferences.upliftingNewsOnly;
+          if (preferences.length) freshUser.preferences.length = preferences.length;
+          if (preferences.lastFetchedTopics) freshUser.lastFetchedTopics = preferences.lastFetchedTopics;
+          if (preferences.selectedTopics) freshUser.selectedTopics = preferences.selectedTopics;
+          if (preferences.selectedNewsSources) freshUser.selectedNewsSources = preferences.selectedNewsSources;
+          if (preferences.scheduledSummaries) freshUser.preferences.scheduledSummaries = preferences.scheduledSummaries;
+          
+          // Copy the fresh document to this instance
+          Object.assign(this, freshUser.toObject());
+          retries--;
+        } else {
+          throw error;
+        }
+      } else {
+        throw error;
+      }
+    }
+  }
+  
+  throw new Error('Failed to update preferences after retries');
 };
 
 module.exports = mongoose.model('User', userSchema);
