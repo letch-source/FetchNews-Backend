@@ -832,16 +832,28 @@ final class NewsVM: ObservableObject {
         // Only delete custom topics that are selected
         let customTopicsToDelete = selectedTopics.intersection(Set(customTopics))
         
+        print("DEBUG: Custom topics to delete: \(customTopicsToDelete)")
+        print("DEBUG: Current custom topics: \(customTopics)")
+        print("DEBUG: Current selected topics: \(selectedTopics)")
+        
         if customTopicsToDelete.isEmpty {
+            print("DEBUG: No custom topics to delete")
             return
         }
         
         do {
             let updatedTopics = try await ApiClient.deleteCustomTopics(Array(customTopicsToDelete))
+            print("DEBUG: Updated topics from API: \(updatedTopics)")
+            
             await MainActor.run {
                 self.customTopics = updatedTopics
                 // Remove the deleted topics from selected topics
                 self.selectedTopics.subtract(customTopicsToDelete)
+                // Also remove from last fetched topics to clean up the recent topics line
+                self.lastFetchedTopics.subtract(customTopicsToDelete)
+                
+                print("DEBUG: After deletion - custom topics: \(self.customTopics)")
+                print("DEBUG: After deletion - selected topics: \(self.selectedTopics)")
             }
         } catch {
             print("Failed to delete custom topics: \(error)")
