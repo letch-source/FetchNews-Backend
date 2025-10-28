@@ -175,7 +175,8 @@ userSchema.methods.addSummaryToHistory = async function(summaryData) {
     topics: summaryData.topics || [],
     length: summaryData.length || 'short',
     timestamp: new Date(),
-    audioUrl: summaryData.audioUrl
+    audioUrl: summaryData.audioUrl,
+    sources: summaryData.sources || []
   };
   
   // Add to beginning of array (most recent first)
