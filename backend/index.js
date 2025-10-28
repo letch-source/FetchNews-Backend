@@ -503,16 +503,49 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [])
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
   // Extend to 7 days for more variety (24 hours was too restrictive)
   const from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&countries=us&sort=published_desc&limit=${pageSize}&date=${from}`;
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`Mediastack error: ${resp.status} ${text}`);
+  
+  // Try multiple search strategies for better coverage
+  const searchStrategies = [
+    // Strategy 1: Exact phrase search
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`,
+    // Strategy 2: Individual keywords
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`,
+    // Strategy 3: Broader search without date restriction
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}`,
+    // Strategy 4: Search without keywords (general news)
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}`
+  ];
+  
+  let articles = [];
+  let lastError = null;
+  
+  for (const url of searchStrategies) {
+    try {
+      console.log(`[SEARCH] Trying strategy: ${url}`);
+      const resp = await fetch(url);
+      
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.data && data.data.length > 0) {
+          articles = data.data;
+          console.log(`[SEARCH] Found ${articles.length} articles with current strategy`);
+          break;
+        }
+      } else {
+        lastError = `Mediastack error: ${resp.status}`;
+      }
+    } catch (error) {
+      lastError = error.message;
+      console.log(`[SEARCH] Strategy failed: ${error.message}`);
+    }
   }
-  const data = await resp.json();
+  
+  if (articles.length === 0) {
+    throw new Error(lastError || 'No articles found with any search strategy');
+  }
   
   // Map Mediastack response to match expected format
-  const articles = (data.data || []).map(article => ({
+  const mappedArticles = articles.map(article => ({
     title: article.title,
     description: article.description,
     url: article.url,
@@ -520,11 +553,11 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [])
     source: { id: article.source, name: article.source }
   }));
   
-  if (selectedSources && selectedSources.length > 0 && articles.length > 0) {
-    const sources = [...new Set(articles.map(a => a.source?.id).filter(Boolean))];
+  if (selectedSources && selectedSources.length > 0 && mappedArticles.length > 0) {
+    const sources = [...new Set(mappedArticles.map(a => a.source?.id).filter(Boolean))];
     console.log(`Articles came from sources: ${sources.join(", ")}`);
   }
-  return articles;
+  return mappedArticles;
 }
 
 // Function to ensure variety by getting articles from multiple sources with progressive time expansion
@@ -551,7 +584,7 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
       
       try {
         // Use everything endpoint with time filter for more control
-        const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&date=${from}&sort=published_desc&limit=1&languages=en&countries=us`;
+        const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&date=${from}&sort=published_desc&limit=1&languages=en`;
         const resp = await fetch(url);
         
         if (resp.ok) {
@@ -596,7 +629,7 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
     if (usedSources.size >= targetVariety) break;
     
     try {
-      const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&limit=1&languages=en&countries=us`;
+      const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&limit=1&languages=en`;
       const resp = await fetch(url);
       
       if (resp.ok) {
@@ -757,7 +790,7 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   if (isGeneral) {
   // For general news, use a simple approach without date filtering
   try {
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&countries=us&limit=${pageSize}`;
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}`;
     const resp = await fetch(url);
     
     if (!resp.ok) {
@@ -1183,7 +1216,7 @@ app.get("/api/test", (req, res) => {
 // Test Mediastack API endpoint
 app.get("/api/test-mediastack", async (req, res) => {
   try {
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&countries=us&limit=5`;
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=5`;
     console.log(`[TEST] Testing Mediastack URL: ${url}`);
     const resp = await fetch(url);
     
@@ -2209,7 +2242,7 @@ async function updateTrendingTopics() {
     const allArticles = [];
     for (const source of newsSources) {
       try {
-        const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&languages=en&countries=us&limit=3&sort=published_desc`;
+        const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&languages=en&limit=3&sort=published_desc`;
         const response = await fetch(url);
         
         if (response.ok) {
@@ -2259,7 +2292,7 @@ async function updateTrendingTopicsFallback() {
     const categories = ['general', 'business', 'technology', 'sports', 'entertainment', 'health', 'science'];
     const randomCategory = categories[Math.floor(Math.random() * categories.length)];
     
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&countries=us&limit=30&sort=published_desc&categories=${randomCategory}`;
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=30&sort=published_desc&categories=${randomCategory}`;
     const response = await fetch(url);
     
     if (!response.ok) {
