@@ -154,7 +154,12 @@ function extractTopicsFromHeadline(headline) {
   const stopWords = new Set([
     'the', 'and', 'for', 'with', 'from', 'this', 'that', 'will', 'said', 'says',
     'breaking', 'news', 'update', 'latest', 'reports', 'report', 'story', 'stories',
-    'chairman', 'finalised', 'commission', 'likely', 'formed', 'next', 'pay'
+    'chairman', 'finalised', 'commission', 'likely', 'formed', 'next', 'pay',
+    'weather', 'forecast', 'surf', 'temperature', 'degrees', 'rain', 'snow', 'wind',
+    'storm', 'hurricane', 'tornado', 'climate', 'seasonal', 'outdoor', 'beach',
+    'coastal', 'marine', 'atmospheric', 'meteorological', 'december', 'january',
+    'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september',
+    'october', 'november', 'tearing', 'right', 'now'
   ]);
   
   for (let i = 0; i < words.length - 1; i++) {
@@ -173,7 +178,12 @@ function extractTopicsFromHeadline(headline) {
 function isGenericWord(word) {
   const genericWords = new Set([
     'Report', 'News', 'Update', 'Latest', 'Breaking', 'Story', 'Stories',
-    'Chairman', 'Finalised', 'Commission', 'Likely', 'Formed', 'Next', 'Pay'
+    'Chairman', 'Finalised', 'Commission', 'Likely', 'Formed', 'Next', 'Pay',
+    'Weather', 'Forecast', 'Surf', 'Temperature', 'Degrees', 'Rain', 'Snow', 'Wind',
+    'Storm', 'Hurricane', 'Tornado', 'Climate', 'Seasonal', 'Outdoor', 'Beach',
+    'Coastal', 'Marine', 'Atmospheric', 'Meteorological', 'December', 'January',
+    'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
+    'October', 'November', 'Tearing', 'Right', 'Now'
   ]);
   return genericWords.has(word);
 }
@@ -1974,8 +1984,11 @@ async function updateTrendingTopics() {
       return;
     }
 
-    // Get recent breaking news headlines from U.S. sources
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&countries=us&limit=30&sort=published_desc&keywords=breaking,urgent,alert,latest,news`;
+    // Get diverse news from multiple categories to avoid single-source bias
+    const categories = ['general', 'business', 'technology', 'sports', 'entertainment', 'health', 'science'];
+    const randomCategory = categories[Math.floor(Math.random() * categories.length)];
+    
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&countries=us&limit=30&sort=published_desc&categories=${randomCategory}`;
     
     const response = await fetch(url);
     
@@ -1989,12 +2002,32 @@ async function updateTrendingTopics() {
       throw new Error('Invalid response from Mediastack API');
     }
     
-    const trendingTopics = extractBreakingNewsTopics(data.data);
+    let trendingTopics = extractBreakingNewsTopics(data.data);
+    
+    // If we don't get enough diverse topics, try a different approach
+    if (trendingTopics.length < 3 || trendingTopics.every(topic => 
+        topic.toLowerCase().includes('weather') || 
+        topic.toLowerCase().includes('surf') || 
+        topic.toLowerCase().includes('forecast'))) {
+      
+      console.log('[TRENDING] Topics too similar, trying general news...');
+      
+      // Fallback to general news without category restriction
+      const fallbackUrl = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&countries=us&limit=50&sort=published_desc`;
+      const fallbackResponse = await fetch(fallbackUrl);
+      
+      if (fallbackResponse.ok) {
+        const fallbackData = await fallbackResponse.json();
+        if (fallbackData.data && Array.isArray(fallbackData.data)) {
+          trendingTopics = extractBreakingNewsTopics(fallbackData.data);
+        }
+      }
+    }
     
     trendingTopicsCache = trendingTopics;
     lastTrendingUpdate = new Date();
     
-    console.log(`[TRENDING] Updated trending topics: ${trendingTopics.join(', ')}`);
+    console.log(`[TRENDING] Updated trending topics from ${randomCategory}: ${trendingTopics.join(', ')}`);
   } catch (error) {
     console.error('[TRENDING] Error updating trending topics:', error);
   }
