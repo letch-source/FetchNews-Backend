@@ -99,20 +99,29 @@ router.delete('/bulk', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'At least one topic must be provided' });
     }
     
+    console.log(`[CUSTOM TOPICS] Deleting topics: ${topics.join(', ')}`);
+    console.log(`[CUSTOM TOPICS] User's current custom topics: ${user.customTopics.join(', ')}`);
+    
     let customTopics;
     if (mongoose.connection.readyState === 1) {
       // Remove each topic from the user's custom topics
       for (const topic of topics) {
+        console.log(`[CUSTOM TOPICS] Removing topic: ${topic}`);
         await user.removeCustomTopic(topic);
+        console.log(`[CUSTOM TOPICS] After removing ${topic}: ${user.customTopics.join(', ')}`);
       }
       customTopics = user.getCustomTopics();
     } else {
       // Remove each topic from the user's custom topics
       for (const topic of topics) {
+        console.log(`[CUSTOM TOPICS] Removing topic (fallback): ${topic}`);
         await fallbackAuth.removeCustomTopic(user, topic);
+        console.log(`[CUSTOM TOPICS] After removing ${topic} (fallback): ${fallbackAuth.getCustomTopics(user).join(', ')}`);
       }
       customTopics = fallbackAuth.getCustomTopics(user);
     }
+    
+    console.log(`[CUSTOM TOPICS] Final custom topics: ${customTopics.join(', ')}`);
     
     res.json({ 
       message: 'Custom topics deleted successfully',
