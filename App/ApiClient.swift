@@ -336,10 +336,6 @@ final class ApiClient {
         }
         
         if httpResponse.statusCode == 200 {
-            // Debug: Log the raw JSON response
-            if let jsonString = String(data: data, encoding: .utf8) {
-                print("Summary History API Response JSON: \(jsonString)")
-            }
             
             do {
                 let decoder = JSONDecoder()
@@ -347,28 +343,23 @@ final class ApiClient {
                 let summaryHistory = try decoder.decode([SummaryHistoryEntry].self, from: data)
                 return summaryHistory
             } catch {
-                print("Summary History JSON Decoding Error: \(error)")
                 if let decodingError = error as? DecodingError {
                     switch decodingError {
                     case .keyNotFound(let key, let context):
-                        print("Missing key '\(key)' in \(context.debugDescription)")
+                        break
                     case .typeMismatch(let type, let context):
-                        print("Type mismatch for type \(type) in \(context.debugDescription)")
+                        break
                     case .valueNotFound(let type, let context):
-                        print("Value not found for type \(type) in \(context.debugDescription)")
+                        break
                     case .dataCorrupted(let context):
-                        print("Data corrupted: \(context.debugDescription)")
+                        break
                     @unknown default:
-                        print("Unknown decoding error")
+                        break
                     }
                 }
                 throw error
             }
         } else {
-            // Debug: Log error response
-            if let jsonString = String(data: data, encoding: .utf8) {
-                print("Summary History API Error Response: \(jsonString)")
-            }
             
             // Handle token expiration specifically
             if httpResponse.statusCode == 401 {
@@ -558,10 +549,6 @@ final class ApiClient {
                 throw URLError(.badServerResponse)
             }
             
-            // Debug: Log the raw JSON response
-            if let jsonString = String(data: data, encoding: .utf8) {
-                print("API Response JSON: \(jsonString)")
-            }
             
             // Handle different response formats based on endpoint
             if topics.count == 1 {
