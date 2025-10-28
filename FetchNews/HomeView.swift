@@ -32,7 +32,6 @@ struct HomeView: View {
     @State private var showAllRecommended = false
     @State private var showAllCustom = false
     @State private var isScrolledInRecents = false
-    @State private var customTopicText = ""
 
     private var fetchDisabled: Bool {
         vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty
@@ -93,7 +92,11 @@ struct HomeView: View {
                         customTopics: vm.customTopics,
                         selectedTopics: vm.selectedTopics,
                         onTopicToggle: { topic in vm.toggle(topic) },
-                        onAddCustom: { showingCustomTopics = true },
+                        onAddCustom: { topic in 
+                            Task {
+                                await vm.addCustomTopic(topic)
+                            }
+                        },
                         showAll: $showAllCustom,
                         vm: vm
                     )
@@ -506,9 +509,10 @@ struct CustomTopicsSection: View {
     let customTopics: [String]
     let selectedTopics: Set<String>
     let onTopicToggle: (String) -> Void
-    let onAddCustom: () -> Void
+    let onAddCustom: (String) -> Void
     @Binding var showAll: Bool
     let vm: NewsVM
+    @State private var customTopicText = ""
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
