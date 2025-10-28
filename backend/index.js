@@ -18,7 +18,7 @@ const authRoutes = require("./routes/auth");
 const subscriptionRoutes = require("./routes/subscriptions");
 const customTopicsRoutes = require("./routes/customTopics");
 const summaryHistoryRoutes = require("./routes/summaryHistory");
-const adminRoutes = require("./routes/admin");
+const adminRoutes = require("./routes/adminActions");
 const preferencesRoutes = require("./routes/preferences");
 const newsSourcesRoutes = require("./routes/newsSources");
 const fallbackAuth = require("./utils/fallbackAuth");
@@ -107,7 +107,7 @@ app.use("/api/preferences", preferencesRoutes);
 app.use("/api/news-sources", newsSourcesRoutes);
 
 // Scheduled summaries routes
-const scheduledSummariesRoutes = require("../routes/scheduledSummaries");
+const scheduledSummariesRoutes = require("./routes/scheduledSummaries");
 app.use("/api/scheduled-summaries", scheduledSummariesRoutes);
 
 // Serve admin website
@@ -1653,7 +1653,7 @@ setInterval(async () => {
           
           try {
             // Import and call the execution function directly
-            const { executeScheduledSummary } = require('../routes/scheduledSummaries');
+            const { executeScheduledSummary } = require('./routes/scheduledSummaries');
             await executeScheduledSummary(user, summary);
             console.log(`[SCHEDULER] Successfully executed scheduled summary "${summary.name}" for user ${user.email}`);
             
