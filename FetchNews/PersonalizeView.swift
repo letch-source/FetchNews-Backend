@@ -224,6 +224,17 @@ struct VoiceSection: View {
 struct SummaryLengthSection: View {
     @EnvironmentObject var vm: NewsVM
     
+    private func lengthDescription(for length: ApiClient.Length) -> String {
+        switch length {
+        case .short:
+            return "Quick 2-3 minute summary"
+        case .medium:
+            return "Detailed 5-7 minute summary"
+        case .long:
+            return "Comprehensive 10+ minute summary"
+        }
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Summary Length")
@@ -238,12 +249,12 @@ struct SummaryLengthSection: View {
                     }) {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(length.displayName)
+                                Text(length.label)
                                     .font(.subheadline)
                                     .fontWeight(.medium)
                                     .foregroundColor(.primary)
                                 
-                                Text(length.description)
+                                Text(lengthDescription(for: length))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
