@@ -316,6 +316,25 @@ app.get("/api/trending-topics", async (req, res) => {
   }
 });
 
+// Manual trending topics update endpoint (for testing)
+app.post("/api/trending-topics/update", async (req, res) => {
+  try {
+    console.log('[TRENDING] Manual update triggered');
+    await updateTrendingTopics();
+    res.json({ 
+      message: 'Trending topics updated successfully',
+      trendingTopics: trendingTopicsCache,
+      lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null
+    });
+  } catch (error) {
+    console.error('Manual trending topics update error:', error);
+    res.status(500).json({ 
+      error: 'Failed to update trending topics',
+      details: error.message 
+    });
+  }
+});
+
 // Get source articles for a specific trending topic
 app.get("/api/trending-topics/:topic/sources", async (req, res) => {
   try {
