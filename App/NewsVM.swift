@@ -46,9 +46,7 @@ final class NewsVM: ObservableObject {
     @Published var customTopics: [String] = []
     
     // Trending topics (fetched from backend)
-    @Published var trendingTopics: [String] = [
-        "Politics", "Technology", "Climate", "Economy", "Health", "Sports", "Entertainment", "Science"
-    ]
+    @Published var trendingTopics: [String] = []
     
     // Last fetched topics for "Fetch again" functionality
     @Published var lastFetchedTopics: Set<String> = [] {
