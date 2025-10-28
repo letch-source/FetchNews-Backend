@@ -382,18 +382,18 @@ struct ContentView: View {
                 }
                 Spacer()
                 
-                // Premium indicator
-                if let user = authVM.currentUser, user.isPremium {
-                    Button("PREMIUM") {
-                        // Already premium, could show premium features
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.yellow)
-                    .foregroundColor(.black)
-                    .cornerRadius(8)
-                }
+                // Premium indicator - Hidden
+                // if let user = authVM.currentUser, user.isPremium {
+                //     Button("PREMIUM") {
+                //         // Already premium, could show premium features
+                //     }
+                //     .font(.subheadline.weight(.semibold))
+                //     .padding(.horizontal, 12)
+                //     .padding(.vertical, 6)
+                //     .background(Color.yellow)
+                //     .foregroundColor(.black)
+                //     .cornerRadius(8)
+                // }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

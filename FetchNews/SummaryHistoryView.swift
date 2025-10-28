@@ -96,7 +96,7 @@ struct SummaryHistoryView: View {
             for index in offsets {
                 let summaryToDelete = summaryHistory[index]
                 do {
-                    let _ = try await ApiClient.deleteSummaryFromHistory(summaryId: summaryToDelete.id)
+                    _ = try await ApiClient.deleteSummaryFromHistory(summaryId: summaryToDelete.id)
                     await MainActor.run {
                         self.summaryHistory.remove(at: index)
                     }
