@@ -15,18 +15,11 @@ router.get('/', authenticateToken, async (req, res) => {
       });
     }
     
-    // Try to fetch sources from Mediastack API
-    // Note: Mediastack sources API might not support all parameters
-    const url = `http://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}`;
-    console.log(`[NEWS SOURCES] Fetching from: ${url}`);
-    const response = await fetch(url);
+    // Note: Mediastack sources API has validation issues (422 error)
+    // Using fallback sources for reliability
+    console.log(`[NEWS SOURCES] Using fallback sources (Mediastack sources API has validation issues)`);
     
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      console.log(`[NEWS SOURCES] Mediastack sources API error: ${response.status}, using fallback sources`);
-      console.log(`[NEWS SOURCES] Error details: ${errorText}`);
-      
-      // Fallback: return a basic list of common news sources
+    // Fallback: return a basic list of common news sources
       const fallbackSources = [
         { id: 'cnn', name: 'CNN', category: 'general', country: 'us', language: 'en', url: 'https://cnn.com' },
         { id: 'bbc-news', name: 'BBC News', category: 'general', country: 'gb', language: 'en', url: 'https://bbc.com' },
@@ -45,31 +38,6 @@ router.get('/', authenticateToken, async (req, res) => {
       });
       
       return res.json({ newsSources: fallbackSources });
-    }
-    
-    const data = await response.json();
-    
-    if (!data.data || !Array.isArray(data.data)) {
-      throw new Error('Invalid response from Mediastack API');
-    }
-    
-    // Map Mediastack sources to our format
-    const newsSources = data.data.map(source => ({
-      id: source.id,
-      name: source.name,
-      category: source.category,
-      country: source.country,
-      language: source.language,
-      url: source.url
-    }));
-    
-    // Log sources to render log
-    console.log(`[NEWS SOURCES] Retrieved ${newsSources.length} sources from Mediastack:`);
-    newsSources.forEach((source, index) => {
-      console.log(`[NEWS SOURCES] ${index + 1}. ${source.name} (${source.id}) - ${source.category} - ${source.country}`);
-    });
-    
-    res.json({ newsSources });
   } catch (error) {
     console.error('Get news sources error:', error);
     res.status(500).json({ 

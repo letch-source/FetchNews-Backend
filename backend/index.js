@@ -670,22 +670,62 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
 }
 
 async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = []) {
-  // Check if this is a trending topic and use its source articles
+  // Check if this is a trending topic and combine source articles with fresh content
   if (trendingTopicsWithSources && trendingTopicsWithSources[topic]) {
-    console.log(`[TRENDING] Using source articles for trending topic: ${topic}`);
+    console.log(`[TRENDING] Combining source articles with fresh content for trending topic: ${topic}`);
     const sourceArticles = trendingTopicsWithSources[topic];
     
-    // Convert to the expected format
-    const articles = sourceArticles.map(article => ({
+    // Convert source articles to the expected format
+    const sourceArticlesFormatted = sourceArticles.map(article => ({
       title: article.title || "",
       description: article.description || "",
       url: article.url || "",
       publishedAt: article.published_at || "",
       source: { id: article.source, name: article.source },
-      urlToImage: article.image || ""
+      urlToImage: article.image || "",
+      isSourceArticle: true // Mark as source article
     }));
     
-    return { articles, note: "Trending topic source articles" };
+    // Calculate how many additional articles to fetch
+    const sourceCount = sourceArticlesFormatted.length;
+    const additionalNeeded = Math.max(0, maxResults - sourceCount);
+    
+    let additionalArticles = [];
+    if (additionalNeeded > 0) {
+      console.log(`[TRENDING] Fetching ${additionalNeeded} additional articles for ${topic}`);
+      
+      // Fetch additional articles using the normal process
+      const queryParts = [topic];
+      const countryCode = geo?.country || geo?.countryCode || "";
+      const region = geo?.region || geo?.state || "";
+      const city = geo?.city || "";
+      if (region) queryParts.push(region);
+      if (city) queryParts.push(city);
+      
+      try {
+        // Use the existing logic to fetch additional articles
+        const additionalResult = await fetchArticlesEverything(queryParts, additionalNeeded, selectedSources);
+        additionalArticles = additionalResult.map(article => ({
+          title: article.title || "",
+          description: article.description || "",
+          url: article.url || "",
+          publishedAt: article.publishedAt || "",
+          source: article.source || { id: "unknown", name: "Unknown" },
+          urlToImage: article.urlToImage || "",
+          isSourceArticle: false // Mark as additional article
+        }));
+      } catch (error) {
+        console.log(`[TRENDING] Failed to fetch additional articles for ${topic}:`, error.message);
+      }
+    }
+    
+    // Combine source articles with additional articles
+    const allArticles = [...sourceArticlesFormatted, ...additionalArticles];
+    
+    return { 
+      articles: allArticles, 
+      note: `Trending topic: ${sourceCount} source articles + ${additionalArticles.length} additional articles` 
+    };
   }
   
   const queryParts = [topic];
@@ -833,7 +873,7 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   return result;
 }
 
-async function summarizeArticles(topic, geo, articles, wordCount, goodNewsOnly = false) {
+async function summarizeArticles(topic, geo, articles, wordCount, goodNewsOnly = false, user = null) {
   const baseParts = [String(topic || "").trim()];
   if (geo?.region) baseParts.push(geo.region);
   if (geo?.country || geo?.countryCode) baseParts.push(geo.country || geo.countryCode);
@@ -874,7 +914,7 @@ async function summarizeArticles(topic, geo, articles, wordCount, goodNewsOnly =
     }).join("\n\n");
 
     // Get user's timezone for personalized greeting
-    const userTimezone = req.user?.preferences?.timezone || 'America/New_York';
+    const userTimezone = user?.preferences?.timezone || 'America/New_York';
     const now = new Date();
     const userTime = new Date(now.toLocaleString("en-US", {timeZone: userTimezone}));
     const hour = userTime.getHours();
@@ -946,7 +986,7 @@ Requirements:
     console.log("Falling back to simple summary");
     
     // Get user's timezone for personalized greeting (fallback)
-    const userTimezone = req.user?.preferences?.timezone || 'America/New_York';
+    const userTimezone = user?.preferences?.timezone || 'America/New_York';
     const now = new Date();
     const userTime = new Date(now.toLocaleString("en-US", {timeZone: userTimezone}));
     const hour = userTime.getHours();
@@ -1430,7 +1470,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
           relevant = relevant.filter(isUpliftingNews);
         }
 
-        const summary = await summarizeArticles(topic, geoData, relevant, wordCount, goodNewsOnly);
+        const summary = await summarizeArticles(topic, geoData, relevant, wordCount, goodNewsOnly, req.user);
 
         // For single topic, use the summary as-is (ChatGPT already includes the intro)
         if (summary) combinedPieces.push(summary);
@@ -1688,7 +1728,7 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
               relevant = relevant.filter(isUpliftingNews);
             }
 
-            const summary = await summarizeArticles(topic, { country: location }, relevant, wordCount, goodNewsOnly);
+            const summary = await summarizeArticles(topic, { country: location }, relevant, wordCount, goodNewsOnly, req.user);
             // For multi-topic, each summary already includes its own intro, so use as-is
             if (summary) combinedPieces.push(summary);
 
