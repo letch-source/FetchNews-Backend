@@ -16,11 +16,15 @@ router.get('/', authenticateToken, async (req, res) => {
     }
     
     // Try to fetch sources from Mediastack API
-    const url = `http://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&languages=en&limit=100`;
+    // Note: Mediastack sources API might not support all parameters
+    const url = `http://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}`;
+    console.log(`[NEWS SOURCES] Fetching from: ${url}`);
     const response = await fetch(url);
     
     if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
       console.log(`[NEWS SOURCES] Mediastack sources API error: ${response.status}, using fallback sources`);
+      console.log(`[NEWS SOURCES] Error details: ${errorText}`);
       
       // Fallback: return a basic list of common news sources
       const fallbackSources = [
