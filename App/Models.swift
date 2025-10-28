@@ -262,6 +262,7 @@ struct UserPreferences: Codable {
     let selectedVoice: String
     let playbackRate: Double
     let upliftingNewsOnly: Bool
+    let length: String
     let lastFetchedTopics: [String]
     let selectedTopics: [String]?
     let selectedNewsSources: [String]
@@ -271,6 +272,7 @@ struct UserPreferences: Codable {
         case selectedVoice
         case playbackRate
         case upliftingNewsOnly
+        case length
         case lastFetchedTopics
         case selectedTopics
         case selectedNewsSources

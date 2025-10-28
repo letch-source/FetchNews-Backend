@@ -21,7 +21,9 @@ final class NewsVM: ObservableObject {
     @Published var selectedTopics: Set<String> = [] {
         didSet { saveSettings() }
     }
-    @Published var length: ApiClient.Length = .short
+    @Published var length: ApiClient.Length = .short {
+        didSet { saveSettings() }
+    }
     @Published var phase: Phase = .idle
     @Published var isBusy: Bool = false
     @Published var isDirty: Bool = true
@@ -226,6 +228,11 @@ final class NewsVM: ObservableObject {
             selectedVoice = savedVoice
         }
         
+        if let savedLength = defaults.string(forKey: "FetchNews_length"),
+           let lengthValue = ApiClient.Length(rawValue: savedLength) {
+            length = lengthValue
+        }
+        
         upliftingNewsOnly = defaults.bool(forKey: "FetchNews_upliftingNewsOnly")
         
         if let savedTopics = defaults.array(forKey: "FetchNews_lastFetchedTopics") as? [String] {
@@ -255,6 +262,11 @@ final class NewsVM: ObservableObject {
             
             playbackRate = preferences.playbackRate
             upliftingNewsOnly = preferences.upliftingNewsOnly
+            
+            if let lengthValue = ApiClient.Length(rawValue: preferences.length) {
+                length = lengthValue
+            }
+            
             lastFetchedTopics = Set(preferences.lastFetchedTopics)
             selectedTopics = Set(preferences.selectedTopics ?? [])
             selectedNewsSources = Set(preferences.selectedNewsSources)
@@ -290,6 +302,7 @@ final class NewsVM: ObservableObject {
         defaults.set(validPlaybackRate, forKey: "FetchNews_playbackRate")
         defaults.set(validVoice, forKey: "FetchNews_selectedVoice")
         defaults.set(upliftingNewsOnly, forKey: "FetchNews_upliftingNewsOnly")
+        defaults.set(length.rawValue, forKey: "FetchNews_length")
         defaults.set(Array(lastFetchedTopics), forKey: "FetchNews_lastFetchedTopics")
         defaults.set(Array(selectedTopics), forKey: "FetchNews_selectedTopics")
         defaults.set(Array(selectedNewsSources), forKey: "FetchNews_selectedNewsSources")
@@ -306,6 +319,7 @@ final class NewsVM: ObservableObject {
                 selectedVoice: selectedVoice,
                 playbackRate: playbackRate,
                 upliftingNewsOnly: upliftingNewsOnly,
+                length: length.rawValue,
                 lastFetchedTopics: Array(lastFetchedTopics),
                 selectedTopics: Array(selectedTopics),
                 selectedNewsSources: Array(selectedNewsSources),
