@@ -1974,6 +1974,100 @@ setInterval(async () => {
 let trendingTopicsCache = [];
 let lastTrendingUpdate = null;
 
+// Extract trending topics using ChatGPT analysis of news articles
+async function extractTrendingTopicsWithChatGPT(articles) {
+  try {
+    if (!OPENAI_API_KEY) {
+      console.log('[TRENDING] OpenAI API key not configured, skipping ChatGPT analysis');
+      return [];
+    }
+    
+    // Prepare article data for ChatGPT
+    const articleSummaries = articles.map(article => ({
+      title: article.title || '',
+      description: article.description || '',
+      source: article.source || 'Unknown',
+      published_at: article.published_at || ''
+    })).filter(article => article.title.length > 0);
+    
+    if (articleSummaries.length === 0) {
+      console.log('[TRENDING] No valid articles to analyze');
+      return [];
+    }
+    
+    // Create a comprehensive prompt for ChatGPT
+    const articlesText = articleSummaries.map((article, index) => 
+      `${index + 1}. ${article.title} (${article.source})\n   ${article.description}`
+    ).join('\n\n');
+    
+    const prompt = `Analyze the following news articles from major sources and extract the 8 most important trending topics/keywords that would be relevant for a news summary app. Focus on:
+
+1. Major political events, policy changes, or government actions
+2. Significant business/economic developments
+3. Important technology breakthroughs or tech company news
+4. Major sports events or developments
+5. Entertainment industry news or celebrity events
+6. Health/medical breakthroughs or public health issues
+7. International relations or global events
+8. Environmental or climate-related news
+
+Avoid generic terms like "news", "report", "update", "latest", or weather-related terms unless they're truly significant events.
+
+Return ONLY a comma-separated list of 8 topics, each 1-3 words long, in order of importance:
+
+Articles:
+${articlesText}`;
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a news analyst expert at identifying trending topics from news articles. Return only the requested format.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        max_tokens: 200,
+        temperature: 0.7
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.log(`[TRENDING] ChatGPT API error: ${response.status} - ${errorText}`);
+      return [];
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content?.trim();
+    
+    if (!content) {
+      console.log('[TRENDING] No content returned from ChatGPT');
+      return [];
+    }
+    
+    // Parse the comma-separated response
+    const topics = content.split(',').map(topic => topic.trim()).filter(topic => topic.length > 0);
+    
+    console.log(`[TRENDING] ChatGPT extracted ${topics.length} topics: ${topics.join(', ')}`);
+    
+    return topics.slice(0, 8); // Ensure we don't exceed 8 topics
+    
+  } catch (error) {
+    console.error('[TRENDING] Error in ChatGPT analysis:', error);
+    return [];
+  }
+}
+
 async function updateTrendingTopics() {
   try {
     console.log('[TRENDING] Updating trending topics...');
@@ -1983,13 +2077,69 @@ async function updateTrendingTopics() {
       console.log('[TRENDING] Mediastack API key not configured, skipping update');
       return;
     }
+    
+    // Define high-quality news sources to pull from
+    const newsSources = [
+      'cnn', 'bbc-news', 'reuters', 'nbc-news', 'associated-press', 
+      'bloomberg', 'the-new-york-times', 'usa-today', 'npr'
+    ];
+    
+    console.log('[TRENDING] Fetching top articles from major news sources...');
+    
+    // Fetch top articles from each source
+    const allArticles = [];
+    for (const source of newsSources) {
+      try {
+        const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&languages=en&countries=us&limit=3&sort=published_desc`;
+        const response = await fetch(url);
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.data && Array.isArray(data.data)) {
+            allArticles.push(...data.data);
+            console.log(`[TRENDING] Fetched ${data.data.length} articles from ${source}`);
+          }
+        } else {
+          console.log(`[TRENDING] Failed to fetch from ${source}: ${response.status}`);
+        }
+      } catch (error) {
+        console.log(`[TRENDING] Error fetching from ${source}: ${error.message}`);
+      }
+    }
+    
+    if (allArticles.length === 0) {
+      console.log('[TRENDING] No articles fetched, using fallback approach');
+      await updateTrendingTopicsFallback();
+      return;
+    }
+    
+    console.log(`[TRENDING] Total articles collected: ${allArticles.length}`);
+    
+    // Use ChatGPT to analyze articles and extract trending topics
+    const trendingTopics = await extractTrendingTopicsWithChatGPT(allArticles);
+    
+    if (trendingTopics.length > 0) {
+      trendingTopicsCache = trendingTopics;
+      lastTrendingUpdate = new Date();
+      console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${trendingTopics.join(', ')}`);
+    } else {
+      console.log('[TRENDING] ChatGPT analysis failed, using fallback approach');
+      await updateTrendingTopicsFallback();
+    }
+    
+  } catch (error) {
+    console.error('[TRENDING] Error updating trending topics:', error);
+    await updateTrendingTopicsFallback();
+  }
+}
 
-    // Get diverse news from multiple categories to avoid single-source bias
+// Fallback method using the old approach
+async function updateTrendingTopicsFallback() {
+  try {
     const categories = ['general', 'business', 'technology', 'sports', 'entertainment', 'health', 'science'];
     const randomCategory = categories[Math.floor(Math.random() * categories.length)];
     
     const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&countries=us&limit=30&sort=published_desc&categories=${randomCategory}`;
-    
     const response = await fetch(url);
     
     if (!response.ok) {
@@ -2002,34 +2152,13 @@ async function updateTrendingTopics() {
       throw new Error('Invalid response from Mediastack API');
     }
     
-    let trendingTopics = extractBreakingNewsTopics(data.data);
-    
-    // If we don't get enough diverse topics, try a different approach
-    if (trendingTopics.length < 3 || trendingTopics.every(topic => 
-        topic.toLowerCase().includes('weather') || 
-        topic.toLowerCase().includes('surf') || 
-        topic.toLowerCase().includes('forecast'))) {
-      
-      console.log('[TRENDING] Topics too similar, trying general news...');
-      
-      // Fallback to general news without category restriction
-      const fallbackUrl = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&countries=us&limit=50&sort=published_desc`;
-      const fallbackResponse = await fetch(fallbackUrl);
-      
-      if (fallbackResponse.ok) {
-        const fallbackData = await fallbackResponse.json();
-        if (fallbackData.data && Array.isArray(fallbackData.data)) {
-          trendingTopics = extractBreakingNewsTopics(fallbackData.data);
-        }
-      }
-    }
-    
+    const trendingTopics = extractBreakingNewsTopics(data.data);
     trendingTopicsCache = trendingTopics;
     lastTrendingUpdate = new Date();
     
-    console.log(`[TRENDING] Updated trending topics from ${randomCategory}: ${trendingTopics.join(', ')}`);
+    console.log(`[TRENDING] Updated trending topics via fallback (${randomCategory}): ${trendingTopics.join(', ')}`);
   } catch (error) {
-    console.error('[TRENDING] Error updating trending topics:', error);
+    console.error('[TRENDING] Fallback method failed:', error);
   }
 }
 
