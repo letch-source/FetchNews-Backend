@@ -69,13 +69,13 @@ struct PersonalizeView: View {
                         // Content Filter Section
                         ContentFilterSection()
                         
-                        // Premium Features Section
-                        if let user = authVM.currentUser, user.isPremium {
-                            PremiumFeaturesSection(
-                                showingNewsSources: $showingNewsSources,
-                                showingScheduledSummaries: $showingScheduledSummaries
-                            )
-                        }
+                        // Premium Features Section - Hidden
+                        // if let user = authVM.currentUser, user.isPremium {
+                        //     PremiumFeaturesSection(
+                        //         showingNewsSources: $showingNewsSources,
+                        //         showingScheduledSummaries: $showingScheduledSummaries
+                        //     )
+                        // }
                         
                         // Bottom spacing to ensure full scroll
                         Spacer(minLength: 100)
