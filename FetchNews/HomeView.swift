@@ -32,6 +32,7 @@ struct HomeView: View {
     @State private var showAllRecommended = false
     @State private var showAllCustom = false
     @State private var isScrolledInRecents = false
+    @State private var customTopicText = ""
 
     private var fetchDisabled: Bool {
         vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty
@@ -543,13 +544,21 @@ struct CustomTopicsSection: View {
             
             // Custom topic input - matches mockup styling
             HStack(spacing: 12) {
-                TextField("Add custom topic", text: .constant(""))
+                TextField("Add custom topic", text: $customTopicText)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .onSubmit {
-                        // TODO: Implement custom topic addition
+                        if !customTopicText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            onAddCustom(customTopicText.trimmingCharacters(in: .whitespacesAndNewlines))
+                            customTopicText = ""
+                        }
                     }
                 
-                Button(action: onAddCustom) {
+                Button(action: {
+                    if !customTopicText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        onAddCustom(customTopicText.trimmingCharacters(in: .whitespacesAndNewlines))
+                        customTopicText = ""
+                    }
+                }) {
                     Image(systemName: "plus")
                         .font(.title2)
                         .foregroundColor(.blue)
@@ -592,6 +601,10 @@ struct CustomTopicsSection: View {
                     }
                 }
             }
+        }
+        .onTapGesture {
+            // Dismiss keyboard when tapping outside text fields
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         }
     }
 }
