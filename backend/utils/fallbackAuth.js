@@ -168,6 +168,7 @@ const fallbackAuth = {
       selectedVoice: user.selectedVoice || 'alloy',
       playbackRate: user.playbackRate || 1.0,
       upliftingNewsOnly: user.upliftingNewsOnly || false,
+      length: user.preferences?.length || '200',
       lastFetchedTopics: user.lastFetchedTopics || [],
       selectedTopics: user.selectedTopics || [],
       selectedNewsSources: user.selectedNewsSources || [],
@@ -183,6 +184,14 @@ const fallbackAuth = {
     user.selectedTopics = preferences.selectedTopics || user.selectedTopics;
     user.selectedNewsSources = preferences.selectedNewsSources || user.selectedNewsSources;
     user.scheduledSummaries = preferences.scheduledSummaries || user.scheduledSummaries;
+    
+    // Update length in preferences object
+    if (!user.preferences) {
+      user.preferences = {};
+    }
+    if (preferences.length) {
+      user.preferences.length = preferences.length;
+    }
     
     return this.getPreferences(user);
   }

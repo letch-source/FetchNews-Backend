@@ -85,6 +85,45 @@ router.delete('/:topic', authenticateToken, async (req, res) => {
   }
 });
 
+// Delete multiple custom topics
+router.delete('/bulk', authenticateToken, async (req, res) => {
+  try {
+    const { topics } = req.body;
+    const user = req.user;
+    
+    if (!Array.isArray(topics)) {
+      return res.status(400).json({ error: 'Topics must be an array' });
+    }
+    
+    if (topics.length === 0) {
+      return res.status(400).json({ error: 'At least one topic must be provided' });
+    }
+    
+    let customTopics;
+    if (mongoose.connection.readyState === 1) {
+      // Remove each topic from the user's custom topics
+      for (const topic of topics) {
+        await user.removeCustomTopic(topic);
+      }
+      customTopics = user.getCustomTopics();
+    } else {
+      // Remove each topic from the user's custom topics
+      for (const topic of topics) {
+        await fallbackAuth.removeCustomTopic(user, topic);
+      }
+      customTopics = fallbackAuth.getCustomTopics(user);
+    }
+    
+    res.json({ 
+      message: 'Custom topics deleted successfully',
+      customTopics 
+    });
+  } catch (error) {
+    console.error('Delete custom topics error:', error);
+    res.status(500).json({ error: 'Failed to delete custom topics' });
+  }
+});
+
 // Update all custom topics (replace entire list)
 router.put('/', authenticateToken, async (req, res) => {
   try {

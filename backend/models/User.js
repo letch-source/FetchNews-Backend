@@ -237,6 +237,7 @@ userSchema.methods.getPreferences = function() {
     selectedVoice: this.selectedVoice || 'alloy',
     playbackRate: this.playbackRate || 1.0,
     upliftingNewsOnly: this.upliftingNewsOnly || false,
+    length: this.preferences?.length || '200',
     lastFetchedTopics: this.lastFetchedTopics || [],
     selectedTopics: this.selectedTopics || [],
     selectedNewsSources: this.selectedNewsSources || [],
@@ -252,6 +253,14 @@ userSchema.methods.updatePreferences = async function(preferences) {
   this.selectedTopics = preferences.selectedTopics || this.selectedTopics;
   this.selectedNewsSources = preferences.selectedNewsSources || this.selectedNewsSources;
   this.scheduledSummaries = preferences.scheduledSummaries || this.scheduledSummaries;
+  
+  // Update length in preferences object
+  if (!this.preferences) {
+    this.preferences = {};
+  }
+  if (preferences.length) {
+    this.preferences.length = preferences.length;
+  }
   
   await this.save();
   return this.getPreferences();

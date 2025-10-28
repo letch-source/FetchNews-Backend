@@ -106,6 +106,55 @@ app.use("/api/preferences", preferencesRoutes);
 // News sources routes
 app.use("/api/news-sources", newsSourcesRoutes);
 
+// Function to extract trending topics from news articles
+function extractTrendingTopics(articles) {
+  const topicCounts = {};
+  const stopWords = new Set([
+    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
+    'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did',
+    'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'this', 'that', 'these',
+    'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them',
+    'my', 'your', 'his', 'her', 'its', 'our', 'their', 'mine', 'yours', 'hers', 'ours', 'theirs'
+  ]);
+
+  // Process each article
+  articles.forEach(article => {
+    const text = `${article.title || ''} ${article.description || ''}`.toLowerCase();
+    
+    // Extract words (2+ characters, not stop words)
+    const words = text.match(/\b[a-z]{2,}\b/g) || [];
+    
+    words.forEach(word => {
+      if (!stopWords.has(word) && word.length >= 3) {
+        topicCounts[word] = (topicCounts[word] || 0) + 1;
+      }
+    });
+  });
+
+  // Sort by frequency and return top topics (capped at 6)
+  return Object.entries(topicCounts)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 6)
+    .map(([topic]) => topic.charAt(0).toUpperCase() + topic.slice(1));
+}
+
+// Trending topics endpoint
+app.get("/api/trending-topics", async (req, res) => {
+  try {
+    // Return cached trending topics
+    res.json({ 
+      trendingTopics: trendingTopicsCache,
+      lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null
+    });
+  } catch (error) {
+    console.error('Get trending topics error:', error);
+    res.status(500).json({ 
+      error: 'Failed to get trending topics',
+      details: error.message 
+    });
+  }
+});
+
 // Timezone endpoint
 app.post("/api/auth/timezone", authenticateToken, async (req, res) => {
   try {
@@ -1723,6 +1772,50 @@ setInterval(async () => {
   }
 }, 60 * 1000); // Run every minute
 */
+
+// --- Trending Topics Updater ---
+// Update trending topics every hour
+let trendingTopicsCache = [];
+let lastTrendingUpdate = null;
+
+async function updateTrendingTopics() {
+  try {
+    console.log('[TRENDING] Updating trending topics...');
+    
+    const MEDIASTACK_KEY = process.env.MEDIASTACK_KEY;
+    if (!MEDIASTACK_KEY) {
+      console.log('[TRENDING] Mediastack API key not configured, skipping update');
+      return;
+    }
+
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=50&sort=published_desc`;
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`Mediastack API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (!data.data || !Array.isArray(data.data)) {
+      throw new Error('Invalid response from Mediastack API');
+    }
+
+    const trendingTopics = extractTrendingTopics(data.data);
+    trendingTopicsCache = trendingTopics;
+    lastTrendingUpdate = new Date();
+    
+    console.log(`[TRENDING] Updated trending topics: ${trendingTopics.join(', ')}`);
+  } catch (error) {
+    console.error('[TRENDING] Error updating trending topics:', error);
+  }
+}
+
+// Run immediately on startup
+updateTrendingTopics();
+
+// Then run every hour
+setInterval(updateTrendingTopics, 60 * 60 * 1000); // 1 hour
 
 // --- Deployment Protection ---
 const DEPLOYMENT_MODE = process.env.DEPLOYMENT_MODE || 'development';
