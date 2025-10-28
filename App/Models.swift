@@ -295,6 +295,11 @@ struct NewsSourcesResponse: Codable {
     let sourcesByCategory: [String: [NewsSource]]
 }
 
+struct TrendingTopicsResponse: Codable {
+    let trendingTopics: [String]
+    let lastUpdated: String?
+}
+
 // MARK: - Scheduled Summaries
 
 struct ScheduledSummary: Codable, Identifiable {

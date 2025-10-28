@@ -45,6 +45,11 @@ final class NewsVM: ObservableObject {
     // Custom topics (synced with backend)
     @Published var customTopics: [String] = []
     
+    // Trending topics (fetched from backend)
+    @Published var trendingTopics: [String] = [
+        "Politics", "Technology", "Climate", "Economy", "Health", "Sports", "Entertainment", "Science"
+    ]
+    
     // Last fetched topics for "Fetch again" functionality
     @Published var lastFetchedTopics: Set<String> = [] {
         didSet { saveSettings() }
@@ -128,6 +133,9 @@ final class NewsVM: ObservableObject {
     func initializeIfNeeded() async {
         // Load cached voice introductions
         loadCachedVoiceIntroductions()
+        
+        // Always fetch trending topics (no auth required)
+        await fetchTrendingTopics()
         
         // Only load custom topics and sync preferences if user is authenticated
         if ApiClient.isAuthenticated {
@@ -808,6 +816,37 @@ final class NewsVM: ObservableObject {
             }
         } catch {
             // Silently fail - user can try again
+        }
+    }
+    
+    func fetchTrendingTopics() async {
+        do {
+            let response = try await ApiClient.getTrendingTopics()
+            await MainActor.run {
+                self.trendingTopics = response.trendingTopics
+            }
+        } catch {
+            print("Failed to fetch trending topics: \(error)")
+        }
+    }
+    
+    func deleteSelectedCustomTopics() async {
+        // Only delete custom topics that are selected
+        let customTopicsToDelete = selectedTopics.intersection(Set(customTopics))
+        
+        if customTopicsToDelete.isEmpty {
+            return
+        }
+        
+        do {
+            let updatedTopics = try await ApiClient.deleteCustomTopics(Array(customTopicsToDelete))
+            await MainActor.run {
+                self.customTopics = updatedTopics
+                // Remove the deleted topics from selected topics
+                self.selectedTopics.subtract(customTopicsToDelete)
+            }
+        } catch {
+            print("Failed to delete custom topics: \(error)")
         }
     }
     

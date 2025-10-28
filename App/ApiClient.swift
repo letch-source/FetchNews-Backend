@@ -317,6 +317,56 @@ final class ApiClient {
         }
     }
     
+    static func deleteCustomTopics(_ topics: [String]) async throws -> [String] {
+        let endpoint = "/api/custom-topics/bulk"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "DELETE"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let body = ["topics": topics]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            let response = try JSONDecoder().decode(CustomTopicsResponse.self, from: data)
+            return response.customTopics
+        } else {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+    }
+    
+    // MARK: - Trending Topics
+    
+    static func getTrendingTopics() async throws -> TrendingTopicsResponse {
+        let endpoint = "/api/trending-topics"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(TrendingTopicsResponse.self, from: data)
+        } else {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+    }
+    
     // MARK: - Summary History
     
     static func getSummaryHistory() async throws -> [SummaryHistoryEntry] {

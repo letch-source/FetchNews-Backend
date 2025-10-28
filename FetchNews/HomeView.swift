@@ -30,7 +30,7 @@ struct HomeView: View {
     @State private var showAllSelected = false
     @State private var showAllTrending = false
     @State private var showAllRecommended = false
-    @State private var recentTopics: Set<String> = []
+    @State private var showAllCustom = false
     @State private var isScrolledInRecents = false
 
     private var fetchDisabled: Bool {
@@ -93,7 +93,9 @@ struct HomeView: View {
                         customTopics: vm.customTopics,
                         selectedTopics: vm.selectedTopics,
                         onTopicToggle: { topic in vm.toggle(topic) },
-                        onAddCustom: { showingCustomTopics = true }
+                        onAddCustom: { showingCustomTopics = true },
+                        showAll: $showAllCustom,
+                        vm: vm
                     )
 
                     // Reset Button (if topics are selected)
@@ -498,6 +500,8 @@ struct CustomTopicsSection: View {
     let selectedTopics: Set<String>
     let onTopicToggle: (String) -> Void
     let onAddCustom: () -> Void
+    @Binding var showAll: Bool
+    let vm: NewsVM
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -507,6 +511,27 @@ struct CustomTopicsSection: View {
                     .fontWeight(.semibold)
                     .foregroundColor(.primary)
                 Spacer()
+                HStack(spacing: 12) {
+                    // Delete button for selected custom topics
+                    let selectedCustomTopics = selectedTopics.intersection(Set(customTopics))
+                    if !selectedCustomTopics.isEmpty {
+                        Button("Delete") {
+                            Task {
+                                await vm.deleteSelectedCustomTopics()
+                            }
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(.red)
+                    }
+                    
+                    if !customTopics.isEmpty {
+                        Button(showAll ? "Show less" : "See all") {
+                            showAll.toggle()
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(.blue)
+                    }
+                }
             }
             .padding(.horizontal, 20)
             
@@ -531,8 +556,11 @@ struct CustomTopicsSection: View {
             
             // Custom topics chips
             if !customTopics.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
+                if showAll {
+                    // Vertical stacked layout
+                    LazyVGrid(columns: [
+                        GridItem(.adaptive(minimum: 140), spacing: 10, alignment: .center)
+                    ], alignment: .leading, spacing: 10) {
                         ForEach(customTopics, id: \.self) { topic in
                             TopicChip(
                                 title: topic,
@@ -542,6 +570,20 @@ struct CustomTopicsSection: View {
                         }
                     }
                     .padding(.horizontal, 20)
+                } else {
+                    // Horizontal scroll layout
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(customTopics, id: \.self) { topic in
+                                TopicChip(
+                                    title: topic,
+                                    isActive: selectedTopics.contains(topic),
+                                    minWidth: 140
+                                ) { onTopicToggle(topic) }
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                    }
                 }
             }
         }
