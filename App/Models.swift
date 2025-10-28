@@ -263,6 +263,7 @@ struct UserPreferences: Codable {
     let playbackRate: Double
     let upliftingNewsOnly: Bool
     let lastFetchedTopics: [String]
+    let selectedTopics: [String]?
     let selectedNewsSources: [String]
     let scheduledSummaries: [ScheduledSummary]
     
@@ -271,6 +272,7 @@ struct UserPreferences: Codable {
         case playbackRate
         case upliftingNewsOnly
         case lastFetchedTopics
+        case selectedTopics
         case selectedNewsSources
         case scheduledSummaries
     }

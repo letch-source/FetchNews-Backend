@@ -57,6 +57,9 @@ struct PersonalizeView: View {
                         // Morning Summary Section - Hidden for now
                         // MorningSummarySection()
                         
+                        // Summary Length Section
+                        SummaryLengthSection()
+                        
                         // Playback Speed Section
                         PlaybackSpeedSection()
                         
@@ -212,6 +215,56 @@ struct VoiceSection: View {
             .padding()
             .background(Color(.systemGray6))
             .cornerRadius(12)
+        }
+    }
+}
+
+// MARK: - Summary Length Section
+
+struct SummaryLengthSection: View {
+    @EnvironmentObject var vm: NewsVM
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Summary Length")
+                .font(.headline)
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
+            
+            VStack(spacing: 12) {
+                ForEach(ApiClient.Length.allCases, id: \.self) { length in
+                    Button(action: {
+                        vm.length = length
+                    }) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(length.displayName)
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                                
+                                Text(length.description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Spacer()
+                            
+                            if vm.length == length {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.blue)
+                            } else {
+                                Image(systemName: "circle")
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding()
+                        .background(vm.length == length ? Color.blue.opacity(0.1) : Color(.systemGray6))
+                        .cornerRadius(10)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
         }
     }
 }

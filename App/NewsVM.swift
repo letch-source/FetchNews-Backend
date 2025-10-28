@@ -18,7 +18,9 @@ final class NewsVM: ObservableObject {
     enum FetchButtonState: String { case noSummary, fetching, hasSummary }
 
     // Selection & state
-    @Published var selectedTopics: Set<String> = []
+    @Published var selectedTopics: Set<String> = [] {
+        didSet { saveSettings() }
+    }
     @Published var length: ApiClient.Length = .short
     @Published var phase: Phase = .idle
     @Published var isBusy: Bool = false
@@ -230,6 +232,10 @@ final class NewsVM: ObservableObject {
             lastFetchedTopics = Set(savedTopics)
         }
         
+        if let savedSelectedTopics = defaults.array(forKey: "FetchNews_selectedTopics") as? [String] {
+            selectedTopics = Set(savedSelectedTopics)
+        }
+        
         if let savedSources = defaults.array(forKey: "FetchNews_selectedNewsSources") as? [String] {
             selectedNewsSources = Set(savedSources)
         }
@@ -250,6 +256,7 @@ final class NewsVM: ObservableObject {
             playbackRate = preferences.playbackRate
             upliftingNewsOnly = preferences.upliftingNewsOnly
             lastFetchedTopics = Set(preferences.lastFetchedTopics)
+            selectedTopics = Set(preferences.selectedTopics ?? [])
             selectedNewsSources = Set(preferences.selectedNewsSources)
             scheduledSummaries = preferences.scheduledSummaries
             
@@ -284,6 +291,7 @@ final class NewsVM: ObservableObject {
         defaults.set(validVoice, forKey: "FetchNews_selectedVoice")
         defaults.set(upliftingNewsOnly, forKey: "FetchNews_upliftingNewsOnly")
         defaults.set(Array(lastFetchedTopics), forKey: "FetchNews_lastFetchedTopics")
+        defaults.set(Array(selectedTopics), forKey: "FetchNews_selectedTopics")
         defaults.set(Array(selectedNewsSources), forKey: "FetchNews_selectedNewsSources")
         
         // Scheduled summaries are not saved locally - they're managed on the server
@@ -299,6 +307,7 @@ final class NewsVM: ObservableObject {
                 playbackRate: playbackRate,
                 upliftingNewsOnly: upliftingNewsOnly,
                 lastFetchedTopics: Array(lastFetchedTopics),
+                selectedTopics: Array(selectedTopics),
                 selectedNewsSources: Array(selectedNewsSources),
                 scheduledSummaries: scheduledSummaries
             )
