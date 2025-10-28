@@ -74,6 +74,7 @@ struct HomeView: View {
                     
                     // Trending Topics Section
                     TrendingTopicsSection(
+                        trendingTopics: vm.trendingTopics,
                         selectedTopics: vm.selectedTopics,
                         onTopicToggle: { topic in vm.toggle(topic) },
                         showAll: $showAllTrending
@@ -380,12 +381,10 @@ struct SelectedTopicsSection: View {
 }
 
 struct TrendingTopicsSection: View {
+    let trendingTopics: [String]
     let selectedTopics: Set<String>
     let onTopicToggle: (String) -> Void
     @Binding var showAll: Bool
-    
-    // Mock trending topics - in real app, this would come from backend
-    private let trendingTopics = ["Philadelphia", "Dreamforce Conference 25", "Bio"]
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -395,15 +394,24 @@ struct TrendingTopicsSection: View {
                     .fontWeight(.semibold)
                     .foregroundColor(.primary)
                 Spacer()
-                Button(showAll ? "Show less" : "See all") {
-                    showAll.toggle()
+                if !trendingTopics.isEmpty {
+                    Button(showAll ? "Show less" : "See all") {
+                        showAll.toggle()
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.blue)
                 }
-                .font(.subheadline)
-                .foregroundColor(.blue)
             }
             .padding(.horizontal, 20)
             
-            if showAll {
+            if trendingTopics.isEmpty {
+                // Show unavailable message when no trending topics
+                Text("Trending topics unavailable")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+            } else if showAll {
                 // Vertical stacked layout
                 LazyVGrid(columns: [
                     GridItem(.adaptive(minimum: 140), spacing: 10, alignment: .center)
