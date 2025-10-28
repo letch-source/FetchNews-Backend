@@ -106,6 +106,50 @@ app.use("/api/preferences", preferencesRoutes);
 // News sources routes
 app.use("/api/news-sources", newsSourcesRoutes);
 
+// Timezone endpoint
+app.post("/api/auth/timezone", authenticateToken, async (req, res) => {
+  try {
+    const { timezone } = req.body;
+    const user = req.user;
+    
+    if (!timezone) {
+      return res.status(400).json({ error: 'Timezone is required' });
+    }
+    
+    // Validate timezone format (basic IANA timezone check)
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: timezone });
+    } catch (error) {
+      return res.status(400).json({ error: 'Invalid timezone format' });
+    }
+    
+    // Update user's timezone preference
+    const User = require('./models/User');
+    const userDoc = await User.findById(user.id);
+    
+    if (!userDoc) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Store timezone in user preferences
+    if (!userDoc.preferences) {
+      userDoc.preferences = {};
+    }
+    userDoc.preferences.timezone = timezone;
+    userDoc.updatedAt = new Date();
+    
+    await userDoc.save();
+    
+    res.json({ 
+      message: 'Timezone updated successfully',
+      timezone: timezone 
+    });
+  } catch (error) {
+    console.error('Set timezone error:', error);
+    res.status(500).json({ error: 'Failed to set timezone' });
+  }
+});
+
 // Scheduled summaries routes
 const scheduledSummariesRoutes = require("./routes/scheduledSummaries");
 app.use("/api/scheduled-summaries", scheduledSummariesRoutes);

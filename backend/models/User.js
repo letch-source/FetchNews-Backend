@@ -87,6 +87,10 @@ const userSchema = new mongoose.Schema({
     type: [Object],
     default: []
   },
+  preferences: {
+    type: Object,
+    default: {}
+  },
   createdAt: {
     type: Date,
     default: Date.now
