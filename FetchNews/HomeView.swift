@@ -64,12 +64,10 @@ struct HomeView: View {
                     // Selected Topics Section
                     SelectedTopicsSection(
                         selectedTopics: vm.selectedTopics,
-                        recentTopics: $recentTopics,
+                        recentTopics: vm.lastFetchedTopics,
                         isScrolledInRecents: $isScrolledInRecents,
                         onTopicToggle: { topic in 
                             vm.toggle(topic)
-                            // Add to recent topics when toggled
-                            recentTopics.insert(topic)
                         },
                         showAll: $showAllSelected
                     )
@@ -297,7 +295,7 @@ struct HomeView: View {
 
 struct SelectedTopicsSection: View {
     let selectedTopics: Set<String>
-    @Binding var recentTopics: Set<String>
+    let recentTopics: Set<String>
     @Binding var isScrolledInRecents: Bool
     let onTopicToggle: (String) -> Void
     @Binding var showAll: Bool
