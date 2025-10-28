@@ -161,8 +161,21 @@ userSchema.methods.addCustomTopic = async function(topic) {
 };
 
 userSchema.methods.removeCustomTopic = async function(topic) {
+  console.log(`[USER] Removing custom topic: ${topic}`);
+  console.log(`[USER] Before removal: ${this.customTopics.join(', ')}`);
+  
   this.customTopics = this.customTopics.filter(t => t !== topic);
-  await this.save();
+  
+  console.log(`[USER] After filtering: ${this.customTopics.join(', ')}`);
+  
+  try {
+    await this.save();
+    console.log(`[USER] Successfully saved after removing ${topic}`);
+  } catch (error) {
+    console.error(`[USER] Error saving after removing ${topic}:`, error);
+    throw error;
+  }
+  
   return this.customTopics;
 };
 
