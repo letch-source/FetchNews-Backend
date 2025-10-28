@@ -114,28 +114,48 @@ function extractTrendingTopics(articles) {
     'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did',
     'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'this', 'that', 'these',
     'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them',
-    'my', 'your', 'his', 'her', 'its', 'our', 'their', 'mine', 'yours', 'hers', 'ours', 'theirs'
+    'my', 'your', 'his', 'her', 'its', 'our', 'their', 'mine', 'yours', 'hers', 'ours', 'theirs',
+    // Additional stop words
+    'said', 'says', 'saying', 'told', 'tells', 'telling', 'according', 'reported', 'reports',
+    'news', 'story', 'stories', 'article', 'articles', 'update', 'updates', 'breaking',
+    'latest', 'recent', 'today', 'yesterday', 'tomorrow', 'week', 'month', 'year',
+    'time', 'times', 'day', 'days', 'hour', 'hours', 'minute', 'minutes',
+    'people', 'person', 'persons', 'man', 'men', 'woman', 'women', 'child', 'children',
+    'company', 'companies', 'business', 'businesses', 'organization', 'organizations',
+    'government', 'official', 'officials', 'president', 'minister', 'mayor', 'governor',
+    'state', 'states', 'country', 'countries', 'city', 'cities', 'town', 'towns',
+    'philadelphia', 'dreamforce', 'conference', 'conferences', 'event', 'events'
   ]);
 
   // Process each article
   articles.forEach(article => {
     const text = `${article.title || ''} ${article.description || ''}`.toLowerCase();
     
-    // Extract words (2+ characters, not stop words)
-    const words = text.match(/\b[a-z]{2,}\b/g) || [];
+    // Extract words (3+ characters, not stop words, not numbers, not single letters)
+    const words = text.match(/\b[a-z]{3,}\b/g) || [];
     
     words.forEach(word => {
-      if (!stopWords.has(word) && word.length >= 3) {
+      // Additional filtering
+      if (!stopWords.has(word) && 
+          word.length >= 3 && 
+          word.length <= 20 && // Avoid very long words
+          !/^\d+$/.test(word) && // Not just numbers
+          !word.includes('conference') && // Avoid conference-related words
+          !word.includes('philadelphia') && // Avoid specific unwanted words
+          !word.includes('dreamforce')) {
         topicCounts[word] = (topicCounts[word] || 0) + 1;
       }
     });
   });
 
   // Sort by frequency and return top topics (capped at 6)
-  return Object.entries(topicCounts)
+  const topics = Object.entries(topicCounts)
     .sort(([,a], [,b]) => b - a)
     .slice(0, 6)
     .map(([topic]) => topic.charAt(0).toUpperCase() + topic.slice(1));
+
+  // If we don't have enough good topics, return empty array
+  return topics.length >= 3 ? topics : [];
 }
 
 // Trending topics endpoint
