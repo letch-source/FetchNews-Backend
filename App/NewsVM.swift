@@ -228,7 +228,7 @@ final class NewsVM: ObservableObject {
             selectedVoice = savedVoice
         }
         
-        if let savedLength = defaults.string(forKey: "FetchNews_length"),
+        if let savedLength = defaults.object(forKey: "FetchNews_length") as? Int,
            let lengthValue = ApiClient.Length(rawValue: savedLength) {
             length = lengthValue
         }
@@ -263,7 +263,8 @@ final class NewsVM: ObservableObject {
             playbackRate = preferences.playbackRate
             upliftingNewsOnly = preferences.upliftingNewsOnly
             
-            if let lengthValue = ApiClient.Length(rawValue: preferences.length) {
+            if let lengthInt = Int(preferences.length),
+               let lengthValue = ApiClient.Length(rawValue: lengthInt) {
                 length = lengthValue
             }
             
@@ -319,7 +320,7 @@ final class NewsVM: ObservableObject {
                 selectedVoice: selectedVoice,
                 playbackRate: playbackRate,
                 upliftingNewsOnly: upliftingNewsOnly,
-                length: length.rawValue,
+                length: String(length.rawValue),
                 lastFetchedTopics: Array(lastFetchedTopics),
                 selectedTopics: Array(selectedTopics),
                 selectedNewsSources: Array(selectedNewsSources),
