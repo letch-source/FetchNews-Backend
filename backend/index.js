@@ -316,6 +316,41 @@ app.get("/api/trending-topics", async (req, res) => {
   }
 });
 
+// Get source articles for a specific trending topic
+app.get("/api/trending-topics/:topic/sources", async (req, res) => {
+  try {
+    const { topic } = req.params;
+    
+    if (!trendingTopicsWithSources || !trendingTopicsWithSources[topic]) {
+      return res.status(404).json({ 
+        error: 'Topic not found or no source articles available',
+        topic: topic
+      });
+    }
+    
+    const sourceArticles = trendingTopicsWithSources[topic];
+    
+    // Format articles for frontend
+    const formattedArticles = sourceArticles.map(article => ({
+      title: article.title || "",
+      description: article.description || "",
+      url: article.url || "",
+      publishedAt: article.published_at || "",
+      source: article.source || "Unknown",
+      image: article.image || ""
+    }));
+    
+    res.json({ 
+      topic: topic,
+      articles: formattedArticles,
+      count: formattedArticles.length
+    });
+  } catch (error) {
+    console.error('Get trending topic sources error:', error);
+    res.status(500).json({ error: 'Failed to get source articles' });
+  }
+});
+
 // Timezone endpoint
 app.post("/api/auth/timezone", authenticateToken, async (req, res) => {
   try {
@@ -635,6 +670,24 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
 }
 
 async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = []) {
+  // Check if this is a trending topic and use its source articles
+  if (trendingTopicsWithSources && trendingTopicsWithSources[topic]) {
+    console.log(`[TRENDING] Using source articles for trending topic: ${topic}`);
+    const sourceArticles = trendingTopicsWithSources[topic];
+    
+    // Convert to the expected format
+    const articles = sourceArticles.map(article => ({
+      title: article.title || "",
+      description: article.description || "",
+      url: article.url || "",
+      publishedAt: article.published_at || "",
+      source: { id: article.source, name: article.source },
+      urlToImage: article.image || ""
+    }));
+    
+    return { articles, note: "Trending topic source articles" };
+  }
+  
   const queryParts = [topic];
   const countryCode = geo?.country || geo?.countryCode || "";
   const region = geo?.region || geo?.state || "";
@@ -1972,6 +2025,7 @@ setInterval(async () => {
 // --- Trending Topics Updater ---
 // Update trending topics every hour
 let trendingTopicsCache = [];
+let trendingTopicsWithSources = {}; // Store topics with their source articles
 let lastTrendingUpdate = null;
 
 // Extract trending topics using ChatGPT analysis of news articles
@@ -2060,7 +2114,32 @@ ${articlesText}`;
     
     console.log(`[TRENDING] ChatGPT extracted ${topics.length} topics: ${topics.join(', ')}`);
     
-    return topics.slice(0, 8); // Ensure we don't exceed 8 topics
+    // Map topics to their source articles
+    const topicsWithSources = {};
+    topics.slice(0, 8).forEach(topic => {
+      // Find articles that are most relevant to this topic
+      const relevantArticles = articles.filter(article => {
+        const title = (article.title || '').toLowerCase();
+        const description = (article.description || '').toLowerCase();
+        const topicLower = topic.toLowerCase();
+        
+        // Check if topic appears in title or description
+        return title.includes(topicLower) || description.includes(topicLower) ||
+               // Or check for related keywords
+               topicLower.includes('election') && (title.includes('vote') || title.includes('candidate')) ||
+               topicLower.includes('economy') && (title.includes('market') || title.includes('economic')) ||
+               topicLower.includes('tech') && (title.includes('technology') || title.includes('ai') || title.includes('software'));
+      });
+      
+      // If no direct matches, use the most recent articles
+      if (relevantArticles.length === 0) {
+        topicsWithSources[topic] = articles.slice(0, 3);
+      } else {
+        topicsWithSources[topic] = relevantArticles.slice(0, 3);
+      }
+    });
+    
+    return { topics: topics.slice(0, 8), topicsWithSources };
     
   } catch (error) {
     console.error('[TRENDING] Error in ChatGPT analysis:', error);
@@ -2116,12 +2195,13 @@ async function updateTrendingTopics() {
     console.log(`[TRENDING] Total articles collected: ${allArticles.length}`);
     
     // Use ChatGPT to analyze articles and extract trending topics
-    const trendingTopics = await extractTrendingTopicsWithChatGPT(allArticles);
+    const result = await extractTrendingTopicsWithChatGPT(allArticles);
     
-    if (trendingTopics.length > 0) {
-      trendingTopicsCache = trendingTopics;
+    if (result && result.topics && result.topics.length > 0) {
+      trendingTopicsCache = result.topics;
+      trendingTopicsWithSources = result.topicsWithSources;
       lastTrendingUpdate = new Date();
-      console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${trendingTopics.join(', ')}`);
+      console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${result.topics.join(', ')}`);
     } else {
       console.log('[TRENDING] ChatGPT analysis failed, using fallback approach');
       await updateTrendingTopicsFallback();
