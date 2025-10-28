@@ -48,6 +48,13 @@ final class NewsVM: ObservableObject {
     // Trending topics (fetched from backend)
     @Published var trendingTopics: [String] = []
     
+    // Timer for automatic trending topics refresh
+    private var trendingTopicsTimer: Timer?
+    
+    deinit {
+        trendingTopicsTimer?.invalidate()
+    }
+    
     // Last fetched topics for "Fetch again" functionality
     @Published var lastFetchedTopics: Set<String> = [] {
         didSet { saveSettings() }
@@ -134,6 +141,9 @@ final class NewsVM: ObservableObject {
         
         // Always fetch trending topics (no auth required)
         await fetchTrendingTopics()
+        
+        // Set up automatic trending topics refresh every 30 minutes
+        setupTrendingTopicsTimer()
         
         // Only load custom topics and sync preferences if user is authenticated
         if ApiClient.isAuthenticated {
@@ -825,6 +835,18 @@ final class NewsVM: ObservableObject {
             }
         } catch {
             print("Failed to fetch trending topics: \(error)")
+        }
+    }
+    
+    private func setupTrendingTopicsTimer() {
+        // Cancel existing timer if any
+        trendingTopicsTimer?.invalidate()
+        
+        // Set up new timer to refresh trending topics every 30 minutes
+        trendingTopicsTimer = Timer.scheduledTimer(withTimeInterval: 30 * 60, repeats: true) { [weak self] _ in
+            Task {
+                await self?.fetchTrendingTopics()
+            }
         }
     }
     
