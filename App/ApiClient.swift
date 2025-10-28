@@ -395,13 +395,13 @@ final class ApiClient {
             } catch {
                 if let decodingError = error as? DecodingError {
                     switch decodingError {
-                    case .keyNotFound(let key, let context):
+                    case .keyNotFound(_, _):
                         break
-                    case .typeMismatch(let type, let context):
+                    case .typeMismatch(_, _):
                         break
-                    case .valueNotFound(let type, let context):
+                    case .valueNotFound(_, _):
                         break
-                    case .dataCorrupted(let context):
+                    case .dataCorrupted(_):
                         break
                     @unknown default:
                         break
