@@ -330,40 +330,40 @@ struct PremiumFeaturesSection: View {
                 .foregroundColor(.primary)
             
             VStack(spacing: 12) {
-                // News Sources
-                Button(action: { showingNewsSources = true }) {
-                    HStack {
-                        Image(systemName: "newspaper")
-                            .foregroundColor(.blue)
-                            .frame(width: 24)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("News Sources")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundColor(.primary)
-                            Text("Choose which news sources to use")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        if !vm.selectedNewsSources.isEmpty {
-                            Text("\(vm.selectedNewsSources.count) selected")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding()
-                    .background(Color(.systemGray6))
-                    .cornerRadius(12)
-                }
-                .buttonStyle(PlainButtonStyle())
+                // News Sources - Hidden
+                // Button(action: { showingNewsSources = true }) {
+                //     HStack {
+                //         Image(systemName: "newspaper")
+                //             .foregroundColor(.blue)
+                //             .frame(width: 24)
+                //         
+                //         VStack(alignment: .leading, spacing: 2) {
+                //             Text("News Sources")
+                //                 .font(.subheadline)
+                //                 .fontWeight(.medium)
+                //                 .foregroundColor(.primary)
+                //             Text("Choose which news sources to use")
+                //                 .font(.caption)
+                //                 .foregroundColor(.secondary)
+                //         }
+                //         
+                //         Spacer()
+                //         
+                //         if !vm.selectedNewsSources.isEmpty {
+                //             Text("\(vm.selectedNewsSources.count) selected")
+                //                 .font(.caption)
+                //                 .foregroundColor(.secondary)
+                //         }
+                //         
+                //         Image(systemName: "chevron.right")
+                //             .font(.caption)
+                //             .foregroundColor(.secondary)
+                //     }
+                //     .padding()
+                //     .background(Color(.systemGray6))
+                //     .cornerRadius(12)
+                // }
+                // .buttonStyle(PlainButtonStyle())
                 
                 // Scheduled Summaries - Hidden for now
                 // Button(action: { showingScheduledSummaries = true }) {
