@@ -448,19 +448,55 @@ const scheduledSummariesRoutes = require("./routes/scheduledSummaries");
 app.use("/api/scheduled-summaries", scheduledSummariesRoutes);
 
 // Serve admin website
+// Use path relative to project root (works for both local and Render deployment)
+// Try multiple possible paths for admin directory
+const fs = require('fs');
+let adminPath = null;
+
+// Try different possible locations for admin directory
+const possiblePaths = [
+  path.join(__dirname, "../admin"),           // From backend/ to root/admin
+  path.join(process.cwd(), "admin"),           // From project root/admin
+  path.join(__dirname, "../../admin"),         // From backend/ two levels up
+];
+
+for (const possiblePath of possiblePaths) {
+  const indexPath = path.join(possiblePath, "index.html");
+  if (fs.existsSync(indexPath)) {
+    adminPath = possiblePath;
+    console.log(`[ADMIN] Found admin directory at: ${adminPath}`);
+    break;
+  }
+}
+
+if (!adminPath) {
+  console.warn('[ADMIN] Admin directory not found in any expected location');
+  console.warn('[ADMIN] Checked paths:', possiblePaths);
+}
+
 // Explicitly handle /admin routes first
 app.get("/admin", (req, res) => {
-  res.sendFile(path.join(__dirname, "../../admin/index.html"));
+  if (!adminPath) {
+    return res.status(404).send('Admin dashboard not available - directory not found');
+  }
+  const indexPath = path.join(adminPath, "index.html");
+  res.sendFile(indexPath);
 });
 
 app.get("/admin/", (req, res) => {
-  res.sendFile(path.join(__dirname, "../../admin/index.html"));
+  if (!adminPath) {
+    return res.status(404).send('Admin dashboard not available - directory not found');
+  }
+  const indexPath = path.join(adminPath, "index.html");
+  res.sendFile(indexPath);
 });
 
 // Then serve static files from admin directory
-app.use("/admin", express.static(path.join(__dirname, "../../admin"), {
-  index: 'index.html'
-}));
+if (adminPath) {
+  app.use("/admin", express.static(adminPath, {
+    index: 'index.html'
+  }));
+}
 
 // Serve AASA file for password autofill
 app.get("/.well-known/apple-app-site-association", (req, res) => {
