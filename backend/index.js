@@ -2093,7 +2093,7 @@ app.post("/api/tts", async (req, res) => {
   }
 });
 
-// --- Scheduled Summary Checker ---
+// --- Scheduled Fetch Checker ---
 // Function to check for scheduled summaries
 async function checkScheduledSummaries() {
   try {
@@ -2203,13 +2203,13 @@ async function checkScheduledSummaries() {
         console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (user time=${userTime}, server time=${currentTime}), user timezone=${userTimezone}, user day=${userDay}, timeDiff=${timeDifference}min, shouldExecute=${shouldExecute && !alreadyRanToday}`);
         
         if (shouldExecute && !alreadyRanToday) {
-          console.log(`[SCHEDULER] Executing scheduled summary "${summary.name}" for user ${user.email} on ${currentDay}`);
+          console.log(`[SCHEDULER] Executing scheduled fetch "${summary.name}" for user ${user.email} on ${currentDay}`);
           
           try {
             // Import and call the execution function directly
             const { executeScheduledSummary } = require('./routes/scheduledSummaries');
             await executeScheduledSummary(user, summary);
-            console.log(`[SCHEDULER] Successfully executed scheduled summary "${summary.name}" for user ${user.email}`);
+            console.log(`[SCHEDULER] Successfully executed scheduled fetch "${summary.name}" for user ${user.email}`);
             
             // Update lastRun timestamp
             const summaryIndex = scheduledSummaries.findIndex(s => s.id === summary.id);
@@ -2220,7 +2220,7 @@ async function checkScheduledSummaries() {
               executedCount++;
             }
           } catch (error) {
-            console.error(`[SCHEDULER] Failed to execute scheduled summary "${summary.name}" for user ${user.email}:`, error);
+            console.error(`[SCHEDULER] Failed to execute scheduled fetch "${summary.name}" for user ${user.email}:`, error);
           }
         }
       }
@@ -2564,3 +2564,4 @@ module.exports = {
   filterRelevantArticles,
   isUpliftingNews
 };
+

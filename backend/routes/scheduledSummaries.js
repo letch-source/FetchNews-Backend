@@ -43,13 +43,41 @@ async function saveUserWithRetry(user, retries = 3) {
   throw new Error('Failed to save user after retries');
 }
 
-// Get user's scheduled summaries
+// Get user's scheduled fetch (ensure one always exists)
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const user = req.user;
     
-    // Get scheduled summaries from user.scheduledSummaries
-    const scheduledSummaries = user.scheduledSummaries || [];
+    // Get scheduled fetch from user.scheduledSummaries
+    let scheduledSummaries = user.scheduledSummaries || [];
+    
+    // Ensure user always has exactly one scheduled fetch
+    if (scheduledSummaries.length === 0) {
+      // Create default scheduled fetch
+      const defaultSummary = {
+        id: Date.now().toString(),
+        name: "Daily Fetch",
+        topics: [],
+        customTopics: [],
+        time: "08:00",
+        days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+        wordCount: 200,
+        isEnabled: false,
+        createdAt: new Date().toISOString(),
+        lastRun: null
+      };
+      
+      scheduledSummaries = [defaultSummary];
+      user.scheduledSummaries = scheduledSummaries;
+      
+      // Save user with retry logic
+      await saveUserWithRetry(user);
+    } else if (scheduledSummaries.length > 1) {
+      // If more than one, keep only the first one
+      scheduledSummaries = [scheduledSummaries[0]];
+      user.scheduledSummaries = scheduledSummaries;
+      await saveUserWithRetry(user);
+    }
     
     res.json({ scheduledSummaries });
   } catch (error) {
@@ -58,98 +86,125 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Create a new scheduled summary
+// Create/Update scheduled fetch (users always have exactly one)
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { name, topics, customTopics, time, days, wordCount, isEnabled } = req.body;
     const user = req.user;
     
-    if (!name || !time || !days) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    if (!time) {
+      return res.status(400).json({ error: 'Time is required' });
     }
     
     const topicsArray = Array.isArray(topics) ? topics : (topics ? [topics] : []);
     const customTopicsArray = Array.isArray(customTopics) ? customTopics : (customTopics ? [customTopics] : []);
     
-    if (topicsArray.length === 0 && customTopicsArray.length === 0) {
-      return res.status(400).json({ error: 'At least one topic or custom topic is required' });
+    // Get existing summary or create default
+    let scheduledSummaries = user.scheduledSummaries || [];
+    let existingSummary = scheduledSummaries[0];
+    
+    if (!existingSummary) {
+      // Create default if none exists
+      existingSummary = {
+        id: Date.now().toString(),
+        name: name || "Daily Fetch",
+        topics: [],
+        customTopics: [],
+        time: "08:00",
+        days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+        wordCount: 200,
+        isEnabled: false,
+        createdAt: new Date().toISOString(),
+        lastRun: null
+      };
     }
     
-    const scheduledSummaries = user.scheduledSummaries || [];
+    // Update the existing summary with provided values
+    if (name !== undefined) existingSummary.name = name;
+    if (topicsArray.length > 0 || customTopicsArray.length > 0) {
+      existingSummary.topics = topicsArray;
+      existingSummary.customTopics = customTopicsArray;
+    }
+    existingSummary.time = time;
+    if (days !== undefined) {
+      existingSummary.days = Array.isArray(days) ? days : (days ? [days] : []);
+    }
+    if (wordCount !== undefined) existingSummary.wordCount = wordCount;
+    if (isEnabled !== undefined) existingSummary.isEnabled = isEnabled;
+    existingSummary.updatedAt = new Date().toISOString();
     
-    // Create new scheduled summary
-    const newSummary = {
-      id: req.body.id || Date.now().toString(), // Use provided id if available
-      name,
-      topics: Array.isArray(topics) ? topics : (topics ? [topics] : []),
-      customTopics: Array.isArray(customTopics) ? customTopics : (customTopics ? [customTopics] : []),
-      time,
-      days: Array.isArray(days) ? days : (days ? [days] : []),
-      wordCount: wordCount || 200,
-      isEnabled: isEnabled !== false,
-      createdAt: req.body.createdAt || new Date().toISOString(),
-      lastRun: req.body.lastRun || null
-    };
-    
-    scheduledSummaries.push(newSummary);
-    user.scheduledSummaries = scheduledSummaries;
+    // Keep only this one summary
+    user.scheduledSummaries = [existingSummary];
     
     // Save user to database with retry logic for version conflicts
     await saveUserWithRetry(user);
     
-    res.status(201).json({ 
-      message: 'Scheduled summary created successfully',
-      scheduledSummary: newSummary 
+    res.status(200).json({ 
+      message: 'Scheduled fetch updated successfully',
+      scheduledSummary: existingSummary 
     });
   } catch (error) {
-    console.error('Create scheduled summary error:', error);
-    res.status(500).json({ error: 'Failed to create scheduled summary' });
+    console.error('Create/Update scheduled fetch error:', error);
+    res.status(500).json({ error: 'Failed to save scheduled fetch' });
   }
 });
 
-// Update a scheduled summary
+// Update a scheduled fetch (users always have exactly one)
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, topics, customTopics, time, days, wordCount, isEnabled } = req.body;
     const user = req.user;
     
-    const scheduledSummaries = user.scheduledSummaries || [];
+    let scheduledSummaries = user.scheduledSummaries || [];
+    let existingSummary = scheduledSummaries[0];
     
-    const summaryIndex = scheduledSummaries.findIndex(s => s.id === id);
-    if (summaryIndex === -1) {
-      return res.status(404).json({ error: 'Scheduled summary not found' });
+    // If no summary exists, create a default one (ignore the id parameter)
+    if (!existingSummary) {
+      existingSummary = {
+        id: Date.now().toString(),
+        name: "Daily Fetch",
+        topics: [],
+        customTopics: [],
+        time: "08:00",
+        days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+        wordCount: 200,
+        isEnabled: false,
+        createdAt: new Date().toISOString(),
+        lastRun: null
+      };
     }
     
-    // Update the scheduled summary with all provided fields
-    if (name !== undefined) scheduledSummaries[summaryIndex].name = name;
+    // Update the scheduled fetch with all provided fields
+    if (name !== undefined) existingSummary.name = name;
     if (topics !== undefined) {
-      scheduledSummaries[summaryIndex].topics = Array.isArray(topics) ? topics : (topics ? [topics] : []);
+      existingSummary.topics = Array.isArray(topics) ? topics : (topics ? [topics] : []);
     }
     if (customTopics !== undefined) {
-      scheduledSummaries[summaryIndex].customTopics = Array.isArray(customTopics) ? customTopics : (customTopics ? [customTopics] : []);
+      existingSummary.customTopics = Array.isArray(customTopics) ? customTopics : (customTopics ? [customTopics] : []);
     }
-    if (time !== undefined) scheduledSummaries[summaryIndex].time = time;
+    if (time !== undefined) existingSummary.time = time;
     if (days !== undefined) {
-      scheduledSummaries[summaryIndex].days = Array.isArray(days) ? days : (days ? [days] : []);
+      existingSummary.days = Array.isArray(days) ? days : (days ? [days] : []);
     }
-    if (wordCount !== undefined) scheduledSummaries[summaryIndex].wordCount = wordCount;
-    if (isEnabled !== undefined) scheduledSummaries[summaryIndex].isEnabled = isEnabled;
+    if (wordCount !== undefined) existingSummary.wordCount = wordCount;
+    if (isEnabled !== undefined) existingSummary.isEnabled = isEnabled;
     
-    scheduledSummaries[summaryIndex].updatedAt = new Date().toISOString();
+    existingSummary.updatedAt = new Date().toISOString();
     
-    user.scheduledSummaries = scheduledSummaries;
+    // Keep only this one summary
+    user.scheduledSummaries = [existingSummary];
     
     // Save user to database with retry logic for version conflicts
     await saveUserWithRetry(user);
     
     res.json({ 
-      message: 'Scheduled summary updated successfully',
-      scheduledSummary: scheduledSummaries[summaryIndex] 
+      message: 'Scheduled fetch updated successfully',
+      scheduledSummary: existingSummary 
     });
   } catch (error) {
-    console.error('Update scheduled summary error:', error);
-    res.status(500).json({ error: 'Failed to update scheduled summary' });
+    console.error('Update scheduled fetch error:', error);
+    res.status(500).json({ error: 'Failed to update scheduled fetch' });
   }
 });
 
@@ -163,7 +218,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     
     const summaryIndex = scheduledSummaries.findIndex(s => s.id === id);
     if (summaryIndex === -1) {
-      return res.status(404).json({ error: 'Scheduled summary not found' });
+      return res.status(404).json({ error: 'Scheduled fetch not found' });
     }
     
     // Remove the scheduled summary
@@ -173,10 +228,10 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     // Save user to database with retry logic for version conflicts
     await saveUserWithRetry(user);
     
-    res.json({ message: 'Scheduled summary deleted successfully' });
+    res.json({ message: 'Scheduled fetch deleted successfully' });
   } catch (error) {
-    console.error('Delete scheduled summary error:', error);
-    res.status(500).json({ error: 'Failed to delete scheduled summary' });
+    console.error('Delete scheduled fetch error:', error);
+    res.status(500).json({ error: 'Failed to delete scheduled fetch' });
   }
 });
 
@@ -190,7 +245,7 @@ router.post('/:id/execute', authenticateToken, async (req, res) => {
     
     const summary = scheduledSummaries.find(s => s.id === id);
     if (!summary) {
-      return res.status(404).json({ error: 'Scheduled summary not found' });
+      return res.status(404).json({ error: 'Scheduled fetch not found' });
     }
     
     // This is a placeholder - in a real implementation, this would execute the summary
@@ -199,15 +254,15 @@ router.post('/:id/execute', authenticateToken, async (req, res) => {
       summaryId: id 
     });
   } catch (error) {
-    console.error('Execute scheduled summary error:', error);
-    res.status(500).json({ error: 'Failed to execute scheduled summary' });
+    console.error('Execute scheduled fetch error:', error);
+    res.status(500).json({ error: 'Failed to execute scheduled fetch' });
   }
 });
 
 // Export function for use by scheduler
 async function executeScheduledSummary(user, summary) {
   try {
-    console.log(`[SCHEDULER] Executing scheduled summary "${summary.name}" for user ${user.email}`);
+    console.log(`[SCHEDULER] Executing scheduled fetch "${summary.name}" for user ${user.email}`);
     
     // Get user preferences
     const preferences = user.getPreferences ? user.getPreferences() : {};
@@ -293,7 +348,7 @@ async function executeScheduledSummary(user, summary) {
     combinedText = addIntroAndOutro(combinedText, allTopics, goodNewsOnly, user);
     
     // Generate title
-    let title = "Scheduled Summary";
+    let title = "Scheduled Fetch";
     if (allTopics.length === 1) {
       title = `${allTopics[0].charAt(0).toUpperCase() + allTopics[0].slice(1)} Summary`;
     } else if (allTopics.length > 1) {
@@ -350,7 +405,7 @@ async function executeScheduledSummary(user, summary) {
     
     console.log(`[SCHEDULER] Successfully generated and saved summary "${title}" for user ${user.email}`);
   } catch (error) {
-    console.error(`[SCHEDULER] Error executing scheduled summary for user ${user.email}:`, error);
+    console.error(`[SCHEDULER] Error executing scheduled fetch for user ${user.email}:`, error);
     throw error;
   }
 }
