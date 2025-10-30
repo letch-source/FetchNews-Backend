@@ -448,30 +448,8 @@ const scheduledSummariesRoutes = require("./routes/scheduledSummaries");
 app.use("/api/scheduled-summaries", scheduledSummariesRoutes);
 
 // Serve admin website
-// Use path relative to project root (works for both local and Render deployment)
-// Try multiple possible paths for admin directory
-let adminPath = null;
-
-// Try different possible locations for admin directory
-const possiblePaths = [
-  path.join(__dirname, "../admin"),           // From backend/ to root/admin
-  path.join(process.cwd(), "admin"),           // From project root/admin
-  path.join(__dirname, "../../admin"),         // From backend/ two levels up
-];
-
-for (const possiblePath of possiblePaths) {
-  const indexPath = path.join(possiblePath, "index.html");
-  if (fs.existsSync(indexPath)) {
-    adminPath = possiblePath;
-    console.log(`[ADMIN] Found admin directory at: ${adminPath}`);
-    break;
-  }
-}
-
-if (!adminPath) {
-  console.warn('[ADMIN] Admin directory not found in any expected location');
-  console.warn('[ADMIN] Checked paths:', possiblePaths);
-}
+// Admin directory is located in backend/admin (relative to this file)
+const adminPath = path.join(__dirname, "admin");
 
 // Explicitly handle /admin routes first
 app.get("/admin", (req, res) => {
