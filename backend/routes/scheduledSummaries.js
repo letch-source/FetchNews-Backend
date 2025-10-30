@@ -59,9 +59,7 @@ router.post('/', authenticateToken, async (req, res) => {
     user.scheduledSummaries = scheduledSummaries;
     
     // Save user to database
-    if (user.save) {
-      await user.save();
-    }
+    await user.save();
     
     res.status(201).json({ 
       message: 'Scheduled summary created successfully',
@@ -107,9 +105,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     user.scheduledSummaries = scheduledSummaries;
     
     // Save user to database
-    if (user.save) {
-      await user.save();
-    }
+    await user.save();
     
     res.json({ 
       message: 'Scheduled summary updated successfully',
@@ -139,9 +135,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     user.scheduledSummaries = scheduledSummaries;
     
     // Save user to database
-    if (user.save) {
-      await user.save();
-    }
+    await user.save();
     
     res.json({ message: 'Scheduled summary deleted successfully' });
   } catch (error) {
@@ -290,9 +284,29 @@ async function executeScheduledSummary(user, summary) {
     };
     
     if (mongoose.connection.readyState === 1) {
-      await user.addSummaryToHistory(summaryData);
+      // Add to history and increment usage, then save once
+      user.summaryHistory.unshift({
+        id: summaryData.id,
+        title: summaryData.title,
+        summary: summaryData.summary,
+        topics: summaryData.topics,
+        length: summaryData.length,
+        timestamp: new Date(),
+        audioUrl: summaryData.audioUrl,
+        sources: summaryData.sources
+      });
+      
+      // Keep only last 50 summaries
+      if (user.summaryHistory.length > 50) {
+        user.summaryHistory = user.summaryHistory.slice(0, 50);
+      }
+      
       // Increment usage
-      await user.incrementUsage();
+      user.dailyUsageCount += 1;
+      user.lastUsageDate = new Date();
+      
+      // Single save for both operations
+      await user.save();
     } else {
       await fallbackAuth.addSummaryToHistory(user, summaryData);
       await fallbackAuth.incrementUsage(user);

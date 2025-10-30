@@ -124,11 +124,12 @@ userSchema.methods.canFetchNews = function() {
   const today = new Date().toDateString();
   const lastUsageDate = this.lastUsageDate.toDateString();
   
-  // Reset daily count if it's a new day
+  // Reset daily count if it's a new day (save will happen in incrementUsage if needed)
   if (lastUsageDate !== today) {
     this.dailyUsageCount = 0;
     this.lastUsageDate = new Date();
-    this.save();
+    // Don't await here - let incrementUsage handle the save
+    this.save().catch(err => console.error('[USER] Error resetting daily count:', err));
   }
   
   // Premium users have unlimited access
@@ -145,10 +146,10 @@ userSchema.methods.canFetchNews = function() {
 };
 
 // Increment usage count
-userSchema.methods.incrementUsage = function() {
+userSchema.methods.incrementUsage = async function() {
   this.dailyUsageCount += 1;
   this.lastUsageDate = new Date();
-  return this.save();
+  await this.save();
 };
 
 // Custom topics management
@@ -161,21 +162,8 @@ userSchema.methods.addCustomTopic = async function(topic) {
 };
 
 userSchema.methods.removeCustomTopic = async function(topic) {
-  console.log(`[USER] Removing custom topic: ${topic}`);
-  console.log(`[USER] Before removal: ${this.customTopics.join(', ')}`);
-  
   this.customTopics = this.customTopics.filter(t => t !== topic);
-  
-  console.log(`[USER] After filtering: ${this.customTopics.join(', ')}`);
-  
-  try {
-    await this.save();
-    console.log(`[USER] Successfully saved after removing ${topic}`);
-  } catch (error) {
-    console.error(`[USER] Error saving after removing ${topic}:`, error);
-    throw error;
-  }
-  
+  await this.save();
   return this.customTopics;
 };
 
@@ -306,19 +294,38 @@ userSchema.methods.updatePreferences = async function(preferences) {
         // Reload the document to get the latest version
         const freshUser = await this.constructor.findById(this._id);
         if (freshUser) {
-          // Update the fresh document with our changes
-          if (preferences.selectedVoice) freshUser.preferences.selectedVoice = preferences.selectedVoice;
-          if (preferences.playbackRate !== undefined) freshUser.preferences.playbackRate = preferences.playbackRate;
-          if (preferences.upliftingNewsOnly !== undefined) freshUser.preferences.upliftingNewsOnly = preferences.upliftingNewsOnly;
-          if (preferences.length) freshUser.preferences.length = preferences.length;
-          if (preferences.lastFetchedTopics) freshUser.lastFetchedTopics = preferences.lastFetchedTopics;
-          if (preferences.selectedTopics) freshUser.selectedTopics = preferences.selectedTopics;
-          if (preferences.selectedNewsSources) freshUser.selectedNewsSources = preferences.selectedNewsSources;
-          if (preferences.scheduledSummaries) freshUser.preferences.scheduledSummaries = preferences.scheduledSummaries;
+          // Update the fresh document with our changes (merge, don't overwrite)
+          if (preferences.selectedVoice !== undefined) {
+            freshUser.selectedVoice = preferences.selectedVoice;
+          }
+          if (preferences.playbackRate !== undefined) {
+            freshUser.playbackRate = preferences.playbackRate;
+          }
+          if (preferences.upliftingNewsOnly !== undefined) {
+            freshUser.upliftingNewsOnly = preferences.upliftingNewsOnly;
+          }
+          if (preferences.length !== undefined) {
+            if (!freshUser.preferences) freshUser.preferences = {};
+            freshUser.preferences.length = preferences.length;
+          }
+          if (preferences.lastFetchedTopics !== undefined) {
+            freshUser.lastFetchedTopics = preferences.lastFetchedTopics;
+          }
+          if (preferences.selectedTopics !== undefined) {
+            freshUser.selectedTopics = preferences.selectedTopics;
+          }
+          if (preferences.selectedNewsSources !== undefined) {
+            freshUser.selectedNewsSources = preferences.selectedNewsSources;
+          }
+          // scheduledSummaries is a direct field on User, not under preferences
+          if (preferences.scheduledSummaries !== undefined) {
+            freshUser.scheduledSummaries = preferences.scheduledSummaries;
+          }
           
-          // Copy the fresh document to this instance
+          // Save the fresh user and copy to this instance
+          await freshUser.save();
           Object.assign(this, freshUser.toObject());
-          retries--;
+          return this.getPreferences();
         } else {
           throw error;
         }

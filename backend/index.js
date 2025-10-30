@@ -417,7 +417,7 @@ app.post("/api/auth/timezone", authenticateToken, async (req, res) => {
     }
     
     // Update user's timezone preference
-    const User = require('./models/User');
+    // User model is already imported at top of file
     const userDoc = await User.findById(user.id);
     
     if (!userDoc) {
@@ -618,10 +618,7 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [])
     source: { id: article.source, name: article.source }
   }));
   
-  if (selectedSources && selectedSources.length > 0 && mappedArticles.length > 0) {
-    const sources = [...new Set(mappedArticles.map(a => a.source?.id).filter(Boolean))];
-    console.log(`Articles came from sources: ${sources.join(", ")}`);
-  }
+  // Removed source printing log
   return mappedArticles;
 }
 
@@ -760,10 +757,7 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
     source: { id: article.source, name: article.source }
   }));
   
-  if (selectedSources && selectedSources.length > 0 && articles.length > 0) {
-    const sources = [...new Set(articles.map(a => a.source?.id).filter(Boolean))];
-    console.log(`Articles came from sources: ${sources.join(", ")}`);
-  }
+  // Removed source printing log
   return articles;
 }
 
@@ -2116,7 +2110,7 @@ async function checkScheduledSummaries() {
     console.log(`[SCHEDULER] Full server time: ${now.toString()}`);
     
     // Find all users with scheduled summaries
-    const User = require('../models/User');
+    // Use the User model that's already imported at the top of the file
     const users = await User.find({
       'scheduledSummaries': { $exists: true, $ne: [] }
     });
@@ -2125,9 +2119,11 @@ async function checkScheduledSummaries() {
     
     let executedCount = 0;
     let checkedCount = 0;
+    const usersToSave = []; // Batch user saves
     
     for (const user of users) {
       let scheduledSummaries = user.scheduledSummaries || [];
+      let needsSave = false;
       
       // Clean up summaries with empty days arrays (they can't execute anyway)
       const originalCount = scheduledSummaries.length;
@@ -2138,36 +2134,73 @@ async function checkScheduledSummaries() {
       if (scheduledSummaries.length !== originalCount) {
         console.log(`[SCHEDULER] Cleaned up ${originalCount - scheduledSummaries.length} summaries with empty days for user ${user.email}`);
         user.scheduledSummaries = scheduledSummaries;
-        await user.save();
+        needsSave = true;
       }
       
       for (const summary of scheduledSummaries) {
         checkedCount++;
-        const isCorrectDay = summary.days && summary.days.includes(currentDay);
         const isEnabled = summary.isEnabled;
         
-        if (!isEnabled || !isCorrectDay) {
+        if (!isEnabled) {
           continue;
         }
         
-        // Parse scheduled time (stored as HH:mm)
+        // Get user's timezone from preferences (default to UTC if not set)
+        const userTimezone = user.preferences?.timezone || 'UTC';
+        
+        // Convert server's current time to user's timezone for comparison
+        // Reuse formatter if same timezone (optimization)
+        const formatterOptions = {
+          timeZone: userTimezone,
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+          weekday: 'long'
+        };
+        const formatter = new Intl.DateTimeFormat('en-US', formatterOptions);
+        
+        const parts = formatter.formatToParts(now);
+        const userHour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
+        const userMinute = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
+        const userTime = `${String(userHour).padStart(2, '0')}:${String(userMinute).padStart(2, '0')}`;
+        const userDay = parts.find(p => p.type === 'weekday')?.value || currentDay;
+        
+        // Check if it's the correct day in user's timezone
+        const isCorrectUserDay = summary.days && summary.days.includes(userDay);
+        
+        if (!isCorrectUserDay) {
+          console.log(`[SCHEDULER] Summary "${summary.name}": wrong day in user timezone (${userDay}, needs ${JSON.stringify(summary.days)})`);
+          continue;
+        }
+        
+        // Parse scheduled time (stored as HH:mm in user's local timezone)
         const [scheduledHour, scheduledMinute] = summary.time.split(':').map(Number);
         const scheduledTimeMinutes = scheduledHour * 60 + scheduledMinute;
-        const currentTimeMinutes = currentHour * 60 + currentMinute;
+        const userTimeMinutes = userHour * 60 + userMinute;
         
         // Check if scheduled time is within the last 10 minutes (to account for 10-minute check interval)
         // This ensures we catch summaries even if the exact minute check was slightly delayed
-        const timeDifference = currentTimeMinutes - scheduledTimeMinutes;
+        const timeDifference = userTimeMinutes - scheduledTimeMinutes;
         const shouldExecute = timeDifference >= 0 && timeDifference < 10;
         
-        // Also check if summary hasn't already run today (prevent duplicate executions)
+        // Also check if summary hasn't already run today in user's timezone (prevent duplicate executions)
         const lastRun = summary.lastRun ? new Date(summary.lastRun) : null;
-        const alreadyRanToday = lastRun && 
-          lastRun.getDate() === now.getDate() &&
-          lastRun.getMonth() === now.getMonth() &&
-          lastRun.getFullYear() === now.getFullYear();
+        let alreadyRanToday = false;
+        if (lastRun) {
+          // Reuse formatter for date comparison (same timezone)
+          const dateFormatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: userTimezone,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          });
+          
+          const lastRunDateStr = dateFormatter.format(lastRun);
+          const nowDateStr = dateFormatter.format(now);
+          alreadyRanToday = lastRunDateStr === nowDateStr;
+        }
         
-        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (current=${currentTime}), days=${JSON.stringify(summary.days)} (current=${currentDay}), timeDiff=${timeDifference}min, shouldExecute=${shouldExecute && !alreadyRanToday}`);
+        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (user time=${userTime}, server time=${currentTime}), user timezone=${userTimezone}, user day=${userDay}, timeDiff=${timeDifference}min, shouldExecute=${shouldExecute && !alreadyRanToday}`);
         
         if (shouldExecute && !alreadyRanToday) {
           console.log(`[SCHEDULER] Executing scheduled summary "${summary.name}" for user ${user.email} on ${currentDay}`);
@@ -2183,7 +2216,7 @@ async function checkScheduledSummaries() {
             if (summaryIndex !== -1) {
               scheduledSummaries[summaryIndex].lastRun = new Date().toISOString();
               user.scheduledSummaries = scheduledSummaries;
-              await user.save();
+              needsSave = true;
               executedCount++;
             }
           } catch (error) {
@@ -2191,6 +2224,18 @@ async function checkScheduledSummaries() {
           }
         }
       }
+      
+      // Batch save user if needed
+      if (needsSave) {
+        usersToSave.push(user);
+      }
+    }
+    
+    // Batch save all modified users
+    if (usersToSave.length > 0) {
+      await Promise.all(usersToSave.map(user => user.save().catch(err => 
+        console.error(`[SCHEDULER] Error saving user ${user.email}:`, err)
+      )));
     }
     
     // Always log the result, even if nothing was checked
@@ -2455,6 +2500,14 @@ async function updateTrendingTopicsFallback() {
 // --- Deployment Protection ---
 const DEPLOYMENT_MODE = process.env.DEPLOYMENT_MODE || 'development';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+// Helper to conditionally log based on environment
+const log = IS_PRODUCTION ? (...args) => {
+  // In production, only log errors and critical info
+  if (args[0] && typeof args[0] === 'string' && (args[0].includes('[ERROR]') || args[0].includes('[SCHEDULER]'))) {
+    console.log(...args);
+  }
+} : console.log;
 
 // Add deployment protection warnings
 if (IS_PRODUCTION) {

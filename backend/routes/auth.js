@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const { generateToken, authenticateToken } = require('../middleware/auth');
 const fallbackAuth = require('../utils/fallbackAuth');
+const User = require('../models/User'); // Import once at top
 
 const router = express.Router();
 
@@ -26,10 +27,8 @@ router.post('/register', async (req, res) => {
 
     let user;
     if (isDatabaseAvailable()) {
-      const User = require('../models/User');
-      
       // Check if user already exists
-      const existingUser = await User.findOne({ email });
+      const existingUser = await User.findOne({ email: email.toLowerCase() });
       if (existingUser) {
         return res.status(400).json({ error: 'User already exists' });
       }
@@ -82,7 +81,7 @@ router.post('/login', async (req, res) => {
 
     let user, isMatch;
     if (isDatabaseAvailable()) {
-      const User = require('../models/User');
+      // User is already imported at top
       
       // Find user
       user = await User.findOne({ email });
@@ -217,7 +216,7 @@ router.post('/admin/set-premium', async (req, res) => {
     
     let user;
     if (isDatabaseAvailable()) {
-      const User = require('../models/User');
+      // User is already imported at top
       user = await User.findOne({ email });
       if (user) {
         await user.updateSubscription(isPremium, 'admin-test', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)); // 30 days
@@ -258,7 +257,7 @@ router.post('/forgot-password', async (req, res) => {
 
     let user;
     if (isDatabaseAvailable()) {
-      const User = require('../models/User');
+      // User is already imported at top
       user = await User.findOne({ email });
     } else {
       // For fallback auth, we'll simulate the process
@@ -314,7 +313,7 @@ router.post('/reset-password', async (req, res) => {
 
     let user;
     if (isDatabaseAvailable()) {
-      const User = require('../models/User');
+      // User is already imported at top
       const crypto = require('crypto');
       
       // Hash the token to compare with stored hash
