@@ -21,6 +21,7 @@ const summaryHistoryRoutes = require("./routes/summaryHistory");
 const adminRoutes = require("./routes/adminActions");
 const preferencesRoutes = require("./routes/preferences");
 const newsSourcesRoutes = require("./routes/newsSources");
+const trendingAdminRoutes = require("./routes/trendingAdmin");
 const fallbackAuth = require("./utils/fallbackAuth");
 const User = require("./models/User");
 
@@ -99,6 +100,9 @@ app.use("/api/summary-history", summaryHistoryRoutes);
 
 // Admin routes
 app.use("/api/admin", adminRoutes);
+
+// Admin trending topics management
+app.use("/api/admin/trending-topics", trendingAdminRoutes);
 
 // Preferences routes
 app.use("/api/preferences", preferencesRoutes);
@@ -302,10 +306,35 @@ function extractTrendingTopics(articles) {
 // Trending topics endpoint
 app.get("/api/trending-topics", async (req, res) => {
   try {
-    // Return cached trending topics
-    res.json({ 
+    // Prefer admin override if present
+    const overridePath = path.join(__dirname, "./server_data/trending_override.json");
+    let usingOverride = false;
+    let overrideData = null;
+    try {
+      if (fs.existsSync(overridePath)) {
+        const raw = fs.readFileSync(overridePath, 'utf8');
+        const data = JSON.parse(raw);
+        if (data && Array.isArray(data.topics) && data.topics.length > 0) {
+          usingOverride = true;
+          overrideData = data;
+        }
+      }
+    } catch {}
+
+    if (usingOverride) {
+      return res.json({
+        trendingTopics: overrideData.topics,
+        lastUpdated: overrideData.lastUpdated || null,
+        source: "override",
+        setBy: overrideData.setBy || null
+      });
+    }
+
+    // Fallback to cached trending topics
+    res.json({
       trendingTopics: trendingTopicsCache,
-      lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null
+      lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null,
+      source: "auto"
     });
   } catch (error) {
     console.error('Get trending topics error:', error);
@@ -2054,94 +2083,96 @@ app.post("/api/tts", async (req, res) => {
 });
 
 // --- Scheduled Summary Checker ---
-// DISABLED: Scheduled summaries feature is currently hidden from UI
-// Check for scheduled summaries every minute
-/*
-setInterval(async () => {
+// Check for scheduled summaries every 10 minutes at specific marks (:00, :10, :20, :30, :40, :50)
+function setupScheduledSummaryChecker() {
+  // Function to check if current minute is a 10-minute mark
+  function is10MinuteMark() {
+    const now = new Date();
+    const minutes = now.getMinutes();
+    return minutes % 10 === 0;
+  }
+  
+  // Check immediately if we're on a 10-minute mark
+  if (is10MinuteMark()) {
+    checkScheduledSummaries();
+  }
+  
+  // Set up interval to check every minute and only execute on 10-minute marks
+  setInterval(async () => {
+    if (is10MinuteMark()) {
+      await checkScheduledSummaries();
+    }
+  }, 60 * 1000); // Check every minute
+}
+
+async function checkScheduledSummaries() {
   try {
     const now = new Date();
     const currentTime = now.toTimeString().slice(0, 5); // HH:mm format
     const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
     
     console.log(`[SCHEDULER] Checking for scheduled summaries at ${currentTime} on ${currentDay}`);
-    console.log(`[SCHEDULER] Server timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
-    console.log(`[SCHEDULER] Full server time: ${now.toString()}`);
     
-    // Find all users with scheduled summaries
-    const User = require('../models/User');
-    const users = await User.find({
-      'preferences.scheduledSummaries': { $exists: true, $ne: [] }
-    });
+    const mongoose = require('mongoose');
+    const User = require('./models/User');
+    
+    let users = [];
+    if (mongoose.connection.readyState === 1) {
+      // Find all users with scheduled summaries
+      users = await User.find({
+        'preferences.scheduledSummaries': { $exists: true, $ne: [] }
+      });
+    } else {
+      // Fallback: use in-memory users or skip
+      console.log('[SCHEDULER] Database not available, skipping scheduled summaries');
+      return;
+    }
     
     console.log(`[SCHEDULER] Found ${users.length} users with scheduled summaries`);
     
     let executedCount = 0;
-    let checkedCount = 0;
     
     for (const user of users) {
       const preferences = user.getPreferences();
-      let scheduledSummaries = preferences.scheduledSummaries || [];
+      const scheduledSummaries = preferences.scheduledSummaries || [];
       
-      // Clean up summaries with empty days arrays (they can't execute anyway)
-      const originalCount = scheduledSummaries.length;
-      scheduledSummaries = scheduledSummaries.filter(summary => 
-        summary.days && summary.days.length > 0
-      );
+      // Get the first scheduled summary (we only support one now)
+      const summary = scheduledSummaries[0];
+      if (!summary || !summary.isEnabled) continue;
       
-      if (scheduledSummaries.length !== originalCount) {
-        console.log(`[SCHEDULER] Cleaned up ${originalCount - scheduledSummaries.length} summaries with empty days for user ${user.email}`);
-        await user.updatePreferences({ scheduledSummaries });
-      }
-      
-      for (const summary of scheduledSummaries) {
-        checkedCount++;
-        const isCorrectDay = summary.days && summary.days.includes(currentDay);
+      // Check if time matches (must be exactly on the mark: :00, :10, :20, :30, :40, :50)
+      const scheduledTime = summary.time; // Format: "HH:mm"
+      if (scheduledTime === currentTime) {
+        console.log(`[SCHEDULER] Executing scheduled summary for user ${user.email} at ${currentTime}`);
         
-        // Convert scheduled time to UTC for comparison
-        // User is in PDT (Pacific Daylight Time) which is UTC-7
-        const [hours, minutes] = summary.time.split(':');
-        const scheduledDate = new Date();
-        scheduledDate.setUTCFullYear(2025, 0, 1); // January 1, 2025
-        scheduledDate.setUTCHours(parseInt(hours), parseInt(minutes), 0, 0);
-        
-        // Convert from PDT to UTC (add 7 hours for PDT)
-        const scheduledTimeUTC = new Date(scheduledDate.getTime() + (7 * 60 * 60 * 1000)).toISOString().slice(11, 16);
-        const isCorrectTime = scheduledTimeUTC === currentTime;
-        const isEnabled = summary.isEnabled;
-        
-        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (local) -> ${scheduledTimeUTC} (UTC) (current=${currentTime}), days=${JSON.stringify(summary.days)} (current=${currentDay}), shouldExecute=${isEnabled && isCorrectTime && isCorrectDay}`);
-        
-        if (isEnabled && isCorrectTime && isCorrectDay) {
-          console.log(`[SCHEDULER] Executing scheduled summary "${summary.name}" for user ${user.email} on ${currentDay}`);
+        try {
+          // Import and call the execution function
+          const { executeScheduledSummary } = require('./routes/scheduledSummaries');
+          await executeScheduledSummary(user, summary);
+          console.log(`[SCHEDULER] Successfully executed scheduled summary for user ${user.email}`);
           
-          try {
-            // Import and call the execution function directly
-            const { executeScheduledSummary } = require('./routes/scheduledSummaries');
-            await executeScheduledSummary(user, summary);
-            console.log(`[SCHEDULER] Successfully executed scheduled summary "${summary.name}" for user ${user.email}`);
-            
-            // Update lastRun timestamp
-            const summaryIndex = scheduledSummaries.findIndex(s => s.id === summary.id);
-            if (summaryIndex !== -1) {
-              scheduledSummaries[summaryIndex].lastRun = new Date().toISOString();
-              await user.updatePreferences({ scheduledSummaries });
-              executedCount++;
-            }
-          } catch (error) {
-            console.error(`[SCHEDULER] Failed to execute scheduled summary "${summary.name}" for user ${user.email}:`, error);
+          // Update lastRun timestamp
+          if (scheduledSummaries.length > 0) {
+            scheduledSummaries[0].lastRun = new Date().toISOString();
+            await user.updatePreferences({ scheduledSummaries });
+            executedCount++;
           }
+        } catch (error) {
+          console.error(`[SCHEDULER] Failed to execute scheduled summary for user ${user.email}:`, error);
         }
       }
     }
     
-    if (checkedCount > 0) {
-      console.log(`[SCHEDULER] Checked ${checkedCount} summaries, executed ${executedCount}`);
+    if (executedCount > 0) {
+      console.log(`[SCHEDULER] Executed ${executedCount} scheduled summaries`);
     }
   } catch (error) {
     console.error('[SCHEDULER] Error checking scheduled summaries:', error);
   }
-}, 60 * 1000); // Run every minute
-*/
+}
+
+// Initialize the scheduler
+setupScheduledSummaryChecker();
 
 // --- Trending Topics Updater ---
 // Update trending topics every hour
@@ -2431,5 +2462,6 @@ function startServer() {
 // Export functions for use by other modules (like scheduled summaries)
 module.exports = {
   fetchArticlesForTopic,
-  summarizeArticles
+  summarizeArticles,
+  addIntroAndOutro
 };
