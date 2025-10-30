@@ -185,9 +185,9 @@ struct SummaryHistoryEntry: Codable, Identifiable {
     let length: String
     let timestamp: String
     let audioUrl: String?
-    let sources: [String]?
+    let sources: [SourceItem]?
     
-    // Custom decoder to handle missing sources field gracefully
+    // Custom decoder to handle missing sources field gracefully and decode as objects or strings
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decode(String.self, forKey: .id)
@@ -197,11 +197,48 @@ struct SummaryHistoryEntry: Codable, Identifiable {
         self.length = try container.decode(String.self, forKey: .length)
         self.timestamp = try container.decode(String.self, forKey: .timestamp)
         self.audioUrl = try container.decodeIfPresent(String.self, forKey: .audioUrl)
-        self.sources = try container.decodeIfPresent([String].self, forKey: .sources)
+        
+        // Try to decode sources as array of objects first, then fallback to strings
+        if let sourceObjects = try? container.decodeIfPresent([SourceItem].self, forKey: .sources) {
+            self.sources = sourceObjects
+        } else if let sourceStrings = try? container.decodeIfPresent([String].self, forKey: .sources) {
+            // Convert strings to SourceItem objects
+            self.sources = sourceStrings.map { SourceItem(source: $0) }
+        } else {
+            self.sources = nil
+        }
     }
     
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, topics, length, timestamp, audioUrl, sources
+    }
+}
+
+struct SourceItem: Codable, Hashable {
+    let id: String?
+    let title: String?
+    let summary: String?
+    let source: String
+    let url: String?
+    let topic: String?
+    
+    init(source: String) {
+        self.id = nil
+        self.title = nil
+        self.summary = nil
+        self.source = source
+        self.url = nil
+        self.topic = nil
+    }
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(source)
+        hasher.combine(url)
+    }
+    
+    static func == (lhs: SourceItem, rhs: SourceItem) -> Bool {
+        return lhs.id == rhs.id && lhs.source == rhs.source && lhs.url == rhs.url
     }
 }
 
@@ -345,7 +382,7 @@ struct ScheduledSummary: Codable, Identifiable {
         // Generate ID if missing
         let id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         
-        let name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Scheduled Summary"
+        let name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Scheduled Fetch"
         let time = try container.decodeIfPresent(String.self, forKey: .time) ?? "09:00"
         let topics = try container.decodeIfPresent([String].self, forKey: .topics) ?? []
         let customTopics = try container.decodeIfPresent([String].self, forKey: .customTopics) ?? []

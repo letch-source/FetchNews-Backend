@@ -10,8 +10,11 @@ import SwiftUI
 struct PersonalizeView: View {
     @EnvironmentObject var vm: NewsVM
     @EnvironmentObject var authVM: AuthVM
-    @State private var showingNewsSources = false
-    @State private var showingScheduledSummaries = false
+    @State private var showingScheduledTopics = false
+    @State private var scheduledTime: Date = Date()
+    @State private var scheduledEnabled: Bool = false
+    @State private var scheduledTopics: Set<String> = []
+    @State private var scheduledCustomTopics: Set<String> = []
     
     var body: some View {
         NavigationView {
@@ -69,13 +72,14 @@ struct PersonalizeView: View {
                         // Content Filter Section
                         ContentFilterSection()
                         
-                        // Premium Features Section - Hidden
-                        // if let user = authVM.currentUser, user.isPremium {
-                        //     PremiumFeaturesSection(
-                        //         showingNewsSources: $showingNewsSources,
-                        //         showingScheduledSummaries: $showingScheduledSummaries
-                        //     )
-                        // }
+                        // Scheduled Fetch Section - Available for everyone
+                        DailyFetchSection(
+                            scheduledTime: $scheduledTime,
+                            scheduledEnabled: $scheduledEnabled,
+                            scheduledTopics: $scheduledTopics,
+                            scheduledCustomTopics: $scheduledCustomTopics,
+                            showingTopics: $showingScheduledTopics
+                        )
                         
                         // Bottom spacing to ensure full scroll
                         Spacer(minLength: 100)
@@ -85,11 +89,393 @@ struct PersonalizeView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingNewsSources) {
-            NewsSourcesView(vm: vm, authVM: authVM)
+        .sheet(isPresented: $showingScheduledTopics) {
+            ScheduledTopicsSelectorView(
+                selectedTopics: $scheduledTopics,
+                selectedCustomTopics: $scheduledCustomTopics
+            )
+            .environmentObject(vm)
         }
-        .sheet(isPresented: $showingScheduledSummaries) {
-            ScheduledSummariesView(vm: vm)
+        .onAppear {
+            Task {
+                await loadScheduledSummary()
+            }
+        }
+        .onChange(of: scheduledTime) { oldValue, newValue in
+            Task {
+                await saveScheduledSummary()
+            }
+        }
+        .onChange(of: scheduledEnabled) { oldValue, newValue in
+            Task {
+                await saveScheduledSummary()
+            }
+        }
+        .onChange(of: scheduledTopics) { oldValue, newValue in
+            Task {
+                await saveScheduledSummary()
+            }
+        }
+        .onChange(of: scheduledCustomTopics) { oldValue, newValue in
+            Task {
+                await saveScheduledSummary()
+            }
+        }
+    }
+    
+    // MARK: - Scheduled Fetch Functions
+    
+    private func loadScheduledSummary() async {
+        do {
+            let summaries = try await ApiClient.getScheduledSummaries()
+            if let summary = summaries.first {
+                await MainActor.run {
+                    // Update vm.scheduledSummaries first
+                    vm.scheduledSummaries = [summary]
+                    
+                    // Load time
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "HH:mm"
+                    if let time = formatter.date(from: summary.time) {
+                        scheduledTime = roundTo10Minutes(time)
+                    }
+                    
+                    // Load enabled state
+                    scheduledEnabled = summary.isEnabled
+                    
+                    // Load topics
+                    scheduledTopics = Set(summary.topics)
+                    scheduledCustomTopics = Set(summary.customTopics)
+                }
+            } else {
+                // No summary yet - set defaults
+                await MainActor.run {
+                    vm.scheduledSummaries = []
+                    scheduledTime = roundTo10Minutes(Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date()) ?? Date())
+                    scheduledEnabled = false
+                    scheduledTopics = ["general"]
+                    scheduledCustomTopics = []
+                }
+            }
+        } catch {
+            print("Error loading scheduled fetch: \(error)")
+        }
+    }
+    
+    private func saveScheduledSummary() async {
+        // Round time to nearest 10 minutes
+        let roundedTime = roundTo10Minutes(scheduledTime)
+        
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm"
+        let timeString = timeFormatter.string(from: roundedTime)
+        
+        let allDays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        
+        // Always get the existing summary (backend ensures one always exists)
+        var existingSummary = vm.scheduledSummaries.first
+        
+        // If not in vm, load from API (which will create one if needed)
+        if existingSummary == nil {
+            do {
+                let summaries = try await ApiClient.getScheduledSummaries()
+                existingSummary = summaries.first
+                // Update vm with what we found
+                if let found = existingSummary {
+                    await MainActor.run {
+                        vm.scheduledSummaries = [found]
+                        // Sync local state
+                        scheduledTopics = Set(found.topics)
+                        scheduledCustomTopics = Set(found.customTopics)
+                    }
+                }
+            } catch {
+                print("Error loading scheduled fetch: \(error)")
+                return
+            }
+        }
+        
+        // Use current topics, or keep existing topics if none selected
+        let topicsToSave = !scheduledTopics.isEmpty ? Array(scheduledTopics) : (existingSummary?.topics ?? [])
+        let customTopicsToSave = !scheduledCustomTopics.isEmpty ? Array(scheduledCustomTopics) : (existingSummary?.customTopics ?? [])
+        
+        // Always use the existing summary's ID (backend ensures it exists)
+        let summaryId = existingSummary?.id ?? UUID().uuidString
+        
+        let summaryToSave = ScheduledSummary(
+            id: summaryId,
+            name: "Daily Fetch",
+            time: timeString,
+            topics: topicsToSave,
+            customTopics: customTopicsToSave,
+            days: allDays,
+            isEnabled: scheduledEnabled,
+            createdAt: existingSummary?.createdAt ?? ISO8601DateFormatter().string(from: Date()),
+            lastRun: existingSummary?.lastRun
+        )
+        
+        do {
+            // Always update (summary always exists)
+            let updatedSummary = try await ApiClient.updateScheduledSummary(summaryToSave)
+            await MainActor.run {
+                vm.scheduledSummaries = [updatedSummary]
+                // Sync local state with saved topics
+                scheduledTopics = Set(updatedSummary.topics)
+                scheduledCustomTopics = Set(updatedSummary.customTopics)
+            }
+        } catch {
+            print("Error saving scheduled fetch: \(error)")
+        }
+    }
+    
+    private func roundTo10Minutes(_ date: Date) -> Date {
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        let roundedMinute = Int(round(Double(components.minute ?? 0) / 10.0)) * 10
+        return calendar.date(bySettingHour: components.hour ?? 0, minute: roundedMinute, second: 0, of: date) ?? date
+    }
+}
+
+// MARK: - Scheduled Fetch Section
+
+struct DailyFetchSection: View {
+    @Binding var scheduledTime: Date
+    @Binding var scheduledEnabled: Bool
+    @Binding var scheduledTopics: Set<String>
+    @Binding var scheduledCustomTopics: Set<String>
+    @Binding var showingTopics: Bool
+    @EnvironmentObject var vm: NewsVM
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Scheduled Fetch")
+                .font(.headline)
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
+            
+            // Time picker and toggle box
+            HStack(spacing: 16) {
+                // Time picker on the left (10-minute increments)
+                TimePicker10Min(scheduledTime: $scheduledTime)
+                    .frame(height: 80)
+                    .frame(maxWidth: .infinity)
+                
+                // Toggle on the right
+                Toggle("", isOn: $scheduledEnabled)
+                    .labelsHidden()
+                    .toggleStyle(SwitchToggleStyle(tint: .green))
+            }
+            .padding()
+            .background(Color(.systemGray6))
+            .cornerRadius(12)
+            
+            // Topics button in separate box below
+            Button(action: {
+                showingTopics = true
+            }) {
+                HStack {
+                    Image(systemName: "list.bullet")
+                        .font(.title3)
+                        .foregroundColor(.blue)
+                    
+                    let topicCount = scheduledTopics.count + scheduledCustomTopics.count
+                    Text(topicCount > 0 ? "\(topicCount) Topics Selected" : "Select Topics")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.blue)
+                    
+                    Spacer()
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding()
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
+            }
+        }
+    }
+}
+
+// MARK: - Scheduled Topics Selector View
+
+struct ScheduledTopicsSelectorView: View {
+    @Binding var selectedTopics: Set<String>
+    @Binding var selectedCustomTopics: Set<String>
+    @EnvironmentObject var vm: NewsVM
+    @Environment(\.dismiss) var dismiss
+    
+    private let allTopics = ["business", "entertainment", "general", "health", "science", "sports", "technology", "world"]
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Regular Topics")) {
+                    ForEach(allTopics, id: \.self) { topic in
+                        HStack {
+                            Text(topic.capitalized)
+                            Spacer()
+                            if selectedTopics.contains(topic) {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if selectedTopics.contains(topic) {
+                                selectedTopics.remove(topic)
+                            } else {
+                                selectedTopics.insert(topic)
+                            }
+                        }
+                    }
+                }
+                
+                if !vm.customTopics.isEmpty {
+                    Section(header: Text("Custom Topics")) {
+                        ForEach(vm.customTopics, id: \.self) { topic in
+                            HStack {
+                                Text(topic)
+                                Spacer()
+                                if selectedCustomTopics.contains(topic) {
+                                    Image(systemName: "checkmark")
+                                        .foregroundColor(.blue)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                if selectedCustomTopics.contains(topic) {
+                                    selectedCustomTopics.remove(topic)
+                                } else {
+                                    selectedCustomTopics.insert(topic)
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Section(footer: Text("Select at least one topic for your scheduled fetch.")) {
+                    EmptyView()
+                }
+            }
+            .navigationTitle("Select Topics")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .onAppear {
+            Task {
+                await vm.loadCustomTopics()
+            }
+        }
+    }
+}
+
+// MARK: - Time Picker with 10-Minute Increments
+
+struct TimePicker10Min: View {
+    @Binding var scheduledTime: Date
+    @State private var selectedHour: Int = 8
+    @State private var selectedMinute: Int = 0
+    @State private var selectedAMPM: Int = 0 // 0 = AM, 1 = PM
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            // Hour picker (1-12)
+            Picker("Hour", selection: $selectedHour) {
+                ForEach(1...12, id: \.self) { hour in
+                    Text("\(hour)").tag(hour)
+                }
+            }
+            .pickerStyle(.wheel)
+            .frame(width: 50)
+            .onChange(of: selectedHour) { _, _ in
+                updateTime()
+            }
+            
+            Text(":")
+                .font(.title2)
+                .fontWeight(.bold)
+            
+            // Minute picker (0, 10, 20, 30, 40, 50)
+            Picker("Minute", selection: $selectedMinute) {
+                ForEach([0, 10, 20, 30, 40, 50], id: \.self) { minute in
+                    Text(String(format: "%02d", minute)).tag(minute)
+                }
+            }
+            .pickerStyle(.wheel)
+            .frame(width: 50)
+            .onChange(of: selectedMinute) { _, _ in
+                updateTime()
+            }
+            
+            // AM/PM picker
+            Picker("AM/PM", selection: $selectedAMPM) {
+                Text("AM").tag(0)
+                Text("PM").tag(1)
+            }
+            .pickerStyle(.wheel)
+            .frame(width: 50)
+            .onChange(of: selectedAMPM) { _, _ in
+                updateTime()
+            }
+        }
+        .onAppear {
+            updateFromDate()
+        }
+        .onChange(of: scheduledTime) { _, _ in
+            updateFromDate()
+        }
+    }
+    
+    private func updateFromDate() {
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.hour, .minute], from: scheduledTime)
+        var hour24 = components.hour ?? 8
+        
+        // Determine AM/PM
+        if hour24 >= 12 {
+            selectedAMPM = 1
+            selectedHour = hour24 == 12 ? 12 : hour24 - 12
+        } else {
+            selectedAMPM = 0
+            selectedHour = hour24 == 0 ? 12 : hour24
+        }
+        
+        // Round minute to nearest 10
+        let minute = components.minute ?? 0
+        selectedMinute = Int(round(Double(minute) / 10.0)) * 10
+        if selectedMinute >= 60 {
+            selectedMinute = 0
+            // Could increment hour here, but let's keep it simple
+        }
+    }
+    
+    private func updateTime() {
+        var hour24 = selectedHour
+        
+        // Convert 12-hour to 24-hour
+        if selectedAMPM == 1 {
+            // PM
+            if selectedHour != 12 {
+                hour24 = selectedHour + 12
+            }
+        } else {
+            // AM
+            if selectedHour == 12 {
+                hour24 = 0
+            }
+        }
+        
+        let calendar = Calendar.current
+        if let newDate = calendar.date(bySettingHour: hour24, minute: selectedMinute, second: 0, of: Date()) {
+            scheduledTime = newDate
         }
     }
 }
@@ -103,7 +489,7 @@ struct MorningSummarySection: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Scheduled Summary")
+            Text("Scheduled Fetch")
                 .font(.headline)
                 .fontWeight(.semibold)
                 .foregroundColor(.primary)
@@ -365,40 +751,40 @@ struct PremiumFeaturesSection: View {
                 // }
                 // .buttonStyle(PlainButtonStyle())
                 
-                // Scheduled Summaries - Hidden for now
-                // Button(action: { showingScheduledSummaries = true }) {
-                //     HStack {
-                //         Image(systemName: "clock")
-                //             .foregroundColor(.blue)
-                //             .frame(width: 24)
-                //         
-                //         VStack(alignment: .leading, spacing: 2) {
-                //             Text("Scheduled Summaries")
-                //                 .font(.subheadline)
-                //                 .fontWeight(.medium)
-                //                 .foregroundColor(.primary)
-                //             Text("Set up automatic news summaries")
-                //                 .font(.caption)
-                //                 .foregroundColor(.secondary)
-                //         }
-                //         
-                //         Spacer()
-                //         
-                //         if !vm.scheduledSummaries.isEmpty {
-                //             Text("\(vm.scheduledSummaries.count) scheduled")
-                //                 .font(.caption)
-                //                 .foregroundColor(.secondary)
-                //         }
-                //         
-                //         Image(systemName: "chevron.right")
-                //             .font(.caption)
-                //             .foregroundColor(.secondary)
-                //     }
-                //     .padding()
-                //     .background(Color(.systemGray6))
-                //     .cornerRadius(12)
-                // }
-                // .buttonStyle(PlainButtonStyle())
+                // Scheduled Summaries
+                Button(action: { showingScheduledSummaries = true }) {
+                    HStack {
+                        Image(systemName: "clock")
+                            .foregroundColor(.blue)
+                            .frame(width: 24)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Scheduled Summaries")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundColor(.primary)
+                            Text("Set up automatic news summaries")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        if !vm.scheduledSummaries.isEmpty {
+                            Text("\(vm.scheduledSummaries.count) scheduled")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding()
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
+                }
+                .buttonStyle(PlainButtonStyle())
             }
         }
     }

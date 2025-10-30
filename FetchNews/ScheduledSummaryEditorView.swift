@@ -13,52 +13,37 @@ struct ScheduledSummaryEditorView: View {
     @ObservedObject var authVM: AuthVM
     @Environment(\.dismiss) var dismiss
     
-    @State private var name: String = ""
     @State private var selectedTime: Date = Date()
     @State private var selectedTopics: Set<String> = []
     @State private var selectedCustomTopics: Set<String> = []
-    @State private var selectedDays: Set<String> = []
     @State private var isEnabled: Bool = true
     @State private var isLoading: Bool = false
     
     private let allTopics = ["business", "entertainment", "general", "health", "science", "sports", "technology", "world"]
-    private let allDays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    private let allDays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] // Default: all days
     
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Summary Details")) {
-                    TextField("Summary Name", text: $name)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                Section(header: Text("Settings")) {
+                    HStack {
+                        Text("Time")
+                        Spacer()
+                        DatePicker("", selection: $selectedTime, displayedComponents: [.hourAndMinute])
+                            .datePickerStyle(WheelDatePickerStyle())
+                            .labelsHidden()
+                            .environment(\.locale, Locale(identifier: "en_US"))
+                    }
                     
-                    DatePicker("Time", selection: $selectedTime, displayedComponents: .hourAndMinute)
-                        .datePickerStyle(WheelDatePickerStyle())
-                    
-                    Toggle("Enabled", isOn: $isEnabled)
-                }
-                
-                Section(header: Text("Days of Week")) {
-                    ForEach(allDays, id: \.self) { day in
-                        HStack {
-                            Text(day)
-                            Spacer()
-                            if selectedDays.contains(day) {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.blue)
-                            }
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            if selectedDays.contains(day) {
-                                selectedDays.remove(day)
-                            } else {
-                                selectedDays.insert(day)
-                            }
-                        }
+                    HStack {
+                        Text("Enabled")
+                        Spacer()
+                        Toggle("", isOn: $isEnabled)
+                            .labelsHidden()
                     }
                 }
                 
-                Section(header: Text("Regular Topics")) {
+                Section(header: Text("Topics")) {
                     ForEach(allTopics, id: \.self) { topic in
                         HStack {
                             Text(topic.capitalized)
@@ -102,25 +87,25 @@ struct ScheduledSummaryEditorView: View {
                     }
                 }
                 
-                Section(footer: Text("Select at least one topic for your scheduled summary.")) {
+                Section(footer: Text("Select at least one topic for your scheduled fetch.")) {
                     EmptyView()
                 }
             }
-            .onTapGesture {
-                hideKeyboard()
-            }
-            .navigationTitle(summary == nil ? "New Scheduled Summary" : "Edit Scheduled Summary")
+            .navigationTitle("Scheduled Fetch")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Save") {
                         Task {
                             await saveScheduledSummary()
                         }
-                    }) {
-                        Image(systemName: "chevron.left")
                     }
-                    .disabled(name.isEmpty || (selectedTopics.isEmpty && selectedCustomTopics.isEmpty) || isLoading)
+                    .disabled((selectedTopics.isEmpty && selectedCustomTopics.isEmpty) || isLoading)
                 }
             }
         }
@@ -132,11 +117,9 @@ struct ScheduledSummaryEditorView: View {
     private func setupInitialValues() {
         if let summary = summary, !summary.id.isEmpty {
             // Editing existing summary
-            name = summary.name
             isEnabled = summary.isEnabled
             selectedTopics = Set(summary.topics)
             selectedCustomTopics = Set(summary.customTopics)
-            selectedDays = Set(summary.days)
             
             // Parse time
             let formatter = DateFormatter()
@@ -145,11 +128,9 @@ struct ScheduledSummaryEditorView: View {
                 selectedTime = time
             }
         } else {
-            // Creating new summary
-            name = "Daily News"
+            // Creating new summary - defaults
             selectedTime = Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date()) ?? Date()
             selectedTopics = ["general"]
-            selectedDays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] // Default to weekdays
         }
     }
     
@@ -160,36 +141,45 @@ struct ScheduledSummaryEditorView: View {
         timeFormatter.dateFormat = "HH:mm"
         let timeString = timeFormatter.string(from: selectedTime)
         
-        print("Saving scheduled summary - isEditing: \(summary != nil), id: \(summary?.id ?? "new")")
+        // Default name and days (all days)
+        let defaultName = "Daily Fetch"
+        let defaultDays = allDays // All days of the week
+        
+        print("Saving scheduled fetch - isEditing: \(summary != nil), id: \(summary?.id ?? "new")")
         
         let newSummary = ScheduledSummary(
             id: summary?.id ?? UUID().uuidString,
-            name: name,
+            name: defaultName,
             time: timeString,
             topics: Array(selectedTopics),
             customTopics: Array(selectedCustomTopics),
-            days: Array(selectedDays),
+            days: defaultDays, // Always all days
             isEnabled: isEnabled,
             createdAt: summary?.createdAt ?? ISO8601DateFormatter().string(from: Date()),
             lastRun: summary?.lastRun
         )
         
         do {
+            // Check if there's already an existing summary (limit to one)
             if summary == nil || summary!.id.isEmpty {
-                // Create new
-                print("Creating new scheduled summary")
+                // Creating new - delete any existing summaries first (only one allowed)
+                if !vm.scheduledSummaries.isEmpty {
+                    for existingSummary in vm.scheduledSummaries {
+                        try? await ApiClient.deleteScheduledSummary(id: existingSummary.id)
+                    }
+                }
+                
+                print("Creating new scheduled fetch")
                 let createdSummary = try await ApiClient.createScheduledSummary(newSummary)
                 await MainActor.run {
-                    vm.scheduledSummaries.append(createdSummary)
+                    vm.scheduledSummaries = [createdSummary] // Replace with single summary
                 }
             } else {
                 // Update existing
-                print("Updating existing scheduled summary with id: \(summary!.id)")
+                print("Updating existing scheduled fetch with id: \(summary!.id)")
                 let updatedSummary = try await ApiClient.updateScheduledSummary(newSummary)
                 await MainActor.run {
-                    if let index = vm.scheduledSummaries.firstIndex(where: { $0.id == updatedSummary.id }) {
-                        vm.scheduledSummaries[index] = updatedSummary
-                    }
+                    vm.scheduledSummaries = [updatedSummary] // Ensure only one summary
                 }
             }
             
@@ -198,7 +188,7 @@ struct ScheduledSummaryEditorView: View {
             }
         } catch {
             // Log the error for debugging
-            print("Error saving scheduled summary: \(error)")
+            print("Error saving scheduled fetch: \(error)")
             print("Error details: \(error.localizedDescription)")
             
             // Show error to user instead of silently failing

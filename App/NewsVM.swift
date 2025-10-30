@@ -19,10 +19,10 @@ final class NewsVM: ObservableObject {
 
     // Selection & state
     @Published var selectedTopics: Set<String> = [] {
-        didSet { saveSettings() }
+        didSet { debouncedSaveSettings() }
     }
     @Published var length: ApiClient.Length = .short {
-        didSet { saveSettings() }
+        didSet { debouncedSaveSettings() }
     }
     @Published var phase: Phase = .idle
     @Published var isBusy: Bool = false
@@ -57,12 +57,12 @@ final class NewsVM: ObservableObject {
     
     // Last fetched topics for "Fetch again" functionality
     @Published var lastFetchedTopics: Set<String> = [] {
-        didSet { saveSettings() }
+        didSet { debouncedSaveSettings() }
     }
     
     // News sources (premium feature)
     @Published var selectedNewsSources: Set<String> = [] {
-        didSet { saveSettings() }
+        didSet { debouncedSaveSettings() }
     }
     @Published var availableNewsSources: [NewsSource] = []
     @Published var newsSourcesByCategory: [String: [NewsSource]] = [:]
@@ -96,6 +96,9 @@ final class NewsVM: ObservableObject {
     
     // Network
     private var currentTask: Task<Void, Never>?
+    
+    // Debouncing for settings save
+    private var saveSettingsTask: Task<Void, Never>?
 
     @Published var canPlay: Bool = false
     @Published var isPlaying: Bool = false
@@ -107,13 +110,13 @@ final class NewsVM: ObservableObject {
 
     // Settings (with UserDefaults persistence)
     @Published var playbackRate: Double = 1.0 {
-        didSet { saveSettings() }
+        didSet { debouncedSaveSettings() }
     }
     @Published var selectedVoice: String = "Alloy" {
-        didSet { saveSettings() }
+        didSet { debouncedSaveSettings() }
     }
     @Published var upliftingNewsOnly: Bool = false {
-        didSet { saveSettings() }
+        didSet { debouncedSaveSettings() }
     }
     
     // Available voices
@@ -139,22 +142,33 @@ final class NewsVM: ObservableObject {
         // Load cached voice introductions
         loadCachedVoiceIntroductions()
         
-        // Always fetch trending topics (no auth required)
-        await fetchTrendingTopics()
-        
         // Set up automatic trending topics refresh every 30 minutes
         setupTrendingTopicsTimer()
         
-        // Only load custom topics and sync preferences if user is authenticated
+        // Parallelize async operations for better performance
         if ApiClient.isAuthenticated {
-            await loadCustomTopics()
-            await loadRemoteSettings()
+            // Run trending topics fetch in parallel with other operations
+            async let trendingTask = fetchTrendingTopics()
+            async let customTopicsTask = loadCustomTopics()
+            async let settingsTask = loadRemoteSettings()
             
-            // Load news sources for premium users
+            // Wait for trending topics first (no auth required, can show immediately)
+            await trendingTask
+            
+            // Wait for user-specific data
+            await customTopicsTask
+            await settingsTask
+            
+            // Load news sources for premium users in parallel
             if let authVM = authVM, authVM.currentUser?.isPremium == true {
-                await loadAvailableNewsSources()
-                await loadSelectedNewsSources()
+                async let availableSourcesTask = loadAvailableNewsSources()
+                async let selectedSourcesTask = loadSelectedNewsSources()
+                await availableSourcesTask
+                await selectedSourcesTask
             }
+        } else {
+            // Not authenticated - just fetch trending topics
+            await fetchTrendingTopics()
         }
     }
     
@@ -231,7 +245,7 @@ final class NewsVM: ObservableObject {
             defaults.removeObject(forKey: "selectedVoice")
             defaults.removeObject(forKey: "upliftingNewsOnly")
             defaults.removeObject(forKey: "lastFetchedTopics")
-            defaults.synchronize()
+            // Note: synchronize() is not needed on modern iOS - UserDefaults auto-saves
         }
         
         // Load settings from UserDefaults
@@ -296,6 +310,23 @@ final class NewsVM: ObservableObject {
         }
     }
     
+    // Debounced save to reduce API calls
+    private func debouncedSaveSettings() {
+        // Always save to local UserDefaults immediately
+        saveLocalSettings()
+        
+        // Cancel any pending save task
+        saveSettingsTask?.cancel()
+        
+        // Debounce remote save by 1 second
+        saveSettingsTask = Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+            if !Task.isCancelled && ApiClient.isAuthenticated {
+                await saveRemoteSettings()
+            }
+        }
+    }
+    
     private func saveSettings() {
         // Always save to local UserDefaults first
         saveLocalSettings()
@@ -327,7 +358,7 @@ final class NewsVM: ObservableObject {
         // Scheduled summaries are not saved locally - they're managed on the server
         // to ensure they're accessible across all devices
         
-        defaults.synchronize()
+        // Note: synchronize() is not needed on modern iOS - UserDefaults auto-saves
     }
     
     private func saveRemoteSettings() async {
@@ -508,6 +539,8 @@ final class NewsVM: ObservableObject {
             combined = nil; items = []; resetPlayerState()
             lastError = nil // Clear previous errors
             isDirty = false // Reset dirty flag at start to allow retries
+            
+            // Note: This is a manual fetch, so when it completes, it will replace any scheduled fetch on the homepage
 
             do {
                 // UX: show "Building summary…" shortly after start
@@ -947,6 +980,94 @@ final class NewsVM: ObservableObject {
         } catch {
             // Silently fail - history saving is optional
         }
+    }
+    
+    // Check for scheduled summaries and load the most recent one if it's newer than current
+    func checkForScheduledSummary() async {
+        guard !isBusy else { return } // Don't interrupt a manual fetch in progress
+        
+        do {
+            let history = try await ApiClient.getSummaryHistory()
+            
+            // History is sorted with most recent first, so check the first entry
+            guard let mostRecent = history.first else {
+                return // No history
+            }
+            
+            // Check if the most recent entry is a scheduled fetch
+            guard mostRecent.id.hasPrefix("scheduled-") else {
+                // Most recent is a manual fetch, so we shouldn't replace it
+                // But if there's no current combined, we might want to load it anyway
+                // Actually, manual fetches should already be on the homepage, so skip
+                return
+            }
+            
+            // The most recent entry is a scheduled fetch
+            // Check if we should load it
+            var shouldLoad = false
+            
+            if let currentCombined = combined {
+                // If current summary is different, replace it with scheduled
+                if currentCombined.id != mostRecent.id {
+                    shouldLoad = true
+                }
+            } else {
+                // No current summary, load the scheduled one
+                shouldLoad = true
+            }
+            
+            guard shouldLoad else { return }
+            
+            // Load the scheduled fetch to the homepage
+            await MainActor.run {
+                // Set combined summary
+                combined = Combined(
+                    id: mostRecent.id,
+                    title: mostRecent.title,
+                    summary: mostRecent.summary,
+                    audioUrl: mostRecent.audioUrl
+                )
+                
+                // Set last fetched topics from the scheduled fetch's topics
+                lastFetchedTopics = Set(mostRecent.topics)
+                
+                // Convert sources to items if available
+                if let sources = mostRecent.sources, !sources.isEmpty {
+                    items = sources.enumerated().map { index, sourceItem in
+                        Item(
+                            id: sourceItem.id ?? "\(mostRecent.id)-source-\(index)",
+                            title: sourceItem.title ?? sourceItem.source,
+                            summary: sourceItem.summary ?? "",
+                            url: sourceItem.url ?? "",
+                            source: sourceItem.source,
+                            topic: sourceItem.topic ?? mostRecent.topics.first ?? "",
+                            audioUrl: nil
+                        )
+                    }
+                } else {
+                    items = []
+                }
+                
+                // Reset player state for new summary
+                resetPlayerState()
+                
+                print("✅ Loaded scheduled fetch '\(mostRecent.title)' to homepage")
+            }
+        } catch {
+            print("Failed to check for scheduled fetch: \(error)")
+        }
+    }
+    
+    private func parseTimestamp(_ timestamp: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: timestamp) {
+            return date
+        }
+        
+        // Fallback to standard ISO8601
+        let fallbackFormatter = ISO8601DateFormatter()
+        return fallbackFormatter.date(from: timestamp)
     }
 }
 

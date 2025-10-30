@@ -254,17 +254,25 @@ struct SummaryDetailView: View {
                             Text("Sources")
                                 .font(.headline)
                             
-                            ForEach(sources, id: \.self) { source in
+                            ForEach(Array(sources.enumerated()), id: \.offset) { index, sourceItem in
                                 HStack {
                                     Image(systemName: "link")
                                         .font(.caption)
                                         .foregroundColor(.blue)
                                     
-                                    Text(source)
+                                    Text(sourceItem.title ?? sourceItem.source)
                                         .font(.body)
                                         .foregroundColor(.blue)
                                     
                                     Spacer()
+                                    
+                                    if let url = sourceItem.url, !url.isEmpty {
+                                        Link(destination: URL(string: url) ?? URL(string: "https://example.com")!) {
+                                            Image(systemName: "arrow.up.right.square")
+                                                .font(.caption)
+                                                .foregroundColor(.blue)
+                                        }
+                                    }
                                 }
                                 .padding(.vertical, 2)
                             }

@@ -11,6 +11,7 @@ import SwiftUI
 struct FetchNewsApp: App {
     @StateObject private var vm = NewsVM()
     @StateObject private var authVM = AuthVM()
+    @Environment(\.scenePhase) var scenePhase
     
     // Toggle between new and old UI - set to false to use old ContentView
     private let useNewUI = true
@@ -46,6 +47,8 @@ struct FetchNewsApp: App {
                                 if ProcessInfo.processInfo.environment["UITESTING"] != "1" {
                                     Task {
                                         await vm.initializeIfNeeded()
+                                        // Check for scheduled summaries on app launch
+                                        await vm.checkForScheduledSummary()
                                     }
                                 }
                             }
@@ -59,6 +62,8 @@ struct FetchNewsApp: App {
                                 if ProcessInfo.processInfo.environment["UITESTING"] != "1" {
                                     Task {
                                         await vm.initializeIfNeeded()
+                                        // Check for scheduled summaries on app launch
+                                        await vm.checkForScheduledSummary()
                                     }
                                 }
                             }
@@ -70,6 +75,14 @@ struct FetchNewsApp: App {
             }
             .animation(.easeInOut(duration: 0.3), value: authVM.isAuthenticated)
             .animation(.easeInOut(duration: 0.2), value: authVM.isInitializing)
+            .onChange(of: scenePhase) { oldPhase, newPhase in
+                // Check for scheduled summaries when app becomes active
+                if newPhase == .active && authVM.isAuthenticated {
+                    Task {
+                        await vm.checkForScheduledSummary()
+                    }
+                }
+            }
         }
     }
 }

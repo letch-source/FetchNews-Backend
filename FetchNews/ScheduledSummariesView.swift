@@ -37,95 +37,100 @@ struct ScheduledSummariesView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(.systemBackground))
                 } else {
-                    // Scheduled summaries list
-                    List {
-                        // Existing scheduled summaries
-                        ForEach(vm.scheduledSummaries, id: \.id) { summary in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(summary.name)
-                                        .font(.headline)
-                                        .foregroundColor(.primary)
-                                    
-                                    Text("\(formatTimeWithAMPM(summary.time)) • \(summary.topics.joined(separator: ", "))")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    
-                                    if !summary.customTopics.isEmpty {
-                                        Text("Custom: \(summary.customTopics.joined(separator: ", "))")
+                    // Scheduled summary (only one allowed)
+                    if vm.scheduledSummaries.isEmpty {
+                        // No scheduled summary - show create button
+                        VStack(spacing: 20) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 60))
+                                .foregroundColor(.blue)
+                                .padding(.top, 60)
+                            
+                            Text("No Scheduled Fetch")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                            
+                            Text("Set up a daily automated news summary at your preferred time.")
+                                .font(.body)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 40)
+                            
+                            Button("Create Daily Fetch") {
+                                editingSummary = ScheduledSummary(
+                                    id: "",
+                                    name: "",
+                                    time: "",
+                                    topics: [],
+                                    customTopics: [],
+                                    days: [],
+                                    isEnabled: true,
+                                    createdAt: "",
+                                    lastRun: nil
+                                )
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .padding(.top, 20)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        // Show existing scheduled summary
+                        List {
+                            if let summary = vm.scheduledSummaries.first {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(summary.name)
+                                            .font(.headline)
+                                            .foregroundColor(.primary)
+                                        
+                                        Text("\(formatTimeWithAMPM(summary.time)) • \(summary.topics.joined(separator: ", "))")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
+                                        
+                                        if !summary.customTopics.isEmpty {
+                                            Text("Custom: \(summary.customTopics.joined(separator: ", "))")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
                                     }
                                     
-                                    if !summary.days.isEmpty {
-                                        Text("Days: \(summary.days.joined(separator: ", "))")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                
-                                Spacer()
-                                
-                                VStack(alignment: .trailing, spacing: 4) {
-                                    Image(systemName: summary.isEnabled ? "checkmark.circle.fill" : "circle")
-                                        .foregroundColor(summary.isEnabled ? .green : .gray)
+                                    Spacer()
                                     
-                                    if let lastRun = summary.lastRun {
-                                        Text("Last: \(formatDate(lastRun))")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
+                                    VStack(alignment: .trailing, spacing: 4) {
+                                        Image(systemName: summary.isEnabled ? "checkmark.circle.fill" : "circle")
+                                            .foregroundColor(summary.isEnabled ? .green : .gray)
+                                        
+                                        if let lastRun = summary.lastRun {
+                                            Text("Last: \(formatDate(lastRun))")
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
                                     }
                                 }
-                            }
-                            .padding(.vertical, 4)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                editingSummary = summary
+                                .padding(.vertical, 4)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    editingSummary = summary
+                                }
+                                
+                                // Manual trigger button for testing
+                                Button(action: {
+                                    Task {
+                                        await triggerScheduledSummaries()
+                                    }
+                                }) {
+                                    HStack {
+                                        Image(systemName: "play.circle.fill")
+                                            .foregroundColor(.green)
+                                        Text("Test Execute Now")
+                                            .foregroundColor(.green)
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 8)
+                                }
+                                .buttonStyle(PlainButtonStyle())
                             }
                         }
-                        .onDelete(perform: deleteScheduledSummary)
-                        
-                        // Add new scheduled summary button
-                        Button(action: {
-                            editingSummary = ScheduledSummary(
-                                id: "",
-                                name: "",
-                                time: "",
-                                topics: [],
-                                customTopics: [],
-                                days: [],
-                                isEnabled: true,
-                                createdAt: "",
-                                lastRun: nil
-                            )
-                        }) {
-                            HStack {
-                                Image(systemName: "plus.circle.fill")
-                                    .foregroundColor(.blue)
-                                Text("Add new scheduled summary")
-                                    .foregroundColor(.blue)
-                                Spacer()
-                            }
-                            .padding(.vertical, 8)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        
-                        // Manual trigger button for testing
-                        Button(action: {
-                            Task {
-                                await triggerScheduledSummaries()
-                            }
-                        }) {
-                            HStack {
-                                Image(systemName: "play.circle.fill")
-                                    .foregroundColor(.green)
-                                Text("Test Execute Now")
-                                    .foregroundColor(.green)
-                                Spacer()
-                            }
-                            .padding(.vertical, 8)
-                        }
-                        .buttonStyle(PlainButtonStyle())
                     }
                 }
             }

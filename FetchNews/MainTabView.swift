@@ -117,7 +117,6 @@ struct CustomBottomNavigation: View {
 struct AccountView: View {
     @EnvironmentObject var authVM: AuthVM
     @EnvironmentObject var vm: NewsVM
-    @State private var showingSubscription = false
     
     var body: some View {
         NavigationView {
@@ -208,36 +207,14 @@ struct AccountView: View {
                                 .cornerRadius(12)
                             }
                             
-                            // Subscription Actions
+                            // Account Actions
                             VStack(alignment: .leading, spacing: 16) {
-                                Text("Subscription")
+                                Text("Account")
                                     .font(.headline)
                                     .fontWeight(.semibold)
                                     .foregroundColor(.primary)
                                 
                                 VStack(spacing: 12) {
-                                    if !user.isPremium {
-                                        Button("Upgrade to Premium") {
-                                            showingSubscription = true
-                                        }
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundColor(.white)
-                                        .padding()
-                                        .frame(maxWidth: .infinity)
-                                        .background(Color.orange)
-                                        .cornerRadius(12)
-                                    } else {
-                                        Button("Manage Subscription") {
-                                            // TODO: Implement subscription management
-                                        }
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundColor(.blue)
-                                        .padding()
-                                        .frame(maxWidth: .infinity)
-                                        .background(Color.blue.opacity(0.1))
-                                        .cornerRadius(12)
-                                    }
-                                    
                                     Button("Sign Out") {
                                         authVM.logout()
                                     }
@@ -258,11 +235,6 @@ struct AccountView: View {
                     .padding(.vertical, 16)
                 }
             }
-        }
-        .sheet(isPresented: $showingSubscription) {
-            SubscriptionView()
-                .environmentObject(vm)
-                .environmentObject(authVM)
         }
     }
 }
