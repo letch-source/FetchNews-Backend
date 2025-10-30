@@ -2100,8 +2100,8 @@ app.post("/api/tts", async (req, res) => {
 });
 
 // --- Scheduled Summary Checker ---
-// Check for scheduled summaries every 10 minutes
-setInterval(async () => {
+// Function to check for scheduled summaries
+async function checkScheduledSummaries() {
   try {
     const now = new Date();
     const currentHour = now.getHours();
@@ -2109,7 +2109,9 @@ setInterval(async () => {
     const currentTime = `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`; // HH:mm format
     const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
     
-    console.log(`[SCHEDULER] Checking for scheduled summaries at ${currentTime} on ${currentDay}`);
+    console.log(`[SCHEDULER] ============================================`);
+    console.log(`[SCHEDULER] CHECKING SCHEDULED SUMMARIES`);
+    console.log(`[SCHEDULER] Current time: ${currentTime} on ${currentDay}`);
     console.log(`[SCHEDULER] Server timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
     console.log(`[SCHEDULER] Full server time: ${now.toString()}`);
     
@@ -2191,13 +2193,26 @@ setInterval(async () => {
       }
     }
     
+    // Always log the result, even if nothing was checked
     if (checkedCount > 0) {
-      console.log(`[SCHEDULER] Checked ${checkedCount} summaries, executed ${executedCount}`);
+      console.log(`[SCHEDULER] Result: Checked ${checkedCount} summaries, executed ${executedCount}`);
+    } else {
+      console.log(`[SCHEDULER] Result: No summaries to check or no matches found`);
     }
+    console.log(`[SCHEDULER] Next check in 10 minutes`);
+    console.log(`[SCHEDULER] ============================================`);
   } catch (error) {
     console.error('[SCHEDULER] Error checking scheduled summaries:', error);
+    console.log(`[SCHEDULER] Next check in 10 minutes`);
+    console.log(`[SCHEDULER] ============================================`);
   }
-}, 10 * 60 * 1000); // Run every 10 minutes
+}
+
+// Run check immediately on startup (for verification)
+checkScheduledSummaries();
+
+// Then run check every 10 minutes
+setInterval(checkScheduledSummaries, 10 * 60 * 1000); // Run every 10 minutes
 
 // --- Trending Topics Updater ---
 // Update trending topics every hour
@@ -2467,7 +2482,10 @@ if (IS_PRODUCTION) {
 function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Backend server running on port ${PORT}`);
+    const now = new Date();
+    const firstCheckIn = new Date(now.getTime() + (10 * 60 * 1000));
     console.log(`[SCHEDULER] Scheduled summary checker enabled - checking every 10 minutes`);
+    console.log(`[SCHEDULER] Running initial check now, then every 10 minutes thereafter`);
     if (!process.env.JWT_SECRET) {
       console.warn(
         "[WARN] JWT_SECRET is not set. Using an insecure fallback for development."
@@ -2488,5 +2506,8 @@ function startServer() {
 // Export functions for use by other modules (like scheduled summaries)
 module.exports = {
   fetchArticlesForTopic,
-  summarizeArticles
+  summarizeArticles,
+  addIntroAndOutro,
+  filterRelevantArticles,
+  isUpliftingNews
 };

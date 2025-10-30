@@ -1,5 +1,9 @@
 const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
+const { fetchArticlesForTopic, summarizeArticles, addIntroAndOutro, filterRelevantArticles, isUpliftingNews } = require('../index');
+const User = require('../models/User');
+const mongoose = require('mongoose');
+const fallbackAuth = require('../utils/fallbackAuth');
 
 const router = express.Router();
 
@@ -172,9 +176,133 @@ router.post('/:id/execute', authenticateToken, async (req, res) => {
 
 // Export function for use by scheduler
 async function executeScheduledSummary(user, summary) {
-  // This is a placeholder function for the scheduler
-  console.log(`Executing scheduled summary "${summary.name}" for user ${user.email}`);
-  // In a real implementation, this would generate and send the summary
+  try {
+    console.log(`[SCHEDULER] Executing scheduled summary "${summary.name}" for user ${user.email}`);
+    
+    // Get user preferences
+    const preferences = user.getPreferences ? user.getPreferences() : {};
+    const wordCount = summary.wordCount || parseInt(preferences.length || '200', 10);
+    const goodNewsOnly = preferences.upliftingNewsOnly || false;
+    const location = user.location || '';
+    
+    // Combine regular topics and custom topics
+    const allTopics = [...(summary.topics || []), ...(summary.customTopics || [])];
+    
+    if (allTopics.length === 0) {
+      console.log(`[SCHEDULER] No topics to generate summary for user ${user.email}`);
+      return;
+    }
+    
+    // Get user's selected news sources (if premium)
+    let selectedSources = [];
+    if (user.isPremium && user.getPreferences) {
+      selectedSources = preferences.selectedNewsSources || [];
+    }
+    
+    const items = [];
+    const combinedPieces = [];
+    
+    // Process each topic
+    for (const topic of allTopics) {
+      try {
+        const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
+        
+        // Handle location
+        let geoData = null;
+        if (location && typeof location === 'string') {
+          const locationStr = String(location).trim();
+          if (locationStr) {
+            const parts = locationStr.split(',').map(p => p.trim());
+            geoData = {
+              city: parts[0] || "",
+              region: parts[1] || "",
+              country: "US",
+              countryCode: "US"
+            };
+          }
+        }
+        
+        // Fetch articles for the topic
+        const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
+        
+        // Filter relevant articles
+        let relevant = filterRelevantArticles(topic, geoData, articles, perTopic);
+        
+        // Apply uplifting news filter if enabled
+        if (goodNewsOnly) {
+          relevant = relevant.filter(isUpliftingNews);
+        }
+        
+        // Generate summary
+        const summaryText = await summarizeArticles(topic, geoData, relevant, wordCount, goodNewsOnly, user);
+        
+        if (summaryText) {
+          combinedPieces.push(summaryText);
+        }
+        
+        // Create source items
+        const sourceItems = relevant.map((a, idx) => ({
+          id: `${topic}-${idx}-${Date.now()}`,
+          title: a.title || "",
+          summary: (a.description || a.title || "").replace(/\s+/g, " ").trim().slice(0, 180),
+          source: a.source || "",
+          url: a.url || "",
+          topic,
+        }));
+        
+        items.push(...sourceItems);
+      } catch (innerErr) {
+        console.error(`[SCHEDULER] Error processing topic ${topic} for user ${user.email}:`, innerErr);
+      }
+    }
+    
+    // Combine all topic summaries
+    let combinedText = combinedPieces.join(" ").trim();
+    
+    // Add intro and outro
+    combinedText = addIntroAndOutro(combinedText, allTopics, goodNewsOnly, user);
+    
+    // Generate title
+    let title = "Scheduled Summary";
+    if (allTopics.length === 1) {
+      title = `${allTopics[0].charAt(0).toUpperCase() + allTopics[0].slice(1)} Summary`;
+    } else if (allTopics.length > 1) {
+      title = "Mixed Summary";
+    }
+    
+    // Determine length category
+    let lengthCategory = 'short';
+    if (wordCount >= 1000) {
+      lengthCategory = 'long';
+    } else if (wordCount >= 800) {
+      lengthCategory = 'medium';
+    }
+    
+    // Save to user's summary history
+    const summaryData = {
+      id: `scheduled-${Date.now()}`,
+      title: title,
+      summary: combinedText,
+      topics: allTopics,
+      length: lengthCategory,
+      audioUrl: null,
+      sources: items.slice(0, 10) // Keep top 10 sources
+    };
+    
+    if (mongoose.connection.readyState === 1) {
+      await user.addSummaryToHistory(summaryData);
+      // Increment usage
+      await user.incrementUsage();
+    } else {
+      await fallbackAuth.addSummaryToHistory(user, summaryData);
+      await fallbackAuth.incrementUsage(user);
+    }
+    
+    console.log(`[SCHEDULER] Successfully generated and saved summary "${title}" for user ${user.email}`);
+  } catch (error) {
+    console.error(`[SCHEDULER] Error executing scheduled summary for user ${user.email}:`, error);
+    throw error;
+  }
 }
 
 module.exports = router;
