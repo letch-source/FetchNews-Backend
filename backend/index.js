@@ -2430,11 +2430,12 @@ async function updateTrendingTopicsFallback() {
   }
 }
 
+// AUTO-UPDATE DISABLED: Trending topics will only update manually via /api/trending-topics/update endpoint
 // Run immediately on startup
-updateTrendingTopics();
+// updateTrendingTopics();
 
 // Then run every 30 minutes for breaking news
-setInterval(updateTrendingTopics, 30 * 60 * 1000); // 30 minutes
+// setInterval(updateTrendingTopics, 30 * 60 * 1000); // 30 minutes
 
 // --- Deployment Protection ---
 const DEPLOYMENT_MODE = process.env.DEPLOYMENT_MODE || 'development';
