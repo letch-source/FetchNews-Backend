@@ -2083,96 +2083,104 @@ app.post("/api/tts", async (req, res) => {
 });
 
 // --- Scheduled Summary Checker ---
-// Check for scheduled summaries every 10 minutes at specific marks (:00, :10, :20, :30, :40, :50)
-function setupScheduledSummaryChecker() {
-  // Function to check if current minute is a 10-minute mark
-  function is10MinuteMark() {
-    const now = new Date();
-    const minutes = now.getMinutes();
-    return minutes % 10 === 0;
-  }
-  
-  // Check immediately if we're on a 10-minute mark
-  if (is10MinuteMark()) {
-    checkScheduledSummaries();
-  }
-  
-  // Set up interval to check every minute and only execute on 10-minute marks
-  setInterval(async () => {
-    if (is10MinuteMark()) {
-      await checkScheduledSummaries();
-    }
-  }, 60 * 1000); // Check every minute
-}
-
-async function checkScheduledSummaries() {
+// Check for scheduled summaries every 10 minutes
+setInterval(async () => {
   try {
     const now = new Date();
-    const currentTime = now.toTimeString().slice(0, 5); // HH:mm format
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTime = `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`; // HH:mm format
     const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
     
     console.log(`[SCHEDULER] Checking for scheduled summaries at ${currentTime} on ${currentDay}`);
+    console.log(`[SCHEDULER] Server timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
+    console.log(`[SCHEDULER] Full server time: ${now.toString()}`);
     
-    const mongoose = require('mongoose');
-    const User = require('./models/User');
-    
-    let users = [];
-    if (mongoose.connection.readyState === 1) {
-      // Find all users with scheduled summaries
-      users = await User.find({
-        'preferences.scheduledSummaries': { $exists: true, $ne: [] }
-      });
-    } else {
-      // Fallback: use in-memory users or skip
-      console.log('[SCHEDULER] Database not available, skipping scheduled summaries');
-      return;
-    }
+    // Find all users with scheduled summaries
+    const User = require('../models/User');
+    const users = await User.find({
+      'scheduledSummaries': { $exists: true, $ne: [] }
+    });
     
     console.log(`[SCHEDULER] Found ${users.length} users with scheduled summaries`);
     
     let executedCount = 0;
+    let checkedCount = 0;
     
     for (const user of users) {
-      const preferences = user.getPreferences();
-      const scheduledSummaries = preferences.scheduledSummaries || [];
+      let scheduledSummaries = user.scheduledSummaries || [];
       
-      // Get the first scheduled summary (we only support one now)
-      const summary = scheduledSummaries[0];
-      if (!summary || !summary.isEnabled) continue;
+      // Clean up summaries with empty days arrays (they can't execute anyway)
+      const originalCount = scheduledSummaries.length;
+      scheduledSummaries = scheduledSummaries.filter(summary => 
+        summary.days && summary.days.length > 0
+      );
       
-      // Check if time matches (must be exactly on the mark: :00, :10, :20, :30, :40, :50)
-      const scheduledTime = summary.time; // Format: "HH:mm"
-      if (scheduledTime === currentTime) {
-        console.log(`[SCHEDULER] Executing scheduled summary for user ${user.email} at ${currentTime}`);
+      if (scheduledSummaries.length !== originalCount) {
+        console.log(`[SCHEDULER] Cleaned up ${originalCount - scheduledSummaries.length} summaries with empty days for user ${user.email}`);
+        user.scheduledSummaries = scheduledSummaries;
+        await user.save();
+      }
+      
+      for (const summary of scheduledSummaries) {
+        checkedCount++;
+        const isCorrectDay = summary.days && summary.days.includes(currentDay);
+        const isEnabled = summary.isEnabled;
         
-        try {
-          // Import and call the execution function
-          const { executeScheduledSummary } = require('./routes/scheduledSummaries');
-          await executeScheduledSummary(user, summary);
-          console.log(`[SCHEDULER] Successfully executed scheduled summary for user ${user.email}`);
+        if (!isEnabled || !isCorrectDay) {
+          continue;
+        }
+        
+        // Parse scheduled time (stored as HH:mm)
+        const [scheduledHour, scheduledMinute] = summary.time.split(':').map(Number);
+        const scheduledTimeMinutes = scheduledHour * 60 + scheduledMinute;
+        const currentTimeMinutes = currentHour * 60 + currentMinute;
+        
+        // Check if scheduled time is within the last 10 minutes (to account for 10-minute check interval)
+        // This ensures we catch summaries even if the exact minute check was slightly delayed
+        const timeDifference = currentTimeMinutes - scheduledTimeMinutes;
+        const shouldExecute = timeDifference >= 0 && timeDifference < 10;
+        
+        // Also check if summary hasn't already run today (prevent duplicate executions)
+        const lastRun = summary.lastRun ? new Date(summary.lastRun) : null;
+        const alreadyRanToday = lastRun && 
+          lastRun.getDate() === now.getDate() &&
+          lastRun.getMonth() === now.getMonth() &&
+          lastRun.getFullYear() === now.getFullYear();
+        
+        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (current=${currentTime}), days=${JSON.stringify(summary.days)} (current=${currentDay}), timeDiff=${timeDifference}min, shouldExecute=${shouldExecute && !alreadyRanToday}`);
+        
+        if (shouldExecute && !alreadyRanToday) {
+          console.log(`[SCHEDULER] Executing scheduled summary "${summary.name}" for user ${user.email} on ${currentDay}`);
           
-          // Update lastRun timestamp
-          if (scheduledSummaries.length > 0) {
-            scheduledSummaries[0].lastRun = new Date().toISOString();
-            await user.updatePreferences({ scheduledSummaries });
-            executedCount++;
+          try {
+            // Import and call the execution function directly
+            const { executeScheduledSummary } = require('./routes/scheduledSummaries');
+            await executeScheduledSummary(user, summary);
+            console.log(`[SCHEDULER] Successfully executed scheduled summary "${summary.name}" for user ${user.email}`);
+            
+            // Update lastRun timestamp
+            const summaryIndex = scheduledSummaries.findIndex(s => s.id === summary.id);
+            if (summaryIndex !== -1) {
+              scheduledSummaries[summaryIndex].lastRun = new Date().toISOString();
+              user.scheduledSummaries = scheduledSummaries;
+              await user.save();
+              executedCount++;
+            }
+          } catch (error) {
+            console.error(`[SCHEDULER] Failed to execute scheduled summary "${summary.name}" for user ${user.email}:`, error);
           }
-        } catch (error) {
-          console.error(`[SCHEDULER] Failed to execute scheduled summary for user ${user.email}:`, error);
         }
       }
     }
     
-    if (executedCount > 0) {
-      console.log(`[SCHEDULER] Executed ${executedCount} scheduled summaries`);
+    if (checkedCount > 0) {
+      console.log(`[SCHEDULER] Checked ${checkedCount} summaries, executed ${executedCount}`);
     }
   } catch (error) {
     console.error('[SCHEDULER] Error checking scheduled summaries:', error);
   }
-}
-
-// Initialize the scheduler
-setupScheduledSummaryChecker();
+}, 10 * 60 * 1000); // Run every 10 minutes
 
 // --- Trending Topics Updater ---
 // Update trending topics every hour
@@ -2360,15 +2368,9 @@ async function updateTrendingTopics() {
     // Use ChatGPT to analyze articles and extract trending topics
     const result = await extractTrendingTopicsWithChatGPT(allArticles);
     
-    if (result && Array.isArray(result) && result.length > 0) {
-      // Handle case where result is array of topics directly
-      trendingTopicsCache = result;
-      lastTrendingUpdate = new Date();
-      console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${result.join(', ')}`);
-    } else if (result && result.topics && Array.isArray(result.topics) && result.topics.length > 0) {
-      // Handle case where result is an object with topics array
+    if (result && result.topics && result.topics.length > 0) {
       trendingTopicsCache = result.topics;
-      trendingTopicsWithSources = result.topicsWithSources || {};
+      trendingTopicsWithSources = result.topicsWithSources;
       lastTrendingUpdate = new Date();
       console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${result.topics.join(', ')}`);
     } else {
@@ -2447,7 +2449,7 @@ if (IS_PRODUCTION) {
 function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Backend server running on port ${PORT}`);
-    console.log(`[SCHEDULER] Scheduled summary checker disabled (feature hidden from UI)`);
+    console.log(`[SCHEDULER] Scheduled summary checker enabled - checking every 10 minutes`);
     if (!process.env.JWT_SECRET) {
       console.warn(
         "[WARN] JWT_SECRET is not set. Using an insecure fallback for development."
@@ -2468,6 +2470,5 @@ function startServer() {
 // Export functions for use by other modules (like scheduled summaries)
 module.exports = {
   fetchArticlesForTopic,
-  summarizeArticles,
-  addIntroAndOutro
+  summarizeArticles
 };

@@ -8,20 +8,10 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const user = req.user;
     
-    // Get scheduled summaries from user (stored at root level, not in preferences)
-    // But access via getPreferences() for consistency
-    const preferences = user.getPreferences();
-    const scheduledSummaries = preferences.scheduledSummaries || [];
+    // Get scheduled summaries from user.scheduledSummaries
+    const scheduledSummaries = user.scheduledSummaries || [];
     
-    // Also include last scheduled summary if it exists (for homepage display)
-    // This is stored in preferences object
-    const userPreferences = user.preferences || {};
-    const lastScheduledSummary = userPreferences.lastScheduledSummary || null;
-    
-    res.json({ 
-      scheduledSummaries,
-      lastScheduledSummary 
-    });
+    res.json({ scheduledSummaries });
   } catch (error) {
     console.error('Get scheduled summaries error:', error);
     res.status(500).json({ error: 'Failed to get scheduled summaries' });
@@ -31,35 +21,43 @@ router.get('/', authenticateToken, async (req, res) => {
 // Create a new scheduled summary
 router.post('/', authenticateToken, async (req, res) => {
   try {
-    const { name, topics, time, days, wordCount, isEnabled } = req.body;
+    const { name, topics, customTopics, time, days, wordCount, isEnabled } = req.body;
     const user = req.user;
     
-    if (!name || !topics || !time || !days) {
+    if (!name || !time || !days) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
     
-    // Get current scheduled summaries (stored at root level, not in preferences)
+    const topicsArray = Array.isArray(topics) ? topics : (topics ? [topics] : []);
+    const customTopicsArray = Array.isArray(customTopics) ? customTopics : (customTopics ? [customTopics] : []);
+    
+    if (topicsArray.length === 0 && customTopicsArray.length === 0) {
+      return res.status(400).json({ error: 'At least one topic or custom topic is required' });
+    }
+    
     const scheduledSummaries = user.scheduledSummaries || [];
     
     // Create new scheduled summary
     const newSummary = {
-      id: Date.now().toString(),
+      id: req.body.id || Date.now().toString(), // Use provided id if available
       name,
-      topics: Array.isArray(topics) ? topics : [topics],
+      topics: Array.isArray(topics) ? topics : (topics ? [topics] : []),
+      customTopics: Array.isArray(customTopics) ? customTopics : (customTopics ? [customTopics] : []),
       time,
-      days: Array.isArray(days) ? days : [days],
+      days: Array.isArray(days) ? days : (days ? [days] : []),
       wordCount: wordCount || 200,
       isEnabled: isEnabled !== false,
-      createdAt: new Date().toISOString()
+      createdAt: req.body.createdAt || new Date().toISOString(),
+      lastRun: req.body.lastRun || null
     };
     
     scheduledSummaries.push(newSummary);
+    user.scheduledSummaries = scheduledSummaries;
     
-    // Use updatePreferences to save with retry logic for version conflicts
-    const preferences = user.getPreferences();
-    preferences.scheduledSummaries = scheduledSummaries;
-    
-    await user.updatePreferences(preferences);
+    // Save user to database
+    if (user.save) {
+      await user.save();
+    }
     
     res.status(201).json({ 
       message: 'Scheduled summary created successfully',
@@ -75,10 +73,9 @@ router.post('/', authenticateToken, async (req, res) => {
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, topics, time, days, wordCount, isEnabled } = req.body;
+    const { name, topics, customTopics, time, days, wordCount, isEnabled } = req.body;
     const user = req.user;
     
-    // Get current scheduled summaries (stored at root level, not in preferences)
     const scheduledSummaries = user.scheduledSummaries || [];
     
     const summaryIndex = scheduledSummaries.findIndex(s => s.id === id);
@@ -86,21 +83,29 @@ router.put('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Scheduled summary not found' });
     }
     
-    // Update the scheduled summary
-    if (name) scheduledSummaries[summaryIndex].name = name;
-    if (topics) scheduledSummaries[summaryIndex].topics = Array.isArray(topics) ? topics : [topics];
-    if (time) scheduledSummaries[summaryIndex].time = time;
-    if (days) scheduledSummaries[summaryIndex].days = Array.isArray(days) ? days : [days];
+    // Update the scheduled summary with all provided fields
+    if (name !== undefined) scheduledSummaries[summaryIndex].name = name;
+    if (topics !== undefined) {
+      scheduledSummaries[summaryIndex].topics = Array.isArray(topics) ? topics : (topics ? [topics] : []);
+    }
+    if (customTopics !== undefined) {
+      scheduledSummaries[summaryIndex].customTopics = Array.isArray(customTopics) ? customTopics : (customTopics ? [customTopics] : []);
+    }
+    if (time !== undefined) scheduledSummaries[summaryIndex].time = time;
+    if (days !== undefined) {
+      scheduledSummaries[summaryIndex].days = Array.isArray(days) ? days : (days ? [days] : []);
+    }
     if (wordCount !== undefined) scheduledSummaries[summaryIndex].wordCount = wordCount;
     if (isEnabled !== undefined) scheduledSummaries[summaryIndex].isEnabled = isEnabled;
     
     scheduledSummaries[summaryIndex].updatedAt = new Date().toISOString();
     
-    // Use updatePreferences to save with retry logic for version conflicts
-    const preferences = user.getPreferences();
-    preferences.scheduledSummaries = scheduledSummaries;
+    user.scheduledSummaries = scheduledSummaries;
     
-    await user.updatePreferences(preferences);
+    // Save user to database
+    if (user.save) {
+      await user.save();
+    }
     
     res.json({ 
       message: 'Scheduled summary updated successfully',
@@ -118,7 +123,6 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const user = req.user;
     
-    // Get current scheduled summaries (stored at root level, not in preferences)
     const scheduledSummaries = user.scheduledSummaries || [];
     
     const summaryIndex = scheduledSummaries.findIndex(s => s.id === id);
@@ -128,12 +132,12 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     
     // Remove the scheduled summary
     scheduledSummaries.splice(summaryIndex, 1);
+    user.scheduledSummaries = scheduledSummaries;
     
-    // Use updatePreferences to save with retry logic for version conflicts
-    const preferences = user.getPreferences();
-    preferences.scheduledSummaries = scheduledSummaries;
-    
-    await user.updatePreferences(preferences);
+    // Save user to database
+    if (user.save) {
+      await user.save();
+    }
     
     res.json({ message: 'Scheduled summary deleted successfully' });
   } catch (error) {
@@ -148,8 +152,7 @@ router.post('/:id/execute', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const user = req.user;
     
-    const preferences = user.preferences || {};
-    const scheduledSummaries = preferences.scheduledSummaries || [];
+    const scheduledSummaries = user.scheduledSummaries || [];
     
     const summary = scheduledSummaries.find(s => s.id === id);
     if (!summary) {
@@ -169,138 +172,9 @@ router.post('/:id/execute', authenticateToken, async (req, res) => {
 
 // Export function for use by scheduler
 async function executeScheduledSummary(user, summary) {
-  try {
-    console.log(`[SCHEDULER] Executing scheduled summary for user ${user.email}`);
-    
-    // Combine topics from both regular topics and custom topics
-    const allTopics = [...(summary.topics || []), ...(summary.customTopics || [])];
-    
-    if (allTopics.length === 0) {
-      console.log(`[SCHEDULER] No topics selected for scheduled summary, skipping`);
-      return;
-    }
-    
-    // Import the summarize functionality from the main index.js
-    const mongoose = require('mongoose');
-    const User = require('../models/User');
-    
-    // Import functions from index.js
-    const { fetchArticlesForTopic, summarizeArticles, addIntroAndOutro } = require('../index');
-    
-    const wordCount = summary.wordCount || 200;
-    const goodNewsOnly = summary.goodNewsOnly || false;
-    
-    // Get user's selected news sources if premium
-    let selectedSources = [];
-    if (user.isPremium) {
-      const preferences = user.getPreferences();
-      selectedSources = preferences.selectedNewsSources || [];
-    }
-    
-    const items = [];
-    const combinedPieces = [];
-    
-    // Fetch articles and generate summary for each topic
-    for (const topic of allTopics) {
-      try {
-        const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
-        const geoData = null; // No location filtering for scheduled summaries
-        
-        const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
-        
-        if (!articles || articles.length === 0) {
-          console.log(`[SCHEDULER] No articles found for topic: ${topic}`);
-          continue;
-        }
-        
-        // Generate summary for this topic
-        const summaryText = await summarizeArticles(topic, geoData, articles.slice(0, 6), wordCount, goodNewsOnly, user);
-        
-        if (summaryText) {
-          combinedPieces.push(summaryText);
-        }
-        
-        // Add source items
-        const sourceItems = articles.slice(0, 6).map((a, idx) => ({
-          id: `${topic}-${idx}-${Date.now()}`,
-          title: a.title || "",
-          summary: (a.description || a.title || "").replace(/\s+/g, " ").trim().slice(0, 180),
-          source: (typeof a.source === 'string' ? a.source : (a.source?.name || a.source?.id || "")),
-          url: a.url || "",
-          topic,
-        }));
-        
-        items.push(...sourceItems);
-      } catch (error) {
-        console.error(`[SCHEDULER] Error processing topic ${topic}:`, error);
-      }
-    }
-    
-    if (combinedPieces.length === 0) {
-      console.log(`[SCHEDULER] No summary generated, skipping save`);
-      return;
-    }
-    
-    // Combine all topic summaries
-    let combinedText = combinedPieces.join(" ").trim();
-    
-    // Add intro and outro
-    combinedText = addIntroAndOutro(combinedText, allTopics, goodNewsOnly, user);
-    
-    // Generate title
-    let title = "Scheduled Summary";
-    if (allTopics.length === 1) {
-      title = `${allTopics[0].charAt(0).toUpperCase() + allTopics[0].slice(1)} Summary`;
-    } else if (allTopics.length > 1) {
-      title = "Scheduled Summary";
-    }
-    
-    // Save to summary history
-    const summaryData = {
-      id: `scheduled-${Date.now()}`,
-      title: title,
-      summary: combinedText,
-      topics: allTopics,
-      length: wordCount <= 200 ? 'short' : wordCount <= 800 ? 'medium' : 'long',
-      timestamp: new Date().toISOString(),
-      audioUrl: null, // Will be generated when user opens the app
-      sources: items.map(i => i.source).filter(s => s && typeof s === 'string' && s.length > 0)
-    };
-    
-    // Add to user's summary history
-    if (mongoose.connection.readyState === 1) {
-      await user.addSummaryToHistory(summaryData);
-    } else {
-      const fallbackAuth = require('../utils/fallbackAuth');
-      await fallbackAuth.addSummaryToHistory(user, summaryData);
-    }
-    
-    // Store scheduled summary data for homepage display
-    // This will be available when the user opens the app
-    const preferences = user.getPreferences();
-    preferences.lastScheduledSummary = {
-      id: summaryData.id,
-      title: summaryData.title,
-      summary: summaryData.summary,
-      topics: summaryData.topics,
-      timestamp: summaryData.timestamp,
-      needsNotification: true // Flag to trigger notification
-    };
-    
-    if (mongoose.connection.readyState === 1) {
-      await user.updatePreferences(preferences);
-    }
-    
-    console.log(`[SCHEDULER] Successfully generated and saved scheduled summary for user ${user.email}`);
-    
-    // TODO: Send push notification here
-    // For now, we'll just log that a notification should be sent
-    console.log(`[SCHEDULER] Notification should be sent to user ${user.email} for scheduled summary`);
-    
-  } catch (error) {
-    console.error(`[SCHEDULER] Error executing scheduled summary:`, error);
-    throw error;
-  }
+  // This is a placeholder function for the scheduler
+  console.log(`Executing scheduled summary "${summary.name}" for user ${user.email}`);
+  // In a real implementation, this would generate and send the summary
 }
 
 module.exports = router;

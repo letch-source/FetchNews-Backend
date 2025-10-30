@@ -18,15 +18,10 @@ router.get('/', authenticateToken, async (req, res) => {
     }
     
     // Convert timestamps to ISO strings for frontend compatibility
-    // Ensure sources field is always present (empty array if missing for old summaries)
-    const formattedHistory = summaryHistory.map(entry => {
-      const entryObj = entry.toObject ? entry.toObject() : entry;
-      return {
-        ...entryObj,
-        timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp,
-        sources: entryObj.sources || []
-      };
-    });
+    const formattedHistory = summaryHistory.map(entry => ({
+      ...entry.toObject ? entry.toObject() : entry,
+      timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp
+    }));
     
     res.json(formattedHistory);
   } catch (error) {

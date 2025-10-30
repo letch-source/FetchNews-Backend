@@ -306,18 +306,15 @@ userSchema.methods.updatePreferences = async function(preferences) {
         // Reload the document to get the latest version
         const freshUser = await this.constructor.findById(this._id);
         if (freshUser) {
-          // Update the fresh document with our changes (at root level, not in preferences)
-          if (preferences.selectedVoice !== undefined) freshUser.selectedVoice = preferences.selectedVoice;
-          if (preferences.playbackRate !== undefined) freshUser.playbackRate = preferences.playbackRate;
-          if (preferences.upliftingNewsOnly !== undefined) freshUser.upliftingNewsOnly = preferences.upliftingNewsOnly;
-          if (preferences.length !== undefined) {
-            if (!freshUser.preferences) freshUser.preferences = {};
-            freshUser.preferences.length = preferences.length;
-          }
-          if (preferences.lastFetchedTopics !== undefined) freshUser.lastFetchedTopics = preferences.lastFetchedTopics;
-          if (preferences.selectedTopics !== undefined) freshUser.selectedTopics = preferences.selectedTopics;
-          if (preferences.selectedNewsSources !== undefined) freshUser.selectedNewsSources = preferences.selectedNewsSources;
-          if (preferences.scheduledSummaries !== undefined) freshUser.scheduledSummaries = preferences.scheduledSummaries;
+          // Update the fresh document with our changes
+          if (preferences.selectedVoice) freshUser.preferences.selectedVoice = preferences.selectedVoice;
+          if (preferences.playbackRate !== undefined) freshUser.preferences.playbackRate = preferences.playbackRate;
+          if (preferences.upliftingNewsOnly !== undefined) freshUser.preferences.upliftingNewsOnly = preferences.upliftingNewsOnly;
+          if (preferences.length) freshUser.preferences.length = preferences.length;
+          if (preferences.lastFetchedTopics) freshUser.lastFetchedTopics = preferences.lastFetchedTopics;
+          if (preferences.selectedTopics) freshUser.selectedTopics = preferences.selectedTopics;
+          if (preferences.selectedNewsSources) freshUser.selectedNewsSources = preferences.selectedNewsSources;
+          if (preferences.scheduledSummaries) freshUser.preferences.scheduledSummaries = preferences.scheduledSummaries;
           
           // Copy the fresh document to this instance
           Object.assign(this, freshUser.toObject());
