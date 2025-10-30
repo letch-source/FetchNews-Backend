@@ -450,7 +450,6 @@ app.use("/api/scheduled-summaries", scheduledSummariesRoutes);
 // Serve admin website
 // Use path relative to project root (works for both local and Render deployment)
 // Try multiple possible paths for admin directory
-const fs = require('fs');
 let adminPath = null;
 
 // Try different possible locations for admin directory
