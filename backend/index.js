@@ -453,27 +453,19 @@ const adminPath = path.join(__dirname, "admin");
 
 // Explicitly handle /admin routes first
 app.get("/admin", (req, res) => {
-  if (!adminPath) {
-    return res.status(404).send('Admin dashboard not available - directory not found');
-  }
   const indexPath = path.join(adminPath, "index.html");
   res.sendFile(indexPath);
 });
 
 app.get("/admin/", (req, res) => {
-  if (!adminPath) {
-    return res.status(404).send('Admin dashboard not available - directory not found');
-  }
   const indexPath = path.join(adminPath, "index.html");
   res.sendFile(indexPath);
 });
 
 // Then serve static files from admin directory
-if (adminPath) {
-  app.use("/admin", express.static(adminPath, {
-    index: 'index.html'
-  }));
-}
+app.use("/admin", express.static(adminPath, {
+  index: 'index.html'
+}));
 
 // Serve AASA file for password autofill
 app.get("/.well-known/apple-app-site-association", (req, res) => {
