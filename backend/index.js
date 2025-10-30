@@ -448,7 +448,19 @@ const scheduledSummariesRoutes = require("./routes/scheduledSummaries");
 app.use("/api/scheduled-summaries", scheduledSummariesRoutes);
 
 // Serve admin website
-app.use("/admin", express.static(path.join(__dirname, "../../admin")));
+// Explicitly handle /admin routes first
+app.get("/admin", (req, res) => {
+  res.sendFile(path.join(__dirname, "../../admin/index.html"));
+});
+
+app.get("/admin/", (req, res) => {
+  res.sendFile(path.join(__dirname, "../../admin/index.html"));
+});
+
+// Then serve static files from admin directory
+app.use("/admin", express.static(path.join(__dirname, "../../admin"), {
+  index: 'index.html'
+}));
 
 // Serve AASA file for password autofill
 app.get("/.well-known/apple-app-site-association", (req, res) => {
