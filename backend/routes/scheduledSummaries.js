@@ -7,6 +7,42 @@ const fallbackAuth = require('../utils/fallbackAuth');
 
 const router = express.Router();
 
+// Helper function to save user with retry logic for version conflicts
+async function saveUserWithRetry(user, retries = 3) {
+  // Preserve the scheduledSummaries we want to save
+  const scheduledSummariesToSave = user.scheduledSummaries;
+  
+  while (retries > 0) {
+    try {
+      await user.save();
+      return;
+    } catch (error) {
+      if (error.name === 'VersionError' && retries > 1) {
+        console.log(`[SCHEDULED_SUMMARY] Version conflict, retrying... (${retries - 1} retries left)`);
+        // Reload the document to get the latest version
+        const freshUser = await User.findById(user._id);
+        if (freshUser) {
+          // Apply our scheduledSummaries changes to the fresh document
+          freshUser.scheduledSummaries = scheduledSummariesToSave;
+          // Copy the fresh user back to the original user object
+          Object.assign(user, freshUser.toObject());
+          // Ensure scheduledSummaries is set on the user object
+          user.scheduledSummaries = scheduledSummariesToSave;
+          // Mark as modified
+          user.markModified('scheduledSummaries');
+          retries--;
+          continue;
+        } else {
+          throw error;
+        }
+      } else {
+        throw error;
+      }
+    }
+  }
+  throw new Error('Failed to save user after retries');
+}
+
 // Get user's scheduled summaries
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -58,8 +94,8 @@ router.post('/', authenticateToken, async (req, res) => {
     scheduledSummaries.push(newSummary);
     user.scheduledSummaries = scheduledSummaries;
     
-    // Save user to database
-    await user.save();
+    // Save user to database with retry logic for version conflicts
+    await saveUserWithRetry(user);
     
     res.status(201).json({ 
       message: 'Scheduled summary created successfully',
@@ -104,8 +140,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
     
     user.scheduledSummaries = scheduledSummaries;
     
-    // Save user to database
-    await user.save();
+    // Save user to database with retry logic for version conflicts
+    await saveUserWithRetry(user);
     
     res.json({ 
       message: 'Scheduled summary updated successfully',
@@ -134,8 +170,8 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     scheduledSummaries.splice(summaryIndex, 1);
     user.scheduledSummaries = scheduledSummaries;
     
-    // Save user to database
-    await user.save();
+    // Save user to database with retry logic for version conflicts
+    await saveUserWithRetry(user);
     
     res.json({ message: 'Scheduled summary deleted successfully' });
   } catch (error) {
