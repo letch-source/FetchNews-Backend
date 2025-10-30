@@ -2360,9 +2360,15 @@ async function updateTrendingTopics() {
     // Use ChatGPT to analyze articles and extract trending topics
     const result = await extractTrendingTopicsWithChatGPT(allArticles);
     
-    if (result && result.topics && result.topics.length > 0) {
+    if (result && Array.isArray(result) && result.length > 0) {
+      // Handle case where result is array of topics directly
+      trendingTopicsCache = result;
+      lastTrendingUpdate = new Date();
+      console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${result.join(', ')}`);
+    } else if (result && result.topics && Array.isArray(result.topics) && result.topics.length > 0) {
+      // Handle case where result is an object with topics array
       trendingTopicsCache = result.topics;
-      trendingTopicsWithSources = result.topicsWithSources;
+      trendingTopicsWithSources = result.topicsWithSources || {};
       lastTrendingUpdate = new Date();
       console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${result.topics.join(', ')}`);
     } else {

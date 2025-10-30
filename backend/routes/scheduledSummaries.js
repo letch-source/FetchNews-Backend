@@ -8,12 +8,15 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const user = req.user;
     
-    // Get scheduled summaries from user preferences
+    // Get scheduled summaries from user (stored at root level, not in preferences)
+    // But access via getPreferences() for consistency
     const preferences = user.getPreferences();
     const scheduledSummaries = preferences.scheduledSummaries || [];
     
     // Also include last scheduled summary if it exists (for homepage display)
-    const lastScheduledSummary = preferences.lastScheduledSummary || null;
+    // This is stored in preferences object
+    const userPreferences = user.preferences || {};
+    const lastScheduledSummary = userPreferences.lastScheduledSummary || null;
     
     res.json({ 
       scheduledSummaries,
@@ -35,8 +38,8 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
     
-    const preferences = user.preferences || {};
-    const scheduledSummaries = preferences.scheduledSummaries || [];
+    // Get current scheduled summaries (stored at root level, not in preferences)
+    const scheduledSummaries = user.scheduledSummaries || [];
     
     // Create new scheduled summary
     const newSummary = {
@@ -51,11 +54,12 @@ router.post('/', authenticateToken, async (req, res) => {
     };
     
     scheduledSummaries.push(newSummary);
-    preferences.scheduledSummaries = scheduledSummaries;
-    user.preferences = preferences;
     
-    // Save user (this would be a database operation in real implementation)
-    // await user.save();
+    // Use updatePreferences to save with retry logic for version conflicts
+    const preferences = user.getPreferences();
+    preferences.scheduledSummaries = scheduledSummaries;
+    
+    await user.updatePreferences(preferences);
     
     res.status(201).json({ 
       message: 'Scheduled summary created successfully',
@@ -74,8 +78,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const { name, topics, time, days, wordCount, isEnabled } = req.body;
     const user = req.user;
     
-    const preferences = user.preferences || {};
-    const scheduledSummaries = preferences.scheduledSummaries || [];
+    // Get current scheduled summaries (stored at root level, not in preferences)
+    const scheduledSummaries = user.scheduledSummaries || [];
     
     const summaryIndex = scheduledSummaries.findIndex(s => s.id === id);
     if (summaryIndex === -1) {
@@ -92,11 +96,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
     
     scheduledSummaries[summaryIndex].updatedAt = new Date().toISOString();
     
+    // Use updatePreferences to save with retry logic for version conflicts
+    const preferences = user.getPreferences();
     preferences.scheduledSummaries = scheduledSummaries;
-    user.preferences = preferences;
     
-    // Save user (this would be a database operation in real implementation)
-    // await user.save();
+    await user.updatePreferences(preferences);
     
     res.json({ 
       message: 'Scheduled summary updated successfully',
@@ -114,8 +118,8 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const user = req.user;
     
-    const preferences = user.preferences || {};
-    const scheduledSummaries = preferences.scheduledSummaries || [];
+    // Get current scheduled summaries (stored at root level, not in preferences)
+    const scheduledSummaries = user.scheduledSummaries || [];
     
     const summaryIndex = scheduledSummaries.findIndex(s => s.id === id);
     if (summaryIndex === -1) {
@@ -124,11 +128,12 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     
     // Remove the scheduled summary
     scheduledSummaries.splice(summaryIndex, 1);
-    preferences.scheduledSummaries = scheduledSummaries;
-    user.preferences = preferences;
     
-    // Save user (this would be a database operation in real implementation)
-    // await user.save();
+    // Use updatePreferences to save with retry logic for version conflicts
+    const preferences = user.getPreferences();
+    preferences.scheduledSummaries = scheduledSummaries;
+    
+    await user.updatePreferences(preferences);
     
     res.json({ message: 'Scheduled summary deleted successfully' });
   } catch (error) {
