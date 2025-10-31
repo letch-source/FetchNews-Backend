@@ -644,19 +644,18 @@ const CORE_CATEGORIES = new Set([
 async function fetchArticlesEverything(qParts, maxResults, selectedSources = []) {
   const q = encodeURIComponent(qParts.filter(Boolean).join(" "));
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
-  // Extend to 7 days for more variety (24 hours was too restrictive)
-  const from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  // Restrict to 48 hours (2 days) to ensure recent articles only
+  const maxAgeMs = 48 * 60 * 60 * 1000;
+  const from = new Date(Date.now() - maxAgeMs).toISOString().slice(0, 10);
   
-  // Try multiple search strategies for better coverage
+  // Try multiple search strategies for better coverage - ALL with date restrictions
   const searchStrategies = [
     // Strategy 1: Exact phrase search
     `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`,
     // Strategy 2: Individual keywords
     `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`,
-    // Strategy 3: Broader search without date restriction
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}`,
-    // Strategy 4: Search without keywords (general news)
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}`
+    // Strategy 3: Broader search with date restriction (removed unrestricted fallback)
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`
   ];
   
   let articles = [];
@@ -684,17 +683,32 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [])
   }
   
   if (articles.length === 0) {
-    throw new Error(lastError || 'No articles found with any search strategy');
+    throw new Error(lastError || 'No recent articles found with any search strategy');
   }
   
-  // Map Mediastack response to match expected format
-  const mappedArticles = articles.map(article => ({
-    title: article.title,
-    description: article.description,
-    url: article.url,
-    publishedAt: article.published_at,
-    source: { id: article.source, name: article.source }
-  }));
+  // Map Mediastack response to match expected format and filter by date
+  const now = Date.now();
+  const mappedArticles = articles
+    .map(article => {
+      const publishedAt = article.published_at ? new Date(article.published_at).getTime() : null;
+      // Filter out articles older than 48 hours
+      if (publishedAt && (now - publishedAt) > maxAgeMs) {
+        return null;
+      }
+      // Also filter out articles without valid published date if it's clearly old
+      return {
+        title: article.title,
+        description: article.description,
+        url: article.url,
+        publishedAt: article.published_at,
+        source: { id: article.source, name: article.source }
+      };
+    })
+    .filter(article => article !== null); // Remove filtered articles
+  
+  if (mappedArticles.length === 0) {
+    throw new Error('No recent articles found after date filtering');
+  }
   
   // Removed source printing log
   return mappedArticles;
@@ -761,15 +775,17 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
   }
   
   // If we still don't have enough variety after all time windows, return what we have
-  console.log(`Final attempt: trying top-headlines without time filter for maximum coverage`);
+  // Final attempt: trying with maximum 24-hour window (instead of no filter)
+  console.log(`Final attempt: trying with 24-hour window for maximum coverage`);
   const articles = [];
   const usedSources = new Set();
+  const maxFinalWindow = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   
   for (const source of selectedSources) {
     if (usedSources.size >= targetVariety) break;
     
     try {
-      const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&limit=1&languages=en`;
+      const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&date=${maxFinalWindow}&sort=published_desc&limit=1&languages=en`;
       const resp = await fetch(url);
       
       if (resp.ok) {
@@ -785,11 +801,11 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
           };
           articles.push(article);
           usedSources.add(source);
-          console.log(`Got article from ${source} (no time filter)`);
+          console.log(`Got article from ${source} (24h window)`);
         }
       }
     } catch (error) {
-      console.log(`Failed to get article from ${source} (no time filter): ${error.message}`);
+      console.log(`Failed to get article from ${source} (24h window): ${error.message}`);
     }
   }
   
@@ -800,6 +816,10 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
 async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, extraQuery, selectedSources = []) {
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
   const params = new URLSearchParams();
+  
+  // Restrict to 48 hours to ensure recent articles only
+  const maxAgeMs = 48 * 60 * 60 * 1000;
+  const from = new Date(Date.now() - maxAgeMs).toISOString().slice(0, 10);
   
   // Mediastack parameter mapping
   if (selectedSources && selectedSources.length > 0) {
@@ -814,6 +834,8 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
   if (extraQuery) params.set("keywords", extraQuery);
   params.set("limit", String(pageSize));
   params.set("languages", "en");
+  params.set("date", from); // Add date restriction
+  params.set("sort", "published_desc"); // Sort by most recent first
   const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&${params.toString()}`;
   console.log(`[DEBUG] Final Mediastack URL: ${url}`);
   const resp = await fetch(url);
@@ -826,14 +848,24 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
   console.log(`[DEBUG] Mediastack category response:`, JSON.stringify(data, null, 2));
   console.log(`Mediastack returned ${data.data?.length || 0} articles`);
   
-  // Map Mediastack response to match expected format
-  const articles = (data.data || []).map(article => ({
-    title: article.title,
-    description: article.description,
-    url: article.url,
-    publishedAt: article.published_at,
-    source: { id: article.source, name: article.source }
-  }));
+  // Map Mediastack response to match expected format and filter by date
+  const now = Date.now();
+  const articles = (data.data || [])
+    .map(article => {
+      const publishedAt = article.published_at ? new Date(article.published_at).getTime() : null;
+      // Filter out articles older than 48 hours
+      if (publishedAt && (now - publishedAt) > maxAgeMs) {
+        return null;
+      }
+      return {
+        title: article.title,
+        description: article.description,
+        url: article.url,
+        publishedAt: article.published_at,
+        source: { id: article.source, name: article.source }
+      };
+    })
+    .filter(article => article !== null); // Remove filtered articles
   
   // Removed source printing log
   return articles;
@@ -925,9 +957,12 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   const isGeneral = normalizedTopic === "general";
 
   if (isGeneral) {
-  // For general news, use a simple approach without date filtering
+  // For general news, use a simple approach with date filtering to ensure recent articles
   try {
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}`;
+    // Restrict to 48 hours to ensure recent articles only
+    const maxAgeMs = 48 * 60 * 60 * 1000;
+    const from = new Date(Date.now() - maxAgeMs).toISOString().slice(0, 10);
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}&date=${from}&sort=published_desc`;
     const resp = await fetch(url);
     
     if (!resp.ok) {
@@ -1026,14 +1061,29 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
     articles = await fetchArticlesEverything(queryParts, pageSize, selectedSources);
   }
 
-  const normalized = articles.map((a) => ({
-    title: a.title || "",
-    description: a.description || "",
-    url: a.url || "",
-    source: (a.source && a.source.name) || "",
-    publishedAt: a.publishedAt || "",
-    urlToImage: a.urlToImage || "",
-  }));
+  // Final date filter: ensure all articles are within 48 hours
+  const maxAgeMs = 48 * 60 * 60 * 1000;
+  const now = Date.now();
+  
+  const normalized = articles
+    .map((a) => {
+      // Check if article is too old
+      if (a.publishedAt) {
+        const publishedAt = new Date(a.publishedAt).getTime();
+        if (isNaN(publishedAt) || (now - publishedAt) > maxAgeMs) {
+          return null; // Filter out old articles
+        }
+      }
+      return {
+        title: a.title || "",
+        description: a.description || "",
+        url: a.url || "",
+        source: (a.source && a.source.name) || "",
+        publishedAt: a.publishedAt || "",
+        urlToImage: a.urlToImage || "",
+      };
+    })
+    .filter(article => article !== null); // Remove filtered articles
 
   const result = { articles: normalized };
   
