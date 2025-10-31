@@ -77,9 +77,8 @@ final class NewsVM: ObservableObject {
     @Published var showingNewsSourcesSettings: Bool = false
     
     // Scheduled summaries
-    @Published var scheduledSummaries: [ScheduledSummary] = [] {
-        didSet { saveSettings() }
-    }
+    // scheduledSummaries should NOT trigger saveSettings - it's managed separately via /api/scheduled-summaries
+    @Published var scheduledSummaries: [ScheduledSummary] = []
     @Published var showingScheduledSummariesSettings: Bool = false
     
     // Results
@@ -371,7 +370,7 @@ final class NewsVM: ObservableObject {
                 lastFetchedTopics: Array(lastFetchedTopics),
                 selectedTopics: Array(selectedTopics),
                 selectedNewsSources: Array(selectedNewsSources),
-                scheduledSummaries: scheduledSummaries
+                scheduledSummaries: [] // Don't save scheduledSummaries here - it's managed separately via /api/scheduled-summaries
             )
             
             _ = try await ApiClient.updateUserPreferences(preferences)
