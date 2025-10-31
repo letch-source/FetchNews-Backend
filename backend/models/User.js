@@ -48,7 +48,15 @@ const userSchema = new mongoose.Schema({
       type: Date,
       default: Date.now
     },
-    audioUrl: String
+    audioUrl: String,
+    sources: [{
+      id: String,
+      title: String,
+      summary: String,
+      source: String,
+      url: String,
+      topic: String
+    }]
   }],
   resetPasswordToken: {
     type: String,
