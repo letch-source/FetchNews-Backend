@@ -4,6 +4,9 @@ const { authenticateToken } = require('../middleware/auth');
 const User = require('../models/User');
 const mongoose = require('mongoose');
 const fallbackAuth = require('../utils/fallbackAuth');
+const OpenAI = require('openai');
+const fs = require('fs').promises;
+const path = require('path');
 
 const router = express.Router();
 
@@ -298,6 +301,8 @@ async function executeScheduledSummary(user, summary) {
     const wordCount = summary.wordCount || parseInt(preferences.length || '200', 10);
     const goodNewsOnly = preferences.upliftingNewsOnly || false;
     const location = user.location || '';
+    const selectedVoice = user.selectedVoice || 'alloy';
+    const playbackRate = user.playbackRate || 1.0;
     
     // Combine regular topics and custom topics
     const allTopics = [...(summary.topics || []), ...(summary.customTopics || [])];
@@ -395,6 +400,76 @@ async function executeScheduledSummary(user, summary) {
       lengthCategory = 'medium';
     }
     
+    // Generate audio for the summary
+    let audioUrl = null;
+    try {
+      const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+      if (OPENAI_API_KEY) {
+        // Clean and prepare text for TTS
+        const cleaned = String(combinedText)
+          .replace(/[\n\r\u2018\u2019\u201C\u201D]/g, (match) => {
+            switch(match) {
+              case '\n': case '\r': return ' ';
+              case '\u2018': case '\u2019': return "'";
+              case '\u201C': case '\u201D': return '"';
+              default: return match;
+            }
+          })
+          .replace(/\s+/g, " ")
+          .trim();
+        
+        const maxLength = 4090;
+        const finalText = cleaned.length > maxLength ? cleaned.slice(0, maxLength - 3) + "..." : cleaned;
+        
+        // Generate TTS
+        const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+        const normalizedVoice = String(selectedVoice || "alloy").toLowerCase();
+        const availableVoices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+        const voiceToUse = availableVoices.includes(normalizedVoice) ? normalizedVoice : "alloy";
+        
+        let speech;
+        const attempts = [
+          { model: "tts-1", voice: voiceToUse },
+          { model: "tts-1-hd", voice: voiceToUse },
+        ];
+        
+        for (const { model, voice } of attempts) {
+          try {
+            speech = await openai.audio.speech.create({
+              model,
+              voice,
+              input: finalText,
+              format: "mp3",
+            });
+            if (speech) break;
+          } catch (e) {
+            console.error(`[SCHEDULER] TTS attempt failed with ${model}/${voice}:`, e.message);
+          }
+        }
+        
+        if (speech) {
+          // Save audio file
+          const buffer = Buffer.from(await speech.arrayBuffer());
+          const fileBase = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
+          const mediaDir = path.join(__dirname, '../media');
+          const filePath = path.join(mediaDir, fileBase);
+          
+          // Ensure media directory exists
+          await fs.mkdir(mediaDir, { recursive: true });
+          await fs.writeFile(filePath, buffer);
+          
+          // Create URL (relative to backend base URL)
+          const baseUrl = process.env.BASE_URL || 'https://fetchnews-backend.onrender.com';
+          audioUrl = `${baseUrl}/media/${fileBase}`;
+          
+          console.log(`[SCHEDULER] Audio generated for scheduled fetch "${title}"`);
+        }
+      }
+    } catch (audioError) {
+      console.error(`[SCHEDULER] Failed to generate audio for scheduled fetch:`, audioError);
+      // Continue without audio - summary is still valuable
+    }
+    
     // Save to user's summary history
     const summaryData = {
       id: `scheduled-${Date.now()}`,
@@ -402,7 +477,7 @@ async function executeScheduledSummary(user, summary) {
       summary: combinedText,
       topics: allTopics,
       length: lengthCategory,
-      audioUrl: null,
+      audioUrl: audioUrl,
       sources: items.slice(0, 10) // Keep top 10 sources
     };
     
