@@ -272,14 +272,38 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (timezone && user.preferences) {
       user.markModified('preferences');
     }
-    await saveUserWithRetry(user);
     
-    // Return the scheduled summary directly (frontend expects this format)
-    res.json(existingSummary);
-    
-    // Log timezone for debugging
-    const savedTimezone = user.preferences?.timezone || 'not set';
-    console.log(`[SCHEDULED_SUMMARY] Updated scheduled fetch for ${user.email}, timezone saved: ${savedTimezone}`);
+    // Refresh user from database before saving to ensure we have latest version
+    const freshUser = await User.findById(user.id);
+    if (freshUser) {
+      // Copy over preferences timezone if we updated it
+      if (timezone && freshUser.preferences) {
+        freshUser.preferences.timezone = timezone;
+        freshUser.markModified('preferences');
+      } else if (timezone && !freshUser.preferences) {
+        freshUser.preferences = { timezone: timezone };
+        freshUser.markModified('preferences');
+      }
+      
+      // Copy over scheduled summaries
+      freshUser.scheduledSummaries = user.scheduledSummaries;
+      freshUser.markModified('scheduledSummaries');
+      
+      await saveUserWithRetry(freshUser);
+      
+      // Return the scheduled summary directly (frontend expects this format)
+      res.json(existingSummary);
+      
+      // Log timezone for debugging
+      const savedTimezone = freshUser.preferences?.timezone || 'not set';
+      console.log(`[SCHEDULED_SUMMARY] Updated scheduled fetch for ${user.email}, timezone saved: ${savedTimezone}`);
+    } else {
+      // Fallback to original user if freshUser not found
+      await saveUserWithRetry(user);
+      res.json(existingSummary);
+      const savedTimezone = user.preferences?.timezone || 'not set';
+      console.log(`[SCHEDULED_SUMMARY] Updated scheduled fetch for ${user.email}, timezone saved: ${savedTimezone}`);
+    }
   } catch (error) {
     console.error('Update scheduled fetch error:', error);
     res.status(500).json({ error: 'Failed to update scheduled fetch' });
