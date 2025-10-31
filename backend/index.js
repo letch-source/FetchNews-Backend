@@ -431,7 +431,12 @@ app.post("/api/auth/timezone", authenticateToken, async (req, res) => {
     userDoc.preferences.timezone = timezone;
     userDoc.updatedAt = new Date();
     
+    // Mark preferences as modified so Mongoose saves it
+    userDoc.markModified('preferences');
+    
     await userDoc.save();
+    
+    console.log(`[AUTH] Updated timezone for ${user.email} to ${timezone}`);
     
     res.json({ 
       message: 'Timezone updated successfully',
@@ -2145,22 +2150,26 @@ async function checkScheduledSummaries() {
           continue;
         }
         
-        // Get user's timezone from preferences (try multiple locations)
-        // Check user.location, user.preferences.timezone, or default to UTC
+        // Get user's timezone from preferences
+        // IMPORTANT: User preferences might be nested, so check carefully
         let userTimezone = 'UTC';
-        if (user.location && typeof user.location === 'string') {
-          // Try to extract timezone from location string if it contains timezone info
-          // For now, check preferences first
-        }
-        if (user.preferences && user.preferences.timezone) {
-          userTimezone = user.preferences.timezone;
-        } else if (user.timezone) {
-          userTimezone = user.timezone;
+        
+        // Try to get timezone from preferences object
+        if (user.preferences) {
+          // Check if preferences is a Mongoose document or plain object
+          const prefs = user.preferences.toObject ? user.preferences.toObject() : user.preferences;
+          if (prefs && typeof prefs === 'object' && prefs.timezone) {
+            userTimezone = prefs.timezone;
+          } else if (user.preferences.timezone) {
+            userTimezone = user.preferences.timezone;
+          }
         }
         
-        // Log timezone for debugging
+        // Log timezone source for debugging
         if (checkedCount === 1) {
-          console.log(`[SCHEDULER] User ${user.email} timezone: ${userTimezone} (from preferences: ${user.preferences?.timezone || 'not set'})`);
+          const prefsTimezone = user.preferences?.timezone || user.preferences?.toObject?.()?.timezone || 'not found in preferences';
+          console.log(`[SCHEDULER] User ${user.email} timezone: ${userTimezone} (preferences.timezone: ${prefsTimezone})`);
+          console.log(`[SCHEDULER] User preferences object: ${JSON.stringify(user.preferences ? Object.keys(user.preferences) : 'null')}`);
         }
         
         // Convert server's current time to user's timezone for comparison
@@ -2216,6 +2225,11 @@ async function checkScheduledSummaries() {
         }
         
         console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (user time=${userTime}, server time=${currentTime}), user timezone=${userTimezone}, user day=${userDay}, timeDiff=${timeDifference}min, shouldExecute=${shouldExecute && !alreadyRanToday}`);
+        
+        // If timezone is UTC and time difference is large, log a warning
+        if (userTimezone === 'UTC' && timeDifference > 60) {
+          console.log(`[SCHEDULER] WARNING: User ${user.email} timezone is UTC but scheduled time (${summary.time}) doesn't match current UTC time (${userTime}). User may need to update their scheduled fetch to set timezone.`);
+        }
         
         if (shouldExecute && !alreadyRanToday) {
           console.log(`[SCHEDULER] Executing scheduled fetch "${summary.name}" for user ${user.email} on ${currentDay}`);

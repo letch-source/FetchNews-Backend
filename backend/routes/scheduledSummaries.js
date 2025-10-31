@@ -259,14 +259,18 @@ router.put('/:id', authenticateToken, async (req, res) => {
     user.markModified('scheduledSummaries');
     
     // Save user to database with retry logic for version conflicts
+    // Ensure preferences object exists and is marked as modified if we updated timezone
+    if (timezone && user.preferences) {
+      user.markModified('preferences');
+    }
     await saveUserWithRetry(user);
     
     // Return the scheduled summary directly (frontend expects this format)
     res.json(existingSummary);
     
     // Log timezone for debugging
-    const userTimezone = user.preferences?.timezone || 'not set';
-    console.log(`[SCHEDULED_SUMMARY] Updated scheduled fetch for ${user.email}, timezone: ${userTimezone}`);
+    const savedTimezone = user.preferences?.timezone || 'not set';
+    console.log(`[SCHEDULED_SUMMARY] Updated scheduled fetch for ${user.email}, timezone saved: ${savedTimezone}`);
   } catch (error) {
     console.error('Update scheduled fetch error:', error);
     res.status(500).json({ error: 'Failed to update scheduled fetch' });
