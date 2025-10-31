@@ -330,22 +330,32 @@ function extractTrendingTopics(articles) {
 // Trending topics endpoint
 app.get("/api/trending-topics", async (req, res) => {
   try {
-    // Prefer admin override if present
+    // Only use admin override - no auto-generated topics
     const overridePath = path.join(__dirname, "./server_data/trending_override.json");
-    let usingOverride = false;
     let overrideData = null;
+    
     try {
+      // Ensure directory exists
+      const serverDataDir = path.dirname(overridePath);
+      if (!fs.existsSync(serverDataDir)) {
+        fs.mkdirSync(serverDataDir, { recursive: true });
+      }
+      
       if (fs.existsSync(overridePath)) {
         const raw = fs.readFileSync(overridePath, 'utf8');
         const data = JSON.parse(raw);
         if (data && Array.isArray(data.topics) && data.topics.length > 0) {
-          usingOverride = true;
           overrideData = data;
+          console.log(`[TRENDING] Loaded ${data.topics.length} trending topics from admin override`);
         }
+      } else {
+        console.log('[TRENDING] No admin override file found - trending topics will be empty until admin sets them');
       }
-    } catch {}
+    } catch (error) {
+      console.error('[TRENDING] Error reading override file:', error);
+    }
 
-    if (usingOverride) {
+    if (overrideData) {
       return res.json({
         trendingTopics: overrideData.topics,
         lastUpdated: overrideData.lastUpdated || null,
@@ -354,11 +364,11 @@ app.get("/api/trending-topics", async (req, res) => {
       });
     }
 
-    // Fallback to cached trending topics
+    // No override set - return empty array
     res.json({
-      trendingTopics: trendingTopicsCache,
-      lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null,
-      source: "auto"
+      trendingTopics: [],
+      lastUpdated: null,
+      source: "none"
     });
   } catch (error) {
     console.error('Get trending topics error:', error);
@@ -2426,6 +2436,52 @@ let trendingTopicsCache = [];
 let trendingTopicsWithSources = {}; // Store topics with their source articles
 let lastTrendingUpdate = null;
 
+// File path for persistent trending topics cache
+const TRENDING_CACHE_PATH = path.join(__dirname, './server_data/trending_cache.json');
+
+// Load trending topics from file on startup
+function loadTrendingTopicsFromFile() {
+  try {
+    if (fs.existsSync(TRENDING_CACHE_PATH)) {
+      const raw = fs.readFileSync(TRENDING_CACHE_PATH, 'utf8');
+      const data = JSON.parse(raw);
+      if (data && Array.isArray(data.topics) && data.topics.length > 0) {
+        trendingTopicsCache = data.topics;
+        trendingTopicsWithSources = data.topicsWithSources || {};
+        if (data.lastUpdated) {
+          lastTrendingUpdate = new Date(data.lastUpdated);
+        }
+        console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics from cache`);
+      }
+    }
+  } catch (error) {
+    console.error('[TRENDING] Error loading trending topics cache:', error);
+  }
+}
+
+// Save trending topics to file
+function saveTrendingTopicsToFile() {
+  try {
+    // Ensure server_data directory exists
+    const serverDataDir = path.join(__dirname, './server_data');
+    if (!fs.existsSync(serverDataDir)) {
+      fs.mkdirSync(serverDataDir, { recursive: true });
+    }
+    
+    const data = {
+      topics: trendingTopicsCache,
+      topicsWithSources: trendingTopicsWithSources,
+      lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null,
+      savedAt: new Date().toISOString()
+    };
+    
+    fs.writeFileSync(TRENDING_CACHE_PATH, JSON.stringify(data, null, 2), 'utf8');
+    console.log(`[TRENDING] Saved ${trendingTopicsCache.length} trending topics to cache`);
+  } catch (error) {
+    console.error('[TRENDING] Error saving trending topics cache:', error);
+  }
+}
+
 // Extract trending topics using ChatGPT analysis of news articles
 async function extractTrendingTopicsWithChatGPT(articles) {
   try {
@@ -2611,6 +2667,8 @@ async function updateTrendingTopics() {
       trendingTopicsWithSources = result.topicsWithSources;
       lastTrendingUpdate = new Date();
       console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${result.topics.join(', ')}`);
+      // Save to file for persistence
+      saveTrendingTopicsToFile();
     } else {
       console.log('[TRENDING] ChatGPT analysis failed, using fallback approach');
       await updateTrendingTopicsFallback();
@@ -2646,10 +2704,17 @@ async function updateTrendingTopicsFallback() {
     lastTrendingUpdate = new Date();
     
     console.log(`[TRENDING] Updated trending topics via fallback (${randomCategory}): ${trendingTopics.join(', ')}`);
+    // Save to file for persistence
+    saveTrendingTopicsToFile();
   } catch (error) {
     console.error('[TRENDING] Fallback method failed:', error);
   }
 }
+
+// AUTO-GENERATED TRENDING TOPICS DISABLED
+// Only admin override from analytics page is used
+// Auto-generated cache loading disabled - trending topics are managed via admin override only
+// loadTrendingTopicsFromFile(); // DISABLED - only use admin override
 
 // AUTO-UPDATE DISABLED: Trending topics will only update manually via /api/trending-topics/update endpoint
 // Run immediately on startup

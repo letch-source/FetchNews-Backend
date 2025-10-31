@@ -10,12 +10,20 @@ const OVERRIDE_FILE = path.join(__dirname, '../server_data/trending_override.jso
 
 function readOverride() {
   try {
-    if (!fs.existsSync(OVERRIDE_FILE)) return null;
+    if (!fs.existsSync(OVERRIDE_FILE)) {
+      console.log('[TRENDING ADMIN] No override file found');
+      return null;
+    }
     const raw = fs.readFileSync(OVERRIDE_FILE, 'utf8');
     const data = JSON.parse(raw);
-    if (!data || !Array.isArray(data.topics)) return null;
+    if (!data || !Array.isArray(data.topics)) {
+      console.log('[TRENDING ADMIN] Override file exists but invalid format');
+      return null;
+    }
+    console.log(`[TRENDING ADMIN] Loaded ${data.topics.length} trending topics from override file`);
     return data;
-  } catch {
+  } catch (error) {
+    console.error('[TRENDING ADMIN] Error reading override file:', error);
     return null;
   }
 }
@@ -24,11 +32,13 @@ function writeOverride(payload) {
   try {
     const dir = path.dirname(OVERRIDE_FILE);
     if (!fs.existsSync(dir)) {
-      try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+      fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(OVERRIDE_FILE, JSON.stringify(payload, null, 2));
+    fs.writeFileSync(OVERRIDE_FILE, JSON.stringify(payload, null, 2), 'utf8');
+    console.log(`[TRENDING ADMIN] Saved ${payload.topics.length} trending topics to override file`);
     return true;
-  } catch {
+  } catch (error) {
+    console.error('[TRENDING ADMIN] Error writing override file:', error);
     return false;
   }
 }
