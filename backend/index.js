@@ -86,6 +86,26 @@ function ensureCompleteSentence(text) {
   return text + '.';
 }
 
+// Helper function to determine time-based fetch name
+// Returns "Morning Fetch", "Afternoon Fetch", or "Evening Fetch" based on current time
+function getTimeBasedFetchName() {
+  const now = new Date();
+  const hour = now.getHours();
+  
+  // Morning: 5:00 AM - 11:59 AM (5-11)
+  if (hour >= 5 && hour < 12) {
+    return "Morning Fetch";
+  }
+  // Afternoon: 12:00 PM - 4:59 PM (12-16)
+  else if (hour >= 12 && hour < 17) {
+    return "Afternoon Fetch";
+  }
+  // Evening: 5:00 PM - 4:59 AM (17-23 or 0-4)
+  else {
+    return "Evening Fetch";
+  }
+}
+
 // Authentication routes
 app.use("/api/auth", authRoutes);
 
@@ -1720,7 +1740,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     if (topics.length === 1) {
       title = `${topics[0].charAt(0).toUpperCase() + topics[0].slice(1)} Summary`;
     } else if (topics.length > 1) {
-      title = "Mixed Summary";
+      title = getTimeBasedFetchName();
     }
 
     return res.json({
@@ -1912,7 +1932,7 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
         if (topics.length === 1) {
           title = `${topics[0].charAt(0).toUpperCase() + topics[0].slice(1)} Summary`;
         } else if (topics.length > 1) {
-          title = "Mixed Summary";
+          title = getTimeBasedFetchName();
         }
 
         return {

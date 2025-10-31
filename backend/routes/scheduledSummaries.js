@@ -10,6 +10,26 @@ const path = require('path');
 
 const router = express.Router();
 
+// Helper function to determine time-based fetch name
+// Returns "Morning Fetch", "Afternoon Fetch", or "Evening Fetch" based on current time
+function getTimeBasedFetchName() {
+  const now = new Date();
+  const hour = now.getHours();
+  
+  // Morning: 5:00 AM - 11:59 AM (5-11)
+  if (hour >= 5 && hour < 12) {
+    return "Morning Fetch";
+  }
+  // Afternoon: 12:00 PM - 4:59 PM (12-16)
+  else if (hour >= 12 && hour < 17) {
+    return "Afternoon Fetch";
+  }
+  // Evening: 5:00 PM - 4:59 AM (17-23 or 0-4)
+  else {
+    return "Evening Fetch";
+  }
+}
+
 // Helper function to save user with retry logic for version conflicts
 async function saveUserWithRetry(user, retries = 3) {
   // Preserve the scheduledSummaries we want to save
@@ -389,7 +409,12 @@ async function executeScheduledSummary(user, summary) {
     if (allTopics.length === 1) {
       title = `${allTopics[0].charAt(0).toUpperCase() + allTopics[0].slice(1)} Summary`;
     } else if (allTopics.length > 1) {
-      title = "Mixed Summary";
+      // Check if this is a Daily Fetch scheduled summary
+      if (summary.name === "Daily Fetch") {
+        title = "Daily Fetch";
+      } else {
+        title = getTimeBasedFetchName();
+      }
     }
     
     // Determine length category
