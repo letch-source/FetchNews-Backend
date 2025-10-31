@@ -2253,57 +2253,91 @@ async function checkScheduledSummaries() {
   }
 }
 
-// Schedule checks at :00, :10, :20, :30, :40, and :50 minutes past each hour
+// Schedule checks every 10 minutes starting at :00
+let schedulerTimeout = null;
+let isSchedulerRunning = false;
+let schedulerStarted = false;
+
 function scheduleNextCheck() {
+  // Prevent duplicate scheduler instances
+  if (schedulerTimeout) {
+    console.log(`[SCHEDULER] Scheduler already scheduled, skipping duplicate call`);
+    return;
+  }
+  
+  // Prevent scheduling if a check is currently running
+  if (isSchedulerRunning) {
+    console.log(`[SCHEDULER] Check already running, will reschedule after completion`);
+    return;
+  }
+  
   const now = new Date();
   const currentMinute = now.getMinutes();
   const currentSecond = now.getSeconds();
+  const currentMillisecond = now.getMilliseconds();
   
-  // Target minutes: 0, 10, 20, 30, 40, 50
-  const targetMinutes = [0, 10, 20, 30, 40, 50];
+  // Find next 10-minute mark (:00, :10, :20, :30, :40, :50)
+  let nextMinute = Math.ceil((currentMinute + 1) / 10) * 10;
   
-  // Find next target minute
-  let nextMinute = null;
-  for (const target of targetMinutes) {
-    if (target > currentMinute || (target === currentMinute && currentSecond === 0)) {
-      nextMinute = target;
-      break;
-    }
-  }
-  
-  // If no target found in this hour, use the first target of next hour
-  if (nextMinute === null) {
-    nextMinute = targetMinutes[0];
+  // Wrap around at 60 minutes
+  if (nextMinute >= 60) {
+    nextMinute = 0;
   }
   
   // Calculate milliseconds until next check
   let msUntilNext;
-  if (nextMinute > currentMinute) {
-    // Next check is in the same hour
-    const minutesUntilNext = nextMinute - currentMinute;
-    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
-    msUntilNext = secondsUntilNext * 1000;
-  } else if (nextMinute === currentMinute && currentSecond === 0) {
-    // We're exactly at a target minute, run immediately
-    msUntilNext = 0;
+  if (nextMinute === 0 && currentMinute >= 50) {
+    // Next check is :00 of next hour
+    const minutesRemaining = 60 - currentMinute;
+    const secondsRemaining = minutesRemaining * 60 - currentSecond;
+    msUntilNext = (secondsRemaining * 1000) - currentMillisecond;
+  } else if (nextMinute > currentMinute) {
+    // Next check is in same hour
+    const minutesRemaining = nextMinute - currentMinute;
+    const secondsRemaining = minutesRemaining * 60 - currentSecond;
+    msUntilNext = (secondsRemaining * 1000) - currentMillisecond;
   } else {
-    // Next check is in the next hour
-    const minutesUntilNext = 60 - currentMinute + nextMinute;
-    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
-    msUntilNext = secondsUntilNext * 1000;
+    // Shouldn't happen, but fallback: exactly 10 minutes
+    msUntilNext = 10 * 60 * 1000;
   }
   
-  console.log(`[SCHEDULER] Next check scheduled in ${Math.floor(msUntilNext / 1000 / 60)} minutes ${Math.floor((msUntilNext / 1000) % 60)} seconds (at :${String(nextMinute).padStart(2, '0')})`);
+  // Ensure we don't schedule for less than 30 seconds (safety check)
+  if (msUntilNext < 30000) {
+    msUntilNext = 10 * 60 * 1000;
+  }
   
-  setTimeout(() => {
-    checkScheduledSummaries();
-    // Schedule the next check after this one completes
-    scheduleNextCheck();
+  const nextCheckTime = new Date(now.getTime() + msUntilNext);
+  const nextCheckMinute = nextCheckTime.getMinutes();
+  
+  console.log(`[SCHEDULER] Next check scheduled in ${Math.floor(msUntilNext / 1000 / 60)} minutes ${Math.floor((msUntilNext / 1000) % 60)} seconds (at :${String(nextCheckMinute).padStart(2, '0')}, ${nextCheckTime.toISOString()})`);
+  
+  schedulerTimeout = setTimeout(() => {
+    schedulerTimeout = null; // Clear timeout reference immediately
+    isSchedulerRunning = true;
+    checkScheduledSummaries().finally(() => {
+      isSchedulerRunning = false;
+      // Schedule next check - always exactly 10 minutes (600000 ms) after completion
+      // This ensures consistent 10-minute intervals and naturally aligns to :00, :10, :20, etc.
+      // Only schedule if no other timeout is already set (prevents duplicates)
+      if (!schedulerTimeout) {
+        schedulerTimeout = setTimeout(() => {
+          schedulerTimeout = null; // Clear when it runs
+          scheduleNextCheck();
+        }, 10 * 60 * 1000); // Exactly 10 minutes
+        
+        const nextCheckTime = new Date(Date.now() + 10 * 60 * 1000);
+        console.log(`[SCHEDULER] Next check will be in 10 minutes (at ${nextCheckTime.toISOString()})`);
+      }
+    });
   }, msUntilNext);
+  
+  schedulerStarted = true;
 }
 
-// Start the scheduling
-scheduleNextCheck();
+// Start the scheduling (only once on server startup)
+if (!schedulerStarted) {
+  scheduleNextCheck();
+}
 
 // --- Trending Topics Updater ---
 // Update trending topics every hour
