@@ -222,9 +222,9 @@ struct PersonalizeView: View {
             return
         }
         
-        // Use current topics, or keep existing topics if none selected
-        let topicsToSave = !scheduledTopics.isEmpty ? Array(scheduledTopics) : summary.topics
-        let customTopicsToSave = !scheduledCustomTopics.isEmpty ? Array(scheduledCustomTopics) : summary.customTopics
+        // Always use current topics (don't fall back to existing - save what user selected)
+        let topicsToSave = Array(scheduledTopics)
+        let customTopicsToSave = Array(scheduledCustomTopics)
         
         let summaryToSave = ScheduledSummary(
             id: summary.id, // Use the existing ID (backend ensures it exists)
