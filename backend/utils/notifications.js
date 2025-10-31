@@ -4,8 +4,6 @@
 // 2. Bundle ID configuration
 // 3. Proper environment setup (sandbox vs production)
 
-const axios = require('axios');
-
 // Send push notification via APNs
 // This is a placeholder - actual implementation requires APNs credentials
 async function sendPushNotification(deviceToken, title, body, data = {}) {
