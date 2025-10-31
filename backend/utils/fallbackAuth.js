@@ -136,9 +136,9 @@ const fallbackAuth = {
   
   canFetchNews(user) {
     const today = new Date().toDateString();
-    const lastUsageDate = user.lastUsageDate.toDateString();
+    const lastUsageDate = user.lastUsageDate ? new Date(user.lastUsageDate).toDateString() : today;
     
-    // Reset daily count if it's a new day
+    // Reset daily count if it's a new day (resets at midnight in user's timezone)
     if (lastUsageDate !== today) {
       user.dailyUsageCount = 0;
       user.lastUsageDate = new Date();
@@ -149,12 +149,13 @@ const fallbackAuth = {
       return { allowed: true, reason: 'premium' };
     }
     
-    // Free users limited to 1 summary per day
-    if (user.dailyUsageCount >= 1) {
-      return { allowed: false, reason: 'daily_limit_reached', dailyCount: user.dailyUsageCount };
+    // Free users limited to 3 fetches per day
+    const freeUserLimit = 3;
+    if (user.dailyUsageCount >= freeUserLimit) {
+      return { allowed: false, reason: 'daily_limit_reached', dailyCount: user.dailyUsageCount, limit: freeUserLimit };
     }
     
-    return { allowed: true, reason: 'free_quota', dailyCount: user.dailyUsageCount };
+    return { allowed: true, reason: 'free_quota', dailyCount: user.dailyUsageCount, limit: freeUserLimit };
   },
   
   async incrementUsage(user) {

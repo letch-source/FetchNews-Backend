@@ -129,13 +129,17 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
 
 // Check if user can fetch news
 userSchema.methods.canFetchNews = function() {
-  const today = new Date().toDateString();
-  const lastUsageDate = this.lastUsageDate.toDateString();
+  // Get today's date string (uses local timezone - resets at midnight for the server's timezone)
+  // Note: If server is in UTC, this resets at UTC midnight. For user timezone, we'd need timezone info.
+  const now = new Date();
+  const today = now.toDateString();
+  const lastUsageDate = this.lastUsageDate ? new Date(this.lastUsageDate).toDateString() : today;
   
-  // Reset daily count if it's a new day (save will happen in incrementUsage if needed)
+  // Reset daily count if it's a new day (resets at midnight in server's timezone)
+  // The toDateString() comparison ensures reset happens when date changes
   if (lastUsageDate !== today) {
     this.dailyUsageCount = 0;
-    this.lastUsageDate = new Date();
+    this.lastUsageDate = now;
     // Don't await here - let incrementUsage handle the save
     this.save().catch(err => console.error('[USER] Error resetting daily count:', err));
   }
@@ -145,12 +149,13 @@ userSchema.methods.canFetchNews = function() {
     return { allowed: true, reason: 'premium' };
   }
   
-  // Free users limited to 1 summary per day
-  if (this.dailyUsageCount >= 1) {
-    return { allowed: false, reason: 'daily_limit_reached', dailyCount: this.dailyUsageCount };
+  // Free users limited to 3 fetches per day
+  const freeUserLimit = 3;
+  if (this.dailyUsageCount >= freeUserLimit) {
+    return { allowed: false, reason: 'daily_limit_reached', dailyCount: this.dailyUsageCount, limit: freeUserLimit };
   }
   
-  return { allowed: true, reason: 'free_quota', dailyCount: this.dailyUsageCount };
+  return { allowed: true, reason: 'free_quota', dailyCount: this.dailyUsageCount, limit: freeUserLimit };
 };
 
 // Increment usage count
