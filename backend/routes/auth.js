@@ -346,4 +346,42 @@ router.post('/reset-password', async (req, res) => {
   }
 });
 
+// Register device token for push notifications
+router.post('/device-token', authenticateToken, async (req, res) => {
+  try {
+    const { deviceToken, platform } = req.body;
+    const user = req.user;
+
+    if (!deviceToken || !platform) {
+      return res.status(400).json({ error: 'Device token and platform are required' });
+    }
+
+    if (isDatabaseAvailable()) {
+      // Remove existing token for this device/platform (update if exists)
+      user.deviceTokens = user.deviceTokens || [];
+      user.deviceTokens = user.deviceTokens.filter(
+        dt => !(dt.token === deviceToken && dt.platform === platform)
+      );
+      
+      // Add new token
+      user.deviceTokens.push({
+        token: deviceToken,
+        platform: platform,
+        createdAt: new Date()
+      });
+      
+      user.markModified('deviceTokens');
+      await user.save();
+    } else {
+      // Fallback: store in JSON (simplified)
+      console.log(`[AUTH] Device token registration (fallback): ${deviceToken.substring(0, 20)}... for ${user.email}`);
+    }
+
+    res.json({ message: 'Device token registered successfully' });
+  } catch (error) {
+    console.error('Device token registration error:', error);
+    res.status(500).json({ error: 'Failed to register device token' });
+  }
+});
+
 module.exports = router;

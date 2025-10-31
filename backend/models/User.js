@@ -91,6 +91,14 @@ const userSchema = new mongoose.Schema({
     type: Object,
     default: {}
   },
+  deviceTokens: {
+    type: [{
+      token: String,
+      platform: String,
+      createdAt: { type: Date, default: Date.now }
+    }],
+    default: []
+  },
   createdAt: {
     type: Date,
     default: Date.now
