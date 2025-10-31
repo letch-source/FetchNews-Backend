@@ -270,9 +270,8 @@ userSchema.methods.updatePreferences = async function(preferences) {
   if (preferences.selectedNewsSources !== undefined) {
     this.selectedNewsSources = preferences.selectedNewsSources;
   }
-  if (preferences.scheduledSummaries !== undefined) {
-    this.scheduledSummaries = preferences.scheduledSummaries;
-  }
+  // Do NOT update scheduledSummaries via updatePreferences - it's managed separately via /api/scheduled-summaries
+  // This prevents version conflicts when both routes try to save at the same time
   
   // Update length in preferences object
   if (!this.preferences) {
@@ -317,10 +316,8 @@ userSchema.methods.updatePreferences = async function(preferences) {
           if (preferences.selectedNewsSources !== undefined) {
             freshUser.selectedNewsSources = preferences.selectedNewsSources;
           }
-          // scheduledSummaries is a direct field on User, not under preferences
-          if (preferences.scheduledSummaries !== undefined) {
-            freshUser.scheduledSummaries = preferences.scheduledSummaries;
-          }
+          // Do NOT update scheduledSummaries via updatePreferences - it's managed separately via /api/scheduled-summaries
+          // This prevents version conflicts when both routes try to save at the same time
           
           // Save the fresh user and copy to this instance
           await freshUser.save();
