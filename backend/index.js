@@ -1120,8 +1120,22 @@ function addIntroAndOutro(summary, topics, goodNewsOnly = false, user = null) {
     timeGreeting = "Good evening";
   }
   
-  // Format topics for the intro
-  const topicsText = Array.isArray(topics) ? topics.join(", ") : topics;
+  // Format topics for the intro - use "and" before the last topic if multiple
+  let topicsText;
+  if (Array.isArray(topics) && topics.length > 0) {
+    if (topics.length === 1) {
+      topicsText = topics[0];
+    } else if (topics.length === 2) {
+      topicsText = `${topics[0]} and ${topics[1]}`;
+    } else {
+      // More than 2 topics: "Topic1, Topic2, and Topic3"
+      const lastTopic = topics[topics.length - 1];
+      const otherTopics = topics.slice(0, -1).join(", ");
+      topicsText = `${otherTopics}, and ${lastTopic}`;
+    }
+  } else {
+    topicsText = String(topics || "");
+  }
   const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
   
   // Add intro and outro
