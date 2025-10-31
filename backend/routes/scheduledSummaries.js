@@ -1,6 +1,6 @@
 const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
-const { fetchArticlesForTopic, summarizeArticles, addIntroAndOutro, filterRelevantArticles, isUpliftingNews } = require('../index');
+// Note: Functions from index.js are imported lazily inside executeScheduledSummary to avoid circular dependency
 const User = require('../models/User');
 const mongoose = require('mongoose');
 const fallbackAuth = require('../utils/fallbackAuth');
@@ -288,6 +288,9 @@ router.post('/:id/execute', authenticateToken, async (req, res) => {
 // Export function for use by scheduler
 async function executeScheduledSummary(user, summary) {
   try {
+    // Lazy require to avoid circular dependency with index.js
+    const { fetchArticlesForTopic, summarizeArticles, addIntroAndOutro, filterRelevantArticles, isUpliftingNews } = require('../index');
+    
     console.log(`[SCHEDULER] Executing scheduled fetch "${summary.name}" for user ${user.email}`);
     
     // Get user preferences
