@@ -5,6 +5,26 @@ const fallbackAuth = require('../utils/fallbackAuth');
 
 const router = express.Router();
 
+// Helper function to determine time-based fetch name from timestamp
+function getTimeBasedFetchName(timestamp) {
+  if (!timestamp) return null;
+  const date = new Date(timestamp);
+  const hour = date.getHours();
+  
+  // Morning: 5:00 AM - 11:59 AM (5-11)
+  if (hour >= 5 && hour < 12) {
+    return "Morning Fetch";
+  }
+  // Afternoon: 12:00 PM - 4:59 PM (12-16)
+  else if (hour >= 12 && hour < 17) {
+    return "Afternoon Fetch";
+  }
+  // Evening: 5:00 PM - 4:59 AM (17-23 or 0-4)
+  else {
+    return "Evening Fetch";
+  }
+}
+
 // Get user's summary history
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -21,10 +41,25 @@ router.get('/', authenticateToken, async (req, res) => {
     // Ensure sources are properly serialized from Mongoose subdocuments
     const formattedHistory = summaryHistory.map(entry => {
       const entryObj = entry.toObject ? entry.toObject() : entry;
+      const timestamp = entry.timestamp instanceof Date ? entry.timestamp : new Date(entry.timestamp);
+      const timestampISO = timestamp.toISOString();
+      
       const formatted = {
         ...entryObj,
-        timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp
+        timestamp: timestampISO
       };
+      
+      // Fix time-based titles: regenerate based on actual timestamp to ensure correctness
+      // Check if title is a time-based fetch name (Morning/Afternoon/Evening Fetch)
+      if (entryObj.title && typeof entryObj.title === 'string') {
+        const titleMatch = entryObj.title.match(/^(Morning|Afternoon|Evening) Fetch$/);
+        if (titleMatch && timestamp) {
+          const correctTitle = getTimeBasedFetchName(timestamp);
+          if (correctTitle && correctTitle !== entryObj.title) {
+            formatted.title = correctTitle;
+          }
+        }
+      }
       
       // Ensure sources array is properly serialized (Mongoose subdocuments need explicit serialization)
       if (entryObj.sources && Array.isArray(entryObj.sources)) {

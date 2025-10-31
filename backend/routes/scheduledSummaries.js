@@ -11,10 +11,11 @@ const path = require('path');
 const router = express.Router();
 
 // Helper function to determine time-based fetch name
-// Returns "Morning Fetch", "Afternoon Fetch", or "Evening Fetch" based on current time
-function getTimeBasedFetchName() {
-  const now = new Date();
-  const hour = now.getHours();
+// Returns "Morning Fetch", "Afternoon Fetch", or "Evening Fetch" based on provided time
+// If no timestamp is provided, uses current time
+function getTimeBasedFetchName(timestamp = null) {
+  const date = timestamp ? new Date(timestamp) : new Date();
+  const hour = date.getHours();
   
   // Morning: 5:00 AM - 11:59 AM (5-11)
   if (hour >= 5 && hour < 12) {
