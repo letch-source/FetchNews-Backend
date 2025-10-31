@@ -18,10 +18,32 @@ router.get('/', authenticateToken, async (req, res) => {
     }
     
     // Convert timestamps to ISO strings for frontend compatibility
-    const formattedHistory = summaryHistory.map(entry => ({
-      ...entry.toObject ? entry.toObject() : entry,
-      timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp
-    }));
+    // Ensure sources are properly serialized from Mongoose subdocuments
+    const formattedHistory = summaryHistory.map(entry => {
+      const entryObj = entry.toObject ? entry.toObject() : entry;
+      const formatted = {
+        ...entryObj,
+        timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp
+      };
+      
+      // Ensure sources array is properly serialized (Mongoose subdocuments need explicit serialization)
+      if (entryObj.sources && Array.isArray(entryObj.sources)) {
+        formatted.sources = entryObj.sources.map(source => {
+          if (typeof source === 'object' && source !== null) {
+            return source.toObject ? source.toObject() : source;
+          }
+          return source;
+        });
+      }
+      
+      // Debug logging
+      console.log(`[SummaryHistory] Entry ${formatted.id} has ${formatted.sources?.length || 0} sources`);
+      if (formatted.sources && formatted.sources.length > 0) {
+        console.log(`[SummaryHistory] First source:`, JSON.stringify(formatted.sources[0], null, 2));
+      }
+      
+      return formatted;
+    });
     
     res.json(formattedHistory);
   } catch (error) {
