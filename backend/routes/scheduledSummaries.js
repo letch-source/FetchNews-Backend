@@ -298,6 +298,9 @@ async function executeScheduledSummary(user, summary) {
     
     // Combine regular topics and custom topics
     const allTopics = [...(summary.topics || []), ...(summary.customTopics || [])];
+    console.log(`[SCHEDULER] Topics for ${user.email}: regular=${(summary.topics || []).length}, custom=${(summary.customTopics || []).length}, total=${allTopics.length}`);
+    console.log(`[SCHEDULER] Regular topics: ${JSON.stringify(summary.topics || [])}`);
+    console.log(`[SCHEDULER] Custom topics: ${JSON.stringify(summary.customTopics || [])}`);
     
     if (allTopics.length === 0) {
       console.log(`[SCHEDULER] No topics to generate summary for user ${user.email}`);
