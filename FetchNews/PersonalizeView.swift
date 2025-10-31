@@ -103,21 +103,37 @@ struct PersonalizeView: View {
         }
         .onChange(of: scheduledTime) { oldValue, newValue in
             Task {
+                // Ensure we have loaded the summary first
+                if vm.scheduledSummaries.isEmpty {
+                    await loadScheduledSummary()
+                }
                 await saveScheduledSummary()
             }
         }
         .onChange(of: scheduledEnabled) { oldValue, newValue in
             Task {
+                // Ensure we have loaded the summary first
+                if vm.scheduledSummaries.isEmpty {
+                    await loadScheduledSummary()
+                }
                 await saveScheduledSummary()
             }
         }
         .onChange(of: scheduledTopics) { oldValue, newValue in
             Task {
+                // Ensure we have loaded the summary first
+                if vm.scheduledSummaries.isEmpty {
+                    await loadScheduledSummary()
+                }
                 await saveScheduledSummary()
             }
         }
         .onChange(of: scheduledCustomTopics) { oldValue, newValue in
             Task {
+                // Ensure we have loaded the summary first
+                if vm.scheduledSummaries.isEmpty {
+                    await loadScheduledSummary()
+                }
                 await saveScheduledSummary()
             }
         }
@@ -189,29 +205,37 @@ struct PersonalizeView: View {
                         scheduledCustomTopics = Set(found.customTopics)
                     }
                 }
+                // If still no summary after loading, something went wrong
+                guard existingSummary != nil else {
+                    print("Error: No scheduled fetch found after loading from API")
+                    return
+                }
             } catch {
                 print("Error loading scheduled fetch: \(error)")
                 return
             }
         }
         
-        // Use current topics, or keep existing topics if none selected
-        let topicsToSave = !scheduledTopics.isEmpty ? Array(scheduledTopics) : (existingSummary?.topics ?? [])
-        let customTopicsToSave = !scheduledCustomTopics.isEmpty ? Array(scheduledCustomTopics) : (existingSummary?.customTopics ?? [])
+        // Ensure we have a valid summary with ID
+        guard let summary = existingSummary, !summary.id.isEmpty else {
+            print("Error: No valid scheduled fetch ID found")
+            return
+        }
         
-        // Always use the existing summary's ID (backend ensures it exists)
-        let summaryId = existingSummary?.id ?? UUID().uuidString
+        // Use current topics, or keep existing topics if none selected
+        let topicsToSave = !scheduledTopics.isEmpty ? Array(scheduledTopics) : summary.topics
+        let customTopicsToSave = !scheduledCustomTopics.isEmpty ? Array(scheduledCustomTopics) : summary.customTopics
         
         let summaryToSave = ScheduledSummary(
-            id: summaryId,
+            id: summary.id, // Use the existing ID (backend ensures it exists)
             name: "Daily Fetch",
             time: timeString,
             topics: topicsToSave,
             customTopics: customTopicsToSave,
             days: allDays,
             isEnabled: scheduledEnabled,
-            createdAt: existingSummary?.createdAt ?? ISO8601DateFormatter().string(from: Date()),
-            lastRun: existingSummary?.lastRun
+            createdAt: summary.createdAt,
+            lastRun: summary.lastRun
         )
         
         do {
@@ -225,6 +249,19 @@ struct PersonalizeView: View {
             }
         } catch {
             print("Error saving scheduled fetch: \(error)")
+            // If update fails, try reloading from API to get fresh data
+            do {
+                let summaries = try await ApiClient.getScheduledSummaries()
+                if let freshSummary = summaries.first {
+                    await MainActor.run {
+                        vm.scheduledSummaries = [freshSummary]
+                        scheduledTopics = Set(freshSummary.topics)
+                        scheduledCustomTopics = Set(freshSummary.customTopics)
+                    }
+                }
+            } catch {
+                print("Error reloading scheduled fetch after save failure: \(error)")
+            }
         }
     }
     
