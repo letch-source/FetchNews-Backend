@@ -431,12 +431,7 @@ app.post("/api/auth/timezone", authenticateToken, async (req, res) => {
     userDoc.preferences.timezone = timezone;
     userDoc.updatedAt = new Date();
     
-    // Mark preferences as modified so Mongoose saves it
-    userDoc.markModified('preferences');
-    
     await userDoc.save();
-    
-    console.log(`[AUTH] Updated timezone for ${user.email} to ${timezone}`);
     
     res.json({ 
       message: 'Timezone updated successfully',
@@ -2150,27 +2145,8 @@ async function checkScheduledSummaries() {
           continue;
         }
         
-        // Get user's timezone from preferences
-        // IMPORTANT: User preferences might be nested, so check carefully
-        let userTimezone = 'UTC';
-        
-        // Try to get timezone from preferences object
-        if (user.preferences) {
-          // Check if preferences is a Mongoose document or plain object
-          const prefs = user.preferences.toObject ? user.preferences.toObject() : user.preferences;
-          if (prefs && typeof prefs === 'object' && prefs.timezone) {
-            userTimezone = prefs.timezone;
-          } else if (user.preferences.timezone) {
-            userTimezone = user.preferences.timezone;
-          }
-        }
-        
-        // Log timezone source for debugging
-        if (checkedCount === 1) {
-          const prefsTimezone = user.preferences?.timezone || user.preferences?.toObject?.()?.timezone || 'not found in preferences';
-          console.log(`[SCHEDULER] User ${user.email} timezone: ${userTimezone} (preferences.timezone: ${prefsTimezone})`);
-          console.log(`[SCHEDULER] User preferences object: ${JSON.stringify(user.preferences ? Object.keys(user.preferences) : 'null')}`);
-        }
+        // Get user's timezone from preferences (default to UTC if not set)
+        const userTimezone = user.preferences?.timezone || 'UTC';
         
         // Convert server's current time to user's timezone for comparison
         // Reuse formatter if same timezone (optimization)
@@ -2226,11 +2202,6 @@ async function checkScheduledSummaries() {
         
         console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (user time=${userTime}, server time=${currentTime}), user timezone=${userTimezone}, user day=${userDay}, timeDiff=${timeDifference}min, shouldExecute=${shouldExecute && !alreadyRanToday}`);
         
-        // If timezone is UTC and time difference is large, log a warning
-        if (userTimezone === 'UTC' && timeDifference > 60) {
-          console.log(`[SCHEDULER] WARNING: User ${user.email} timezone is UTC but scheduled time (${summary.time}) doesn't match current UTC time (${userTime}). User may need to update their scheduled fetch to set timezone.`);
-        }
-        
         if (shouldExecute && !alreadyRanToday) {
           console.log(`[SCHEDULER] Executing scheduled fetch "${summary.name}" for user ${user.email} on ${currentDay}`);
           
@@ -2282,93 +2253,57 @@ async function checkScheduledSummaries() {
   }
 }
 
-// Schedule checks every 10 minutes starting at :00
-let schedulerTimeout = null;
-let isSchedulerRunning = false;
-let schedulerStarted = false;
-
+// Schedule checks at :00, :10, :20, :30, :40, and :50 minutes past each hour
 function scheduleNextCheck() {
-  // Prevent duplicate scheduler instances
-  if (schedulerTimeout) {
-    console.log(`[SCHEDULER] Scheduler already scheduled, skipping duplicate call`);
-    return;
-  }
-  
-  // Prevent scheduling if a check is currently running
-  if (isSchedulerRunning) {
-    console.log(`[SCHEDULER] Check already running, will reschedule after completion`);
-    return;
-  }
-  
   const now = new Date();
   const currentMinute = now.getMinutes();
   const currentSecond = now.getSeconds();
-  const currentMillisecond = now.getMilliseconds();
   
-  // Calculate time until next 10-minute mark (:00, :10, :20, :30, :40, :50)
-  // Find the next 10-minute mark
-  let nextMinute = Math.ceil((currentMinute + 1) / 10) * 10;
+  // Target minutes: 0, 10, 20, 30, 40, 50
+  const targetMinutes = [0, 10, 20, 30, 40, 50];
   
-  // Wrap around at 60 minutes
-  if (nextMinute >= 60) {
-    nextMinute = 0;
+  // Find next target minute
+  let nextMinute = null;
+  for (const target of targetMinutes) {
+    if (target > currentMinute || (target === currentMinute && currentSecond === 0)) {
+      nextMinute = target;
+      break;
+    }
+  }
+  
+  // If no target found in this hour, use the first target of next hour
+  if (nextMinute === null) {
+    nextMinute = targetMinutes[0];
   }
   
   // Calculate milliseconds until next check
   let msUntilNext;
-  if (nextMinute === 0 && currentMinute >= 50) {
-    // Next check is :00 of next hour
-    const minutesRemaining = 60 - currentMinute;
-    const secondsRemaining = minutesRemaining * 60 - currentSecond;
-    msUntilNext = (secondsRemaining * 1000) - currentMillisecond;
-  } else if (nextMinute > currentMinute) {
-    // Next check is in same hour
-    const minutesRemaining = nextMinute - currentMinute;
-    const secondsRemaining = minutesRemaining * 60 - currentSecond;
-    msUntilNext = (secondsRemaining * 1000) - currentMillisecond;
+  if (nextMinute > currentMinute) {
+    // Next check is in the same hour
+    const minutesUntilNext = nextMinute - currentMinute;
+    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
+    msUntilNext = secondsUntilNext * 1000;
+  } else if (nextMinute === currentMinute && currentSecond === 0) {
+    // We're exactly at a target minute, run immediately
+    msUntilNext = 0;
   } else {
-    // Shouldn't happen, but fallback: exactly 10 minutes
-    msUntilNext = 10 * 60 * 1000;
+    // Next check is in the next hour
+    const minutesUntilNext = 60 - currentMinute + nextMinute;
+    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
+    msUntilNext = secondsUntilNext * 1000;
   }
   
-  // Ensure we don't schedule for less than 30 seconds (safety check)
-  if (msUntilNext < 30000) {
-    msUntilNext = 10 * 60 * 1000;
-  }
+  console.log(`[SCHEDULER] Next check scheduled in ${Math.floor(msUntilNext / 1000 / 60)} minutes ${Math.floor((msUntilNext / 1000) % 60)} seconds (at :${String(nextMinute).padStart(2, '0')})`);
   
-  const nextCheckTime = new Date(now.getTime() + msUntilNext);
-  const nextCheckMinute = nextCheckTime.getMinutes();
-  
-  console.log(`[SCHEDULER] Next check scheduled in ${Math.floor(msUntilNext / 1000 / 60)} minutes ${Math.floor((msUntilNext / 1000) % 60)} seconds (at :${String(nextCheckMinute).padStart(2, '0')}, ${nextCheckTime.toISOString()})`);
-  
-  schedulerTimeout = setTimeout(() => {
-    const timeoutId = schedulerTimeout; // Capture timeout ID
-    schedulerTimeout = null; // Clear timeout reference immediately
-    isSchedulerRunning = true;
-    checkScheduledSummaries().finally(() => {
-      isSchedulerRunning = false;
-      // Schedule next check - always exactly 10 minutes (600000 ms) after completion
-      // This ensures consistent 10-minute intervals and naturally aligns to :00, :10, :20, etc.
-      // Only schedule if no other timeout is already set (prevents duplicates)
-      if (!schedulerTimeout) {
-        schedulerTimeout = setTimeout(() => {
-          schedulerTimeout = null; // Clear when it runs
-          scheduleNextCheck();
-        }, 10 * 60 * 1000); // Exactly 10 minutes
-        
-        const nextCheckTime = new Date(Date.now() + 10 * 60 * 1000);
-        console.log(`[SCHEDULER] Next check will be in 10 minutes (at ${nextCheckTime.toISOString()})`);
-      }
-    });
+  setTimeout(() => {
+    checkScheduledSummaries();
+    // Schedule the next check after this one completes
+    scheduleNextCheck();
   }, msUntilNext);
-  
-  schedulerStarted = true;
 }
 
-// Start the scheduling (only once on server startup)
-if (!schedulerStarted) {
-  scheduleNextCheck();
-}
+// Start the scheduling
+scheduleNextCheck();
 
 // --- Trending Topics Updater ---
 // Update trending topics every hour
