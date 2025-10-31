@@ -36,12 +36,6 @@ router.get('/', authenticateToken, async (req, res) => {
         });
       }
       
-      // Debug logging
-      console.log(`[SummaryHistory] Entry ${formatted.id} has ${formatted.sources?.length || 0} sources`);
-      if (formatted.sources && formatted.sources.length > 0) {
-        console.log(`[SummaryHistory] First source:`, JSON.stringify(formatted.sources[0], null, 2));
-      }
-      
       return formatted;
     });
     
