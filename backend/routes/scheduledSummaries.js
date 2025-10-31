@@ -148,10 +148,8 @@ router.post('/', authenticateToken, async (req, res) => {
     // Save user to database with retry logic for version conflicts
     await saveUserWithRetry(user);
     
-    res.status(200).json({ 
-      message: 'Scheduled fetch updated successfully',
-      scheduledSummary: existingSummary 
-    });
+    // Return the scheduled summary directly (frontend expects this format)
+    res.status(200).json(existingSummary);
   } catch (error) {
     console.error('Create/Update scheduled fetch error:', error);
     res.status(500).json({ error: 'Failed to save scheduled fetch' });
@@ -211,10 +209,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
     // Save user to database with retry logic for version conflicts
     await saveUserWithRetry(user);
     
-    res.json({ 
-      message: 'Scheduled fetch updated successfully',
-      scheduledSummary: existingSummary 
-    });
+    // Return the scheduled summary directly (frontend expects this format)
+    res.json(existingSummary);
   } catch (error) {
     console.error('Update scheduled fetch error:', error);
     res.status(500).json({ error: 'Failed to update scheduled fetch' });
