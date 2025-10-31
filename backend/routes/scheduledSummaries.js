@@ -69,6 +69,7 @@ router.get('/', authenticateToken, async (req, res) => {
       
       scheduledSummaries = [defaultSummary];
       user.scheduledSummaries = scheduledSummaries;
+      user.markModified('scheduledSummaries');
       
       // Save user with retry logic
       await saveUserWithRetry(user);
@@ -76,6 +77,7 @@ router.get('/', authenticateToken, async (req, res) => {
       // If more than one, keep only the first one
       scheduledSummaries = [scheduledSummaries[0]];
       user.scheduledSummaries = scheduledSummaries;
+      user.markModified('scheduledSummaries');
       await saveUserWithRetry(user);
     }
     
@@ -121,8 +123,11 @@ router.post('/', authenticateToken, async (req, res) => {
     
     // Update the existing summary with provided values
     if (name !== undefined) existingSummary.name = name;
-    if (topicsArray.length > 0 || customTopicsArray.length > 0) {
+    // Always update topics and customTopics (even if empty arrays)
+    if (topics !== undefined) {
       existingSummary.topics = topicsArray;
+    }
+    if (customTopics !== undefined) {
       existingSummary.customTopics = customTopicsArray;
     }
     existingSummary.time = time;
@@ -135,6 +140,9 @@ router.post('/', authenticateToken, async (req, res) => {
     
     // Keep only this one summary
     user.scheduledSummaries = [existingSummary];
+    
+    // Mark the array as modified so Mongoose knows to save it
+    user.markModified('scheduledSummaries');
     
     // Save user to database with retry logic for version conflicts
     await saveUserWithRetry(user);
@@ -177,6 +185,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     
     // Update the scheduled fetch with all provided fields
     if (name !== undefined) existingSummary.name = name;
+    // Always update topics and customTopics (even if empty arrays)
     if (topics !== undefined) {
       existingSummary.topics = Array.isArray(topics) ? topics : (topics ? [topics] : []);
     }
@@ -194,6 +203,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
     
     // Keep only this one summary
     user.scheduledSummaries = [existingSummary];
+    
+    // Mark the array as modified so Mongoose knows to save it
+    user.markModified('scheduledSummaries');
     
     // Save user to database with retry logic for version conflicts
     await saveUserWithRetry(user);

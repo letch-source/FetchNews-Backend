@@ -2178,10 +2178,10 @@ async function checkScheduledSummaries() {
         const scheduledTimeMinutes = scheduledHour * 60 + scheduledMinute;
         const userTimeMinutes = userHour * 60 + userMinute;
         
-        // Check if scheduled time is within the last 10 minutes (to account for 10-minute check interval)
-        // This ensures we catch summaries even if the exact minute check was slightly delayed
-        const timeDifference = userTimeMinutes - scheduledTimeMinutes;
-        const shouldExecute = timeDifference >= 0 && timeDifference < 10;
+        // Check if current time matches the scheduled time (within 1 minute window)
+        // Since we check at :00, :10, :20, :30, :40, :50, we should catch scheduled times at those exact minutes
+        const timeDifference = Math.abs(userTimeMinutes - scheduledTimeMinutes);
+        const shouldExecute = timeDifference <= 1; // Allow 1 minute window for slight delays
         
         // Also check if summary hasn't already run today in user's timezone (prevent duplicate executions)
         const lastRun = summary.lastRun ? new Date(summary.lastRun) : null;
@@ -2253,11 +2253,57 @@ async function checkScheduledSummaries() {
   }
 }
 
-// Run check immediately on startup (for verification)
-checkScheduledSummaries();
+// Schedule checks at :00, :10, :20, :30, :40, and :50 minutes past each hour
+function scheduleNextCheck() {
+  const now = new Date();
+  const currentMinute = now.getMinutes();
+  const currentSecond = now.getSeconds();
+  
+  // Target minutes: 0, 10, 20, 30, 40, 50
+  const targetMinutes = [0, 10, 20, 30, 40, 50];
+  
+  // Find next target minute
+  let nextMinute = null;
+  for (const target of targetMinutes) {
+    if (target > currentMinute || (target === currentMinute && currentSecond === 0)) {
+      nextMinute = target;
+      break;
+    }
+  }
+  
+  // If no target found in this hour, use the first target of next hour
+  if (nextMinute === null) {
+    nextMinute = targetMinutes[0];
+  }
+  
+  // Calculate milliseconds until next check
+  let msUntilNext;
+  if (nextMinute > currentMinute) {
+    // Next check is in the same hour
+    const minutesUntilNext = nextMinute - currentMinute;
+    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
+    msUntilNext = secondsUntilNext * 1000;
+  } else if (nextMinute === currentMinute && currentSecond === 0) {
+    // We're exactly at a target minute, run immediately
+    msUntilNext = 0;
+  } else {
+    // Next check is in the next hour
+    const minutesUntilNext = 60 - currentMinute + nextMinute;
+    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
+    msUntilNext = secondsUntilNext * 1000;
+  }
+  
+  console.log(`[SCHEDULER] Next check scheduled in ${Math.floor(msUntilNext / 1000 / 60)} minutes ${Math.floor((msUntilNext / 1000) % 60)} seconds (at :${String(nextMinute).padStart(2, '0')})`);
+  
+  setTimeout(() => {
+    checkScheduledSummaries();
+    // Schedule the next check after this one completes
+    scheduleNextCheck();
+  }, msUntilNext);
+}
 
-// Then run check every 10 minutes
-setInterval(checkScheduledSummaries, 10 * 60 * 1000); // Run every 10 minutes
+// Start the scheduling
+scheduleNextCheck();
 
 // --- Trending Topics Updater ---
 // Update trending topics every hour
