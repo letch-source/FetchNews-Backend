@@ -8,6 +8,7 @@
 import Foundation
 import AVFoundation
 import MediaPlayer
+import UserNotifications
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -138,6 +139,9 @@ final class NewsVM: ObservableObject {
     
     // MARK: - Intents
     func initializeIfNeeded() async {
+        // Request notification permission on first launch
+        await requestNotificationPermission()
+        
         // Load cached voice introductions
         loadCachedVoiceIntroductions()
         
@@ -1017,6 +1021,9 @@ final class NewsVM: ObservableObject {
             
             guard shouldLoad else { return }
             
+            // Send notification that a new scheduled fetch is ready
+            await sendScheduledFetchNotification(title: mostRecent.title)
+            
             // Load the scheduled fetch to the homepage
             await MainActor.run {
                 // Set combined summary
@@ -1090,5 +1097,78 @@ extension String {
     func condenseWhitespace() -> String {
         let squashed = replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         return squashed.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+// MARK: - Notification Support
+
+extension NewsVM {
+    // Request notification permissions on first launch
+    func requestNotificationPermission() async {
+        let center = UNUserNotificationCenter.current()
+        
+        // Check current authorization status
+        let settings = await center.notificationSettings()
+        
+        guard settings.authorizationStatus == .notDetermined else {
+            // Already requested, don't ask again
+            return
+        }
+        
+        // Request authorization
+        do {
+            let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+            if granted {
+                print("✅ Notification permission granted")
+            } else {
+                print("❌ Notification permission denied")
+            }
+        } catch {
+            print("Failed to request notification permission: \(error)")
+        }
+    }
+    
+    // Send a notification when a scheduled fetch is ready
+    func sendScheduledFetchNotification(title: String) async {
+        let center = UNUserNotificationCenter.current()
+        
+        // Check if notifications are authorized
+        let settings = await center.notificationSettings()
+        
+        // If not authorized, request permission
+        if settings.authorizationStatus != .authorized {
+            await requestNotificationPermission()
+            
+            // Check again after requesting
+            let newSettings = await center.notificationSettings()
+            guard newSettings.authorizationStatus == .authorized else {
+                print("Notifications not authorized, skipping notification")
+                return
+            }
+        }
+        
+        // Create notification content
+        let content = UNMutableNotificationContent()
+        content.title = "Daily Fetch Ready!"
+        content.body = "Your \(title) is ready to read."
+        content.sound = .default
+        content.badge = 1
+        
+        // Create a unique identifier for this notification
+        let identifier = "scheduled-fetch-\(UUID().uuidString)"
+        
+        // Create trigger for immediate delivery
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+        
+        // Create request
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        
+        // Schedule notification
+        do {
+            try await center.add(request)
+            print("✅ Scheduled fetch notification sent: \(title)")
+        } catch {
+            print("❌ Failed to send notification: \(error)")
+        }
     }
 }

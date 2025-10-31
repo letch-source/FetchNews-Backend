@@ -22,6 +22,7 @@ const adminRoutes = require("./routes/adminActions");
 const preferencesRoutes = require("./routes/preferences");
 const newsSourcesRoutes = require("./routes/newsSources");
 const trendingAdminRoutes = require("./routes/trendingAdmin");
+const recommendedAdminRoutes = require("./routes/recommendedAdmin");
 const fallbackAuth = require("./utils/fallbackAuth");
 const User = require("./models/User");
 
@@ -123,6 +124,9 @@ app.use("/api/admin", adminRoutes);
 
 // Admin trending topics management
 app.use("/api/admin/trending-topics", trendingAdminRoutes);
+
+// Admin recommended topics management
+app.use("/api/admin/recommended-topics", recommendedAdminRoutes);
 
 // Preferences routes
 app.use("/api/preferences", preferencesRoutes);
@@ -379,6 +383,49 @@ app.post("/api/trending-topics/update", async (req, res) => {
     console.error('Manual trending topics update error:', error);
     res.status(500).json({ 
       error: 'Failed to update trending topics',
+      details: error.message 
+    });
+  }
+});
+
+// Recommended topics endpoint
+app.get("/api/recommended-topics", async (req, res) => {
+  try {
+    // Prefer admin override if present
+    const overridePath = path.join(__dirname, "./server_data/recommended_override.json");
+    let usingOverride = false;
+    let overrideData = null;
+    try {
+      if (fs.existsSync(overridePath)) {
+        const raw = fs.readFileSync(overridePath, 'utf8');
+        const data = JSON.parse(raw);
+        if (data && Array.isArray(data.topics) && data.topics.length > 0) {
+          usingOverride = true;
+          overrideData = data;
+        }
+      }
+    } catch {}
+
+    if (usingOverride) {
+      return res.json({
+        recommendedTopics: overrideData.topics,
+        lastUpdated: overrideData.lastUpdated || null,
+        source: "override",
+        setBy: overrideData.setBy || null
+      });
+    }
+
+    // Default recommended topics (fallback)
+    const defaultTopics = ["Business", "Entertainment", "Health", "Science"];
+    res.json({
+      recommendedTopics: defaultTopics,
+      lastUpdated: null,
+      source: "default"
+    });
+  } catch (error) {
+    console.error('Get recommended topics error:', error);
+    res.status(500).json({ 
+      error: 'Failed to get recommended topics',
       details: error.message 
     });
   }
