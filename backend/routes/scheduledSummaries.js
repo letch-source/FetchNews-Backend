@@ -24,6 +24,7 @@ async function saveUserWithRetry(user, retries = 3) {
         if (freshUser) {
           // Apply our scheduledSummaries changes to the fresh document
           freshUser.scheduledSummaries = scheduledSummariesToSave;
+          freshUser.markModified('scheduledSummaries');
           // Copy the fresh user back to the original user object
           Object.assign(user, freshUser.toObject());
           // Ensure scheduledSummaries is set on the user object
