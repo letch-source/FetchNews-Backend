@@ -83,6 +83,15 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const user = req.user;
     
+    // Ensure user has timezone set - if not, default to UTC (will be updated when user saves scheduled summary)
+    if (!user.preferences || !user.preferences.timezone) {
+      if (!user.preferences) {
+        user.preferences = {};
+      }
+      // Don't set a default - let it be set when user saves their scheduled summary
+      // This way we know it's their actual timezone from their device
+    }
+    
     // Get scheduled fetch from user.scheduledSummaries
     let scheduledSummaries = user.scheduledSummaries || [];
     
