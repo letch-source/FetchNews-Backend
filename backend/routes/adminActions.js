@@ -222,4 +222,137 @@ router.get('/stats', authenticateToken, async (req, res) => {
   }
 });
 
+// Get all users with their usage data
+router.get('/users', authenticateToken, async (req, res) => {
+  try {
+    if (!isDatabaseAvailable()) {
+      return res.status(503).json({ 
+        error: 'Database not available',
+        users: [] 
+      });
+    }
+
+    // Get all users with selected fields
+    const users = await User.find()
+      .select('email isPremium dailyUsageCount lastUsageDate summaryHistory createdAt')
+      .lean();
+
+    // Calculate usage limits based on premium status
+    const freeUserLimit = 3;
+    const premiumUserLimit = 20;
+
+    // Helper function to estimate listening time in minutes
+    // Assumes average reading speed of ~150 words per minute
+    function estimateListeningTime(summaries) {
+      if (!summaries || summaries.length === 0) return 0;
+      
+      let totalMinutes = 0;
+      summaries.forEach(summary => {
+        // Estimate based on summary text length (if available)
+        if (summary.summary) {
+          const words = summary.summary.split(/\s+/).length;
+          totalMinutes += words / 150; // average speaking speed
+        } else {
+          // Fallback: estimate based on length setting
+          const lengthMap = {
+            'short': 2,    // ~2 minutes
+            'medium': 3.5, // ~3.5 minutes  
+            'long': 5      // ~5 minutes
+          };
+          totalMinutes += lengthMap[summary.length] || 3;
+        }
+      });
+      
+      return Math.round(totalMinutes);
+    }
+
+    // Helper function to get date string in PST timezone
+    function getDateStringInPST(date = new Date()) {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      const parts = formatter.formatToParts(date);
+      const year = parts.find(p => p.type === 'year').value;
+      const month = parts.find(p => p.type === 'month').value;
+      const day = parts.find(p => p.type === 'day').value;
+      
+      const pstDate = new Date(`${year}-${month}-${day}T00:00:00`);
+      return pstDate.toDateString();
+    }
+
+    // Process users data
+    const usersData = users.map(user => {
+      const limit = user.isPremium ? premiumUserLimit : freeUserLimit;
+      const now = new Date();
+      const today = getDateStringInPST(now);
+      const lastUsageDate = user.lastUsageDate ? getDateStringInPST(new Date(user.lastUsageDate)) : today;
+      
+      // Reset daily count if it's a new day (in PST timezone)
+      const currentDailyCount = (lastUsageDate !== today) ? 0 : (user.dailyUsageCount || 0);
+      
+      return {
+        email: user.email,
+        isPremium: user.isPremium || false,
+        dailyUsageCount: currentDailyCount,
+        dailyLimit: limit,
+        remainingFetches: Math.max(0, limit - currentDailyCount),
+        totalFetches: user.summaryHistory?.length || 0,
+        totalListeningTime: estimateListeningTime(user.summaryHistory),
+        lastUsageDate: user.lastUsageDate,
+        createdAt: user.createdAt
+      };
+    });
+
+    // Sort by total fetches (most active users first)
+    usersData.sort((a, b) => b.totalFetches - a.totalFetches);
+
+    res.json({ users: usersData });
+  } catch (error) {
+    console.error('Get users error:', error);
+    res.status(500).json({ error: 'Failed to get users data' });
+  }
+});
+
+// Debug endpoint to check user data (temporary)
+router.get('/user-data/:email', authenticateToken, async (req, res) => {
+  try {
+    const { email } = req.params;
+    const user = await User.findOne({ email: email.toLowerCase() });
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Extract all unique topics from summary history
+    const allTopicsFromHistory = new Set();
+    if (user.summaryHistory) {
+      user.summaryHistory.forEach(summary => {
+        if (summary.topics) {
+          summary.topics.forEach(topic => allTopicsFromHistory.add(topic));
+        }
+      });
+    }
+    
+    res.json({
+      email: user.email,
+      customTopics: user.customTopics || [],
+      selectedTopics: user.selectedTopics || [],
+      lastFetchedTopics: user.lastFetchedTopics || [],
+      summaryHistoryCount: user.summaryHistory?.length || 0,
+      allTopicsFromHistory: Array.from(allTopicsFromHistory),
+      recentSummaries: (user.summaryHistory || []).slice(0, 5).map(s => ({
+        title: s.title,
+        topics: s.topics,
+        timestamp: s.timestamp
+      }))
+    });
+  } catch (error) {
+    console.error('Get user data error:', error);
+    res.status(500).json({ error: 'Failed to get user data' });
+  }
+});
+
 module.exports = router;
