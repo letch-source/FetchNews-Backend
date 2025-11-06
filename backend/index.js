@@ -25,6 +25,7 @@ const trendingAdminRoutes = require("./routes/trendingAdmin");
 const recommendedAdminRoutes = require("./routes/recommendedAdmin");
 const fallbackAuth = require("./utils/fallbackAuth");
 const User = require("./models/User");
+const { uploadAudioToB2, isB2Configured } = require("./utils/b2Storage");
 
 // Connect to MongoDB
 connectDB();
@@ -2338,12 +2339,30 @@ app.post("/api/tts", async (req, res) => {
 
     const buffer = Buffer.from(await speech.arrayBuffer());
     const fileBase = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
-    const outPath = path.join(MEDIA_DIR, fileBase);
-    fs.writeFileSync(outPath, buffer);
-
-    // Create absolute URL for the audio file
-    const baseUrl = req.protocol + '://' + req.get('host');
-    const audioUrl = `${baseUrl}/media/${fileBase}`;
+    
+    let audioUrl;
+    
+    // Upload to B2 if configured, otherwise save locally
+    if (isB2Configured()) {
+      try {
+        console.log('📤 Uploading audio to Backblaze B2...');
+        audioUrl = await uploadAudioToB2(buffer, fileBase);
+        console.log('✅ Audio uploaded to B2 successfully');
+      } catch (b2Error) {
+        console.error('❌ B2 upload failed, falling back to local storage:', b2Error);
+        // Fallback to local storage
+        const outPath = path.join(MEDIA_DIR, fileBase);
+        fs.writeFileSync(outPath, buffer);
+        const baseUrl = req.protocol + '://' + req.get('host');
+        audioUrl = `${baseUrl}/media/${fileBase}`;
+      }
+    } else {
+      console.log('⚠️  B2 not configured, using local storage');
+      const outPath = path.join(MEDIA_DIR, fileBase);
+      fs.writeFileSync(outPath, buffer);
+      const baseUrl = req.protocol + '://' + req.get('host');
+      audioUrl = `${baseUrl}/media/${fileBase}`;
+    }
     
     // Cache the TTS result for 24 hours
     await cache.set(cacheKey, { audioUrl }, 86400);

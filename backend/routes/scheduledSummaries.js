@@ -7,6 +7,7 @@ const fallbackAuth = require('../utils/fallbackAuth');
 const OpenAI = require('openai');
 const fs = require('fs').promises;
 const path = require('path');
+const { uploadAudioToB2, isB2Configured } = require('../utils/b2Storage');
 
 const router = express.Router();
 
@@ -477,16 +478,32 @@ async function executeScheduledSummary(user, summary) {
           // Save audio file
           const buffer = Buffer.from(await speech.arrayBuffer());
           const fileBase = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
-          const mediaDir = path.join(__dirname, '../media');
-          const filePath = path.join(mediaDir, fileBase);
           
-          // Ensure media directory exists
-          await fs.mkdir(mediaDir, { recursive: true });
-          await fs.writeFile(filePath, buffer);
-          
-          // Create URL (relative to backend base URL)
-          const baseUrl = process.env.BASE_URL || 'https://fetchnews-backend.onrender.com';
-          audioUrl = `${baseUrl}/media/${fileBase}`;
+          // Upload to B2 if configured, otherwise save locally
+          if (isB2Configured()) {
+            try {
+              console.log('[SCHEDULER] 📤 Uploading audio to Backblaze B2...');
+              audioUrl = await uploadAudioToB2(buffer, fileBase);
+              console.log('[SCHEDULER] ✅ Audio uploaded to B2 successfully');
+            } catch (b2Error) {
+              console.error('[SCHEDULER] ❌ B2 upload failed, falling back to local storage:', b2Error);
+              // Fallback to local storage
+              const mediaDir = path.join(__dirname, '../media');
+              const filePath = path.join(mediaDir, fileBase);
+              await fs.mkdir(mediaDir, { recursive: true });
+              await fs.writeFile(filePath, buffer);
+              const baseUrl = process.env.BASE_URL || 'https://fetchnews-backend.onrender.com';
+              audioUrl = `${baseUrl}/media/${fileBase}`;
+            }
+          } else {
+            console.log('[SCHEDULER] ⚠️  B2 not configured, using local storage');
+            const mediaDir = path.join(__dirname, '../media');
+            const filePath = path.join(mediaDir, fileBase);
+            await fs.mkdir(mediaDir, { recursive: true });
+            await fs.writeFile(filePath, buffer);
+            const baseUrl = process.env.BASE_URL || 'https://fetchnews-backend.onrender.com';
+            audioUrl = `${baseUrl}/media/${fileBase}`;
+          }
           
           console.log(`[SCHEDULER] Audio generated for scheduled fetch "${title}"`);
         }
