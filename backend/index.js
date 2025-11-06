@@ -22,6 +22,7 @@ const adminRoutes = require("./routes/adminActions");
 const preferencesRoutes = require("./routes/preferences");
 const newsSourcesRoutes = require("./routes/newsSources");
 const trendingAdminRoutes = require("./routes/trendingAdmin");
+const recommendedAdminRoutes = require("./routes/recommendedAdmin");
 const fallbackAuth = require("./utils/fallbackAuth");
 const User = require("./models/User");
 
@@ -86,6 +87,27 @@ function ensureCompleteSentence(text) {
   return text + '.';
 }
 
+// Helper function to determine time-based fetch name
+// Returns "Morning Fetch", "Afternoon Fetch", or "Evening Fetch" based on provided time
+// If no timestamp is provided, uses current time
+function getTimeBasedFetchName(timestamp = null) {
+  const date = timestamp ? new Date(timestamp) : new Date();
+  const hour = date.getHours();
+  
+  // Morning: 5:00 AM - 11:59 AM (5-11)
+  if (hour >= 5 && hour < 12) {
+    return "Morning Fetch";
+  }
+  // Afternoon: 12:00 PM - 4:59 PM (12-16)
+  else if (hour >= 12 && hour < 17) {
+    return "Afternoon Fetch";
+  }
+  // Evening: 5:00 PM - 4:59 AM (17-23 or 0-4)
+  else {
+    return "Evening Fetch";
+  }
+}
+
 // Authentication routes
 app.use("/api/auth", authRoutes);
 
@@ -103,6 +125,9 @@ app.use("/api/admin", adminRoutes);
 
 // Admin trending topics management
 app.use("/api/admin/trending-topics", trendingAdminRoutes);
+
+// Admin recommended topics management
+app.use("/api/admin/recommended-topics", recommendedAdminRoutes);
 
 // Preferences routes
 app.use("/api/preferences", preferencesRoutes);
@@ -306,22 +331,32 @@ function extractTrendingTopics(articles) {
 // Trending topics endpoint
 app.get("/api/trending-topics", async (req, res) => {
   try {
-    // Prefer admin override if present
+    // Only use admin override - no auto-generated topics
     const overridePath = path.join(__dirname, "./server_data/trending_override.json");
-    let usingOverride = false;
     let overrideData = null;
+    
     try {
+      // Ensure directory exists
+      const serverDataDir = path.dirname(overridePath);
+      if (!fs.existsSync(serverDataDir)) {
+        fs.mkdirSync(serverDataDir, { recursive: true });
+      }
+      
       if (fs.existsSync(overridePath)) {
         const raw = fs.readFileSync(overridePath, 'utf8');
         const data = JSON.parse(raw);
         if (data && Array.isArray(data.topics) && data.topics.length > 0) {
-          usingOverride = true;
           overrideData = data;
+          console.log(`[TRENDING] Loaded ${data.topics.length} trending topics from admin override`);
         }
+      } else {
+        console.log('[TRENDING] No admin override file found - trending topics will be empty until admin sets them');
       }
-    } catch {}
+    } catch (error) {
+      console.error('[TRENDING] Error reading override file:', error);
+    }
 
-    if (usingOverride) {
+    if (overrideData) {
       return res.json({
         trendingTopics: overrideData.topics,
         lastUpdated: overrideData.lastUpdated || null,
@@ -330,11 +365,11 @@ app.get("/api/trending-topics", async (req, res) => {
       });
     }
 
-    // Fallback to cached trending topics
+    // No override set - return empty array
     res.json({
-      trendingTopics: trendingTopicsCache,
-      lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null,
-      source: "auto"
+      trendingTopics: [],
+      lastUpdated: null,
+      source: "none"
     });
   } catch (error) {
     console.error('Get trending topics error:', error);
@@ -359,6 +394,49 @@ app.post("/api/trending-topics/update", async (req, res) => {
     console.error('Manual trending topics update error:', error);
     res.status(500).json({ 
       error: 'Failed to update trending topics',
+      details: error.message 
+    });
+  }
+});
+
+// Recommended topics endpoint
+app.get("/api/recommended-topics", async (req, res) => {
+  try {
+    // Prefer admin override if present
+    const overridePath = path.join(__dirname, "./server_data/recommended_override.json");
+    let usingOverride = false;
+    let overrideData = null;
+    try {
+      if (fs.existsSync(overridePath)) {
+        const raw = fs.readFileSync(overridePath, 'utf8');
+        const data = JSON.parse(raw);
+        if (data && Array.isArray(data.topics) && data.topics.length > 0) {
+          usingOverride = true;
+          overrideData = data;
+        }
+      }
+    } catch {}
+
+    if (usingOverride) {
+      return res.json({
+        recommendedTopics: overrideData.topics,
+        lastUpdated: overrideData.lastUpdated || null,
+        source: "override",
+        setBy: overrideData.setBy || null
+      });
+    }
+
+    // Default recommended topics (fallback)
+    const defaultTopics = ["Business", "Entertainment", "Health", "Science"];
+    res.json({
+      recommendedTopics: defaultTopics,
+      lastUpdated: null,
+      source: "default"
+    });
+  } catch (error) {
+    console.error('Get recommended topics error:', error);
+    res.status(500).json({ 
+      error: 'Failed to get recommended topics',
       details: error.message 
     });
   }
@@ -566,60 +644,103 @@ const CORE_CATEGORIES = new Set([
 async function fetchArticlesEverything(qParts, maxResults, selectedSources = []) {
   const q = encodeURIComponent(qParts.filter(Boolean).join(" "));
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
-  // Extend to 7 days for more variety (24 hours was too restrictive)
-  const from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const minArticles = 5; // Minimum articles to find
   
-  // Try multiple search strategies for better coverage
-  const searchStrategies = [
-    // Strategy 1: Exact phrase search
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`,
-    // Strategy 2: Individual keywords
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`,
-    // Strategy 3: Broader search without date restriction
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}`,
-    // Strategy 4: Search without keywords (general news)
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}`
+  // Progressive time windows: 48 hours -> 1 week -> 2 weeks
+  const timeWindows = [
+    { hours: 48, name: '48 hours' },
+    { hours: 168, name: '1 week' },  // 7 days * 24 hours
+    { hours: 336, name: '2 weeks' }  // 14 days * 24 hours
   ];
   
-  let articles = [];
-  let lastError = null;
+  let allArticles = [];
+  let usedMaxAge = 48 * 60 * 60 * 1000; // Track the maximum age we've used
   
-  for (const url of searchStrategies) {
-    try {
-      console.log(`[SEARCH] Trying strategy: ${url}`);
-      const resp = await fetch(url);
-      
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data.data && data.data.length > 0) {
-          articles = data.data;
-          console.log(`[SEARCH] Found ${articles.length} articles with current strategy`);
-          break;
+  for (const timeWindow of timeWindows) {
+    const maxAgeMs = timeWindow.hours * 60 * 60 * 1000;
+    const from = new Date(Date.now() - maxAgeMs).toISOString().slice(0, 10);
+    
+    console.log(`[SEARCH] Trying ${timeWindow.name} window...`);
+    
+    // Try multiple search strategies for better coverage - ALL with date restrictions
+    const searchStrategies = [
+      // Strategy 1: Exact phrase search
+      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`,
+      // Strategy 2: Individual keywords
+      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`,
+      // Strategy 3: Broader search with date restriction (removed unrestricted fallback)
+      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`
+    ];
+    
+    let articles = [];
+    let lastError = null;
+    
+    for (const url of searchStrategies) {
+      try {
+        console.log(`[SEARCH] Trying strategy: ${url}`);
+        const resp = await fetch(url);
+        
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.data && data.data.length > 0) {
+            articles = data.data;
+            console.log(`[SEARCH] Found ${articles.length} articles with current strategy`);
+            break;
+          }
+        } else {
+          lastError = `Mediastack error: ${resp.status}`;
         }
-      } else {
-        lastError = `Mediastack error: ${resp.status}`;
+      } catch (error) {
+        lastError = error.message;
+        console.log(`[SEARCH] Strategy failed: ${error.message}`);
       }
-    } catch (error) {
-      lastError = error.message;
-      console.log(`[SEARCH] Strategy failed: ${error.message}`);
+    }
+    
+    if (articles.length > 0) {
+      // Map Mediastack response to match expected format and filter by date
+      const now = Date.now();
+      const mappedArticles = articles
+        .map(article => {
+          const publishedAt = article.published_at ? new Date(article.published_at).getTime() : null;
+          // Filter out articles older than current time window
+          if (publishedAt && (now - publishedAt) > maxAgeMs) {
+            return null;
+          }
+          // Also filter out articles without valid published date if it's clearly old
+          return {
+            title: article.title,
+            description: article.description,
+            url: article.url,
+            publishedAt: article.published_at,
+            source: { id: article.source, name: article.source }
+          };
+        })
+        .filter(article => article !== null); // Remove filtered articles
+      
+      // Merge with existing articles, avoiding duplicates by URL
+      const existingUrls = new Set(allArticles.map(a => a.url));
+      const newArticles = mappedArticles.filter(a => !existingUrls.has(a.url));
+      allArticles = [...allArticles, ...newArticles];
+      
+      usedMaxAge = maxAgeMs; // Update the maximum age we've successfully used
+      
+      console.log(`[SEARCH] Total articles found so far: ${allArticles.length} (within ${timeWindow.name})`);
+      
+      // If we have at least minArticles, we can return early
+      if (allArticles.length >= minArticles) {
+        console.log(`[SEARCH] Found ${allArticles.length} articles, returning with ${timeWindow.name} window`);
+        return allArticles.slice(0, pageSize); // Return up to pageSize
+      }
     }
   }
   
-  if (articles.length === 0) {
-    throw new Error(lastError || 'No articles found with any search strategy');
+  // If we still don't have enough articles after trying all time windows
+  if (allArticles.length === 0) {
+    throw new Error('No recent articles found with any search strategy');
   }
   
-  // Map Mediastack response to match expected format
-  const mappedArticles = articles.map(article => ({
-    title: article.title,
-    description: article.description,
-    url: article.url,
-    publishedAt: article.published_at,
-    source: { id: article.source, name: article.source }
-  }));
-  
-  // Removed source printing log
-  return mappedArticles;
+  console.log(`[SEARCH] Returning ${allArticles.length} articles (expanded to ${usedMaxAge / (60 * 60 * 1000)} hours window)`);
+  return allArticles.slice(0, pageSize); // Return up to pageSize
 }
 
 // Function to ensure variety by getting articles from multiple sources with progressive time expansion
@@ -683,15 +804,17 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
   }
   
   // If we still don't have enough variety after all time windows, return what we have
-  console.log(`Final attempt: trying top-headlines without time filter for maximum coverage`);
+  // Final attempt: trying with maximum 24-hour window (instead of no filter)
+  console.log(`Final attempt: trying with 24-hour window for maximum coverage`);
   const articles = [];
   const usedSources = new Set();
+  const maxFinalWindow = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   
   for (const source of selectedSources) {
     if (usedSources.size >= targetVariety) break;
     
     try {
-      const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&limit=1&languages=en`;
+      const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&date=${maxFinalWindow}&sort=published_desc&limit=1&languages=en`;
       const resp = await fetch(url);
       
       if (resp.ok) {
@@ -707,11 +830,11 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
           };
           articles.push(article);
           usedSources.add(source);
-          console.log(`Got article from ${source} (no time filter)`);
+          console.log(`Got article from ${source} (24h window)`);
         }
       }
     } catch (error) {
-      console.log(`Failed to get article from ${source} (no time filter): ${error.message}`);
+      console.log(`Failed to get article from ${source} (24h window): ${error.message}`);
     }
   }
   
@@ -721,44 +844,103 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
 
 async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, extraQuery, selectedSources = []) {
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
-  const params = new URLSearchParams();
+  const minArticles = 5; // Minimum articles to find
   
-  // Mediastack parameter mapping
-  if (selectedSources && selectedSources.length > 0) {
-    console.log(`Filtering by sources: ${selectedSources.join(",")}`);
-    params.set("sources", selectedSources.join(","));
-  } else {
-    console.log(`No source filtering applied (using all sources)`);
-    if (category) params.set("categories", category);
-    if (countryCode) params.set("countries", String(countryCode).toLowerCase());
+  // Progressive time windows: 48 hours -> 1 week -> 2 weeks
+  const timeWindows = [
+    { hours: 48, name: '48 hours' },
+    { hours: 168, name: '1 week' },  // 7 days * 24 hours
+    { hours: 336, name: '2 weeks' }  // 14 days * 24 hours
+  ];
+  
+  let allArticles = [];
+  let usedMaxAge = 48 * 60 * 60 * 1000; // Track the maximum age we've used
+  
+  for (const timeWindow of timeWindows) {
+    const maxAgeMs = timeWindow.hours * 60 * 60 * 1000;
+    const from = new Date(Date.now() - maxAgeMs).toISOString().slice(0, 10);
+    
+    console.log(`[CATEGORY] Trying ${timeWindow.name} window...`);
+    
+    const params = new URLSearchParams();
+    
+    // Mediastack parameter mapping
+    if (selectedSources && selectedSources.length > 0) {
+      console.log(`Filtering by sources: ${selectedSources.join(",")}`);
+      params.set("sources", selectedSources.join(","));
+    } else {
+      console.log(`No source filtering applied (using all sources)`);
+      if (category) params.set("categories", category);
+      if (countryCode) params.set("countries", String(countryCode).toLowerCase());
+    }
+    
+    if (extraQuery) params.set("keywords", extraQuery);
+    params.set("limit", String(pageSize));
+    params.set("languages", "en");
+    params.set("date", from); // Add date restriction
+    params.set("sort", "published_desc"); // Sort by most recent first
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&${params.toString()}`;
+    console.log(`[DEBUG] Final Mediastack URL: ${url}`);
+    
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        console.log(`[DEBUG] Mediastack error response: ${resp.status} ${text}`);
+        continue; // Try next time window
+      }
+      const data = await resp.json();
+      console.log(`[DEBUG] Mediastack category response:`, JSON.stringify(data, null, 2));
+      console.log(`Mediastack returned ${data.data?.length || 0} articles`);
+      
+      if (data.data && data.data.length > 0) {
+        // Map Mediastack response to match expected format and filter by date
+        const now = Date.now();
+        const articles = (data.data || [])
+          .map(article => {
+            const publishedAt = article.published_at ? new Date(article.published_at).getTime() : null;
+            // Filter out articles older than current time window
+            if (publishedAt && (now - publishedAt) > maxAgeMs) {
+              return null;
+            }
+            return {
+              title: article.title,
+              description: article.description,
+              url: article.url,
+              publishedAt: article.published_at,
+              source: { id: article.source, name: article.source }
+            };
+          })
+          .filter(article => article !== null); // Remove filtered articles
+        
+        // Merge with existing articles, avoiding duplicates by URL
+        const existingUrls = new Set(allArticles.map(a => a.url));
+        const newArticles = articles.filter(a => !existingUrls.has(a.url));
+        allArticles = [...allArticles, ...newArticles];
+        
+        usedMaxAge = maxAgeMs; // Update the maximum age we've successfully used
+        
+        console.log(`[CATEGORY] Total articles found so far: ${allArticles.length} (within ${timeWindow.name})`);
+        
+        // If we have at least minArticles, we can return early
+        if (allArticles.length >= minArticles) {
+          console.log(`[CATEGORY] Found ${allArticles.length} articles, returning with ${timeWindow.name} window`);
+          return allArticles.slice(0, pageSize); // Return up to pageSize
+        }
+      }
+    } catch (error) {
+      console.log(`[CATEGORY] Error with ${timeWindow.name} window: ${error.message}`);
+      continue; // Try next time window
+    }
   }
   
-  if (extraQuery) params.set("keywords", extraQuery);
-  params.set("limit", String(pageSize));
-  params.set("languages", "en");
-  const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&${params.toString()}`;
-  console.log(`[DEBUG] Final Mediastack URL: ${url}`);
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    console.log(`[DEBUG] Mediastack error response: ${resp.status} ${text}`);
-    throw new Error(`Mediastack error: ${resp.status} ${text}`);
+  // If we still don't have enough articles after trying all time windows
+  if (allArticles.length === 0) {
+    throw new Error(`Mediastack error: No articles found for category`);
   }
-  const data = await resp.json();
-  console.log(`[DEBUG] Mediastack category response:`, JSON.stringify(data, null, 2));
-  console.log(`Mediastack returned ${data.data?.length || 0} articles`);
   
-  // Map Mediastack response to match expected format
-  const articles = (data.data || []).map(article => ({
-    title: article.title,
-    description: article.description,
-    url: article.url,
-    publishedAt: article.published_at,
-    source: { id: article.source, name: article.source }
-  }));
-  
-  // Removed source printing log
-  return articles;
+  console.log(`[CATEGORY] Returning ${allArticles.length} articles (expanded to ${usedMaxAge / (60 * 60 * 1000)} hours window)`);
+  return allArticles.slice(0, pageSize); // Return up to pageSize
 }
 
 async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = []) {
@@ -847,36 +1029,91 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   const isGeneral = normalizedTopic === "general";
 
   if (isGeneral) {
-  // For general news, use a simple approach without date filtering
-  try {
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}`;
-    const resp = await fetch(url);
+  // For general news, use progressive time expansion to ensure we get enough articles
+  const minArticles = 5;
+  const timeWindows = [
+    { hours: 48, name: '48 hours' },
+    { hours: 168, name: '1 week' },  // 7 days * 24 hours
+    { hours: 336, name: '2 weeks' }  // 14 days * 24 hours
+  ];
+  
+  let allGeneralArticles = [];
+  
+  for (const timeWindow of timeWindows) {
+    const maxAgeMs = timeWindow.hours * 60 * 60 * 1000;
+    const from = new Date(Date.now() - maxAgeMs).toISOString().slice(0, 10);
     
-    if (!resp.ok) {
-      throw new Error(`Mediastack error: ${resp.status}`);
-    }
-    
-    const data = await resp.json();
-    
-    // Map Mediastack response to expected format
-    articles = (data.data || []).map(article => ({
-      title: article.title,
-      description: article.description,
-      url: article.url,
-      publishedAt: article.published_at,
-      source: { id: article.source, name: article.source }
-    }));
-    } catch (error) {
-      console.error(`Error fetching general news:`, error);
-      // Fallback to category-based approach
-      try {
-        articles = await fetchTopHeadlinesByCategory("general", countryCode, pageSize, undefined, selectedSources);
-        console.log(`General topic: fallback fetched ${articles.length} articles using category`);
-      } catch (fallbackError) {
-        console.error(`Fallback also failed:`, fallbackError);
-        articles = [];
+    try {
+      console.log(`[GENERAL] Trying ${timeWindow.name} window...`);
+      const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}&date=${from}&sort=published_desc`;
+      const resp = await fetch(url);
+      
+      if (!resp.ok) {
+        throw new Error(`Mediastack error: ${resp.status}`);
       }
+      
+      const data = await resp.json();
+      
+      if (data.data && data.data.length > 0) {
+        const now = Date.now();
+        // Map Mediastack response to expected format and filter by date
+        const mappedArticles = (data.data || [])
+          .map(article => {
+            const publishedAt = article.published_at ? new Date(article.published_at).getTime() : null;
+            // Filter out articles older than current time window
+            if (publishedAt && (now - publishedAt) > maxAgeMs) {
+              return null;
+            }
+            return {
+              title: article.title,
+              description: article.description,
+              url: article.url,
+              publishedAt: article.published_at,
+              source: { id: article.source, name: article.source }
+            };
+          })
+          .filter(article => article !== null);
+        
+        // Merge with existing articles, avoiding duplicates by URL
+        const existingUrls = new Set(allGeneralArticles.map(a => a.url));
+        const newArticles = mappedArticles.filter(a => !existingUrls.has(a.url));
+        allGeneralArticles = [...allGeneralArticles, ...newArticles];
+        
+        console.log(`[GENERAL] Total articles found so far: ${allGeneralArticles.length} (within ${timeWindow.name})`);
+        
+        // If we have at least minArticles, we can return early
+        if (allGeneralArticles.length >= minArticles) {
+          console.log(`[GENERAL] Found ${allGeneralArticles.length} articles, using ${timeWindow.name} window`);
+          articles = allGeneralArticles.slice(0, pageSize);
+          break;
+        }
+      }
+    } catch (error) {
+      console.error(`Error fetching general news with ${timeWindow.name} window:`, error);
+      // Continue to next time window
     }
+  }
+  
+  // If we still don't have enough articles, try fallback
+  if (articles.length < minArticles) {
+    console.log(`[GENERAL] Only found ${allGeneralArticles.length} articles, trying fallback...`);
+    try {
+      const fallbackArticles = await fetchTopHeadlinesByCategory("general", countryCode, pageSize, undefined, selectedSources);
+      // Merge fallback articles with existing ones
+      const existingUrls = new Set(allGeneralArticles.map(a => a.url));
+      const newArticles = fallbackArticles.filter(a => !existingUrls.has(a.url));
+      allGeneralArticles = [...allGeneralArticles, ...newArticles];
+      articles = allGeneralArticles.slice(0, pageSize);
+      console.log(`[GENERAL] Fallback fetched ${fallbackArticles.length} articles, total: ${articles.length}`);
+    } catch (fallbackError) {
+      console.error(`Fallback also failed:`, fallbackError);
+      articles = allGeneralArticles.slice(0, pageSize); // Use what we have
+    }
+  }
+  
+  if (articles.length === 0 && allGeneralArticles.length > 0) {
+    articles = allGeneralArticles.slice(0, pageSize);
+  }
   } else if (isLocal) {
     // Parallel API calls for better performance
     const promises = [];
@@ -948,14 +1185,30 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
     articles = await fetchArticlesEverything(queryParts, pageSize, selectedSources);
   }
 
-  const normalized = articles.map((a) => ({
-    title: a.title || "",
-    description: a.description || "",
-    url: a.url || "",
-    source: (a.source && a.source.name) || "",
-    publishedAt: a.publishedAt || "",
-    urlToImage: a.urlToImage || "",
-  }));
+  // Final date filter: allow articles up to 2 weeks (to match progressive expansion)
+  // Articles from expanded time windows (1 week, 2 weeks) should be preserved
+  const maxAgeMs = 336 * 60 * 60 * 1000; // 2 weeks (14 days * 24 hours)
+  const now = Date.now();
+  
+  const normalized = articles
+    .map((a) => {
+      // Check if article is too old (older than 2 weeks)
+      if (a.publishedAt) {
+        const publishedAt = new Date(a.publishedAt).getTime();
+        if (isNaN(publishedAt) || (now - publishedAt) > maxAgeMs) {
+          return null; // Filter out articles older than 2 weeks
+        }
+      }
+      return {
+        title: a.title || "",
+        description: a.description || "",
+        url: a.url || "",
+        source: (a.source && a.source.name) || "",
+        publishedAt: a.publishedAt || "",
+        urlToImage: a.urlToImage || "",
+      };
+    })
+    .filter(article => article !== null); // Remove filtered articles
 
   const result = { articles: normalized };
   
@@ -1120,8 +1373,22 @@ function addIntroAndOutro(summary, topics, goodNewsOnly = false, user = null) {
     timeGreeting = "Good evening";
   }
   
-  // Format topics for the intro
-  const topicsText = Array.isArray(topics) ? topics.join(", ") : topics;
+  // Format topics for the intro - use "and" before the last topic if multiple
+  let topicsText;
+  if (Array.isArray(topics) && topics.length > 0) {
+    if (topics.length === 1) {
+      topicsText = topics[0];
+    } else if (topics.length === 2) {
+      topicsText = `${topics[0]} and ${topics[1]}`;
+    } else {
+      // More than 2 topics: "Topic1, Topic2, and Topic3"
+      const lastTopic = topics[topics.length - 1];
+      const otherTopics = topics.slice(0, -1).join(", ");
+      topicsText = `${otherTopics}, and ${lastTopic}`;
+    }
+  } else {
+    topicsText = String(topics || "");
+  }
   const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
   
   // Add intro and outro
@@ -1447,11 +1714,12 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       }
       
       if (!usageCheck.allowed) {
+        const limit = usageCheck.limit || 3;
         return res.status(429).json({
           error: "Daily limit reached",
-          message: "You've reached your daily limit of 10 summaries. Upgrade to Premium for unlimited access.",
+          message: `You've reached your daily limit of ${limit} Fetches. Upgrade to Premium for unlimited access.`,
           dailyCount: usageCheck.dailyCount,
-          limit: 1
+          limit: limit
         });
       }
     }
@@ -1706,7 +1974,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     if (topics.length === 1) {
       title = `${topics[0].charAt(0).toUpperCase() + topics[0].slice(1)} Summary`;
     } else if (topics.length > 1) {
-      title = "Mixed Summary";
+      title = getTimeBasedFetchName();
     }
 
     return res.json({
@@ -1747,11 +2015,12 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
       }
       
       if (!usageCheck.allowed) {
+        const limit = usageCheck.limit || 3;
         return res.status(429).json({
           error: "Daily limit reached",
-          message: "You've reached your daily limit of 10 summaries. Upgrade to Premium for unlimited access.",
+          message: `You've reached your daily limit of ${limit} Fetches. Upgrade to Premium for unlimited access.`,
           dailyCount: usageCheck.dailyCount,
-          limit: 1
+          limit: limit
         });
       }
     }
@@ -1898,7 +2167,7 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
         if (topics.length === 1) {
           title = `${topics[0].charAt(0).toUpperCase() + topics[0].slice(1)} Summary`;
         } else if (topics.length > 1) {
-          title = "Mixed Summary";
+          title = getTimeBasedFetchName();
         }
 
         return {
@@ -2253,63 +2522,143 @@ async function checkScheduledSummaries() {
   }
 }
 
-// Schedule checks at :00, :10, :20, :30, :40, and :50 minutes past each hour
+// Schedule checks every 10 minutes starting at :00
+let schedulerTimeout = null;
+let isSchedulerRunning = false;
+let schedulerStarted = false;
+
 function scheduleNextCheck() {
+  // Prevent duplicate scheduler instances
+  if (schedulerTimeout) {
+    console.log(`[SCHEDULER] Scheduler already scheduled, skipping duplicate call`);
+    return;
+  }
+  
+  // Prevent scheduling if a check is currently running
+  if (isSchedulerRunning) {
+    console.log(`[SCHEDULER] Check already running, will reschedule after completion`);
+    return;
+  }
+  
   const now = new Date();
   const currentMinute = now.getMinutes();
   const currentSecond = now.getSeconds();
+  const currentMillisecond = now.getMilliseconds();
   
-  // Target minutes: 0, 10, 20, 30, 40, 50
-  const targetMinutes = [0, 10, 20, 30, 40, 50];
+  // Find next 10-minute mark (:00, :10, :20, :30, :40, :50)
+  let nextMinute = Math.ceil((currentMinute + 1) / 10) * 10;
   
-  // Find next target minute
-  let nextMinute = null;
-  for (const target of targetMinutes) {
-    if (target > currentMinute || (target === currentMinute && currentSecond === 0)) {
-      nextMinute = target;
-      break;
-    }
-  }
-  
-  // If no target found in this hour, use the first target of next hour
-  if (nextMinute === null) {
-    nextMinute = targetMinutes[0];
+  // Wrap around at 60 minutes
+  if (nextMinute >= 60) {
+    nextMinute = 0;
   }
   
   // Calculate milliseconds until next check
   let msUntilNext;
-  if (nextMinute > currentMinute) {
-    // Next check is in the same hour
-    const minutesUntilNext = nextMinute - currentMinute;
-    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
-    msUntilNext = secondsUntilNext * 1000;
-  } else if (nextMinute === currentMinute && currentSecond === 0) {
-    // We're exactly at a target minute, run immediately
-    msUntilNext = 0;
+  if (nextMinute === 0 && currentMinute >= 50) {
+    // Next check is :00 of next hour
+    const minutesRemaining = 60 - currentMinute;
+    const secondsRemaining = minutesRemaining * 60 - currentSecond;
+    msUntilNext = (secondsRemaining * 1000) - currentMillisecond;
+  } else if (nextMinute > currentMinute) {
+    // Next check is in same hour
+    const minutesRemaining = nextMinute - currentMinute;
+    const secondsRemaining = minutesRemaining * 60 - currentSecond;
+    msUntilNext = (secondsRemaining * 1000) - currentMillisecond;
   } else {
-    // Next check is in the next hour
-    const minutesUntilNext = 60 - currentMinute + nextMinute;
-    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
-    msUntilNext = secondsUntilNext * 1000;
+    // Shouldn't happen, but fallback: exactly 10 minutes
+    msUntilNext = 10 * 60 * 1000;
   }
   
-  console.log(`[SCHEDULER] Next check scheduled in ${Math.floor(msUntilNext / 1000 / 60)} minutes ${Math.floor((msUntilNext / 1000) % 60)} seconds (at :${String(nextMinute).padStart(2, '0')})`);
+  // Ensure we don't schedule for less than 30 seconds (safety check)
+  if (msUntilNext < 30000) {
+    msUntilNext = 10 * 60 * 1000;
+  }
   
-  setTimeout(() => {
-    checkScheduledSummaries();
-    // Schedule the next check after this one completes
-    scheduleNextCheck();
+  const nextCheckTime = new Date(now.getTime() + msUntilNext);
+  const nextCheckMinute = nextCheckTime.getMinutes();
+  
+  console.log(`[SCHEDULER] Next check scheduled in ${Math.floor(msUntilNext / 1000 / 60)} minutes ${Math.floor((msUntilNext / 1000) % 60)} seconds (at :${String(nextCheckMinute).padStart(2, '0')}, ${nextCheckTime.toISOString()})`);
+  
+  schedulerTimeout = setTimeout(() => {
+    schedulerTimeout = null; // Clear timeout reference immediately
+    isSchedulerRunning = true;
+    checkScheduledSummaries().finally(() => {
+      isSchedulerRunning = false;
+      // Schedule next check - always exactly 10 minutes (600000 ms) after completion
+      // This ensures consistent 10-minute intervals and naturally aligns to :00, :10, :20, etc.
+      // Only schedule if no other timeout is already set (prevents duplicates)
+      if (!schedulerTimeout) {
+        schedulerTimeout = setTimeout(() => {
+          schedulerTimeout = null; // Clear when it runs
+          scheduleNextCheck();
+        }, 10 * 60 * 1000); // Exactly 10 minutes
+        
+        const nextCheckTime = new Date(Date.now() + 10 * 60 * 1000);
+        console.log(`[SCHEDULER] Next check will be in 10 minutes (at ${nextCheckTime.toISOString()})`);
+      }
+    });
   }, msUntilNext);
+  
+  schedulerStarted = true;
 }
 
-// Start the scheduling
-scheduleNextCheck();
+// Start the scheduling (only once on server startup)
+if (!schedulerStarted) {
+  scheduleNextCheck();
+}
 
 // --- Trending Topics Updater ---
 // Update trending topics every hour
 let trendingTopicsCache = [];
 let trendingTopicsWithSources = {}; // Store topics with their source articles
 let lastTrendingUpdate = null;
+
+// File path for persistent trending topics cache
+const TRENDING_CACHE_PATH = path.join(__dirname, './server_data/trending_cache.json');
+
+// Load trending topics from file on startup
+function loadTrendingTopicsFromFile() {
+  try {
+    if (fs.existsSync(TRENDING_CACHE_PATH)) {
+      const raw = fs.readFileSync(TRENDING_CACHE_PATH, 'utf8');
+      const data = JSON.parse(raw);
+      if (data && Array.isArray(data.topics) && data.topics.length > 0) {
+        trendingTopicsCache = data.topics;
+        trendingTopicsWithSources = data.topicsWithSources || {};
+        if (data.lastUpdated) {
+          lastTrendingUpdate = new Date(data.lastUpdated);
+        }
+        console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics from cache`);
+      }
+    }
+  } catch (error) {
+    console.error('[TRENDING] Error loading trending topics cache:', error);
+  }
+}
+
+// Save trending topics to file
+function saveTrendingTopicsToFile() {
+  try {
+    // Ensure server_data directory exists
+    const serverDataDir = path.join(__dirname, './server_data');
+    if (!fs.existsSync(serverDataDir)) {
+      fs.mkdirSync(serverDataDir, { recursive: true });
+    }
+    
+    const data = {
+      topics: trendingTopicsCache,
+      topicsWithSources: trendingTopicsWithSources,
+      lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null,
+      savedAt: new Date().toISOString()
+    };
+    
+    fs.writeFileSync(TRENDING_CACHE_PATH, JSON.stringify(data, null, 2), 'utf8');
+    console.log(`[TRENDING] Saved ${trendingTopicsCache.length} trending topics to cache`);
+  } catch (error) {
+    console.error('[TRENDING] Error saving trending topics cache:', error);
+  }
+}
 
 // Extract trending topics using ChatGPT analysis of news articles
 async function extractTrendingTopicsWithChatGPT(articles) {
@@ -2496,6 +2845,8 @@ async function updateTrendingTopics() {
       trendingTopicsWithSources = result.topicsWithSources;
       lastTrendingUpdate = new Date();
       console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${result.topics.join(', ')}`);
+      // Save to file for persistence
+      saveTrendingTopicsToFile();
     } else {
       console.log('[TRENDING] ChatGPT analysis failed, using fallback approach');
       await updateTrendingTopicsFallback();
@@ -2531,10 +2882,17 @@ async function updateTrendingTopicsFallback() {
     lastTrendingUpdate = new Date();
     
     console.log(`[TRENDING] Updated trending topics via fallback (${randomCategory}): ${trendingTopics.join(', ')}`);
+    // Save to file for persistence
+    saveTrendingTopicsToFile();
   } catch (error) {
     console.error('[TRENDING] Fallback method failed:', error);
   }
 }
+
+// AUTO-GENERATED TRENDING TOPICS DISABLED
+// Only admin override from analytics page is used
+// Auto-generated cache loading disabled - trending topics are managed via admin override only
+// loadTrendingTopicsFromFile(); // DISABLED - only use admin override
 
 // AUTO-UPDATE DISABLED: Trending topics will only update manually via /api/trending-topics/update endpoint
 // Run immediately on startup

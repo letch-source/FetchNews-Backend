@@ -369,6 +369,29 @@ struct ScheduledTopicsSelectorView: View {
                     }
                 }
                 
+                if !vm.trendingTopics.isEmpty {
+                    Section(header: Text("Trending Topics")) {
+                        ForEach(vm.trendingTopics, id: \.self) { topic in
+                            HStack {
+                                Text(topic.capitalized)
+                                Spacer()
+                                if selectedTopics.contains(topic) {
+                                    Image(systemName: "checkmark")
+                                        .foregroundColor(.blue)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                if selectedTopics.contains(topic) {
+                                    selectedTopics.remove(topic)
+                                } else {
+                                    selectedTopics.insert(topic)
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 if !vm.customTopics.isEmpty {
                     Section(header: Text("Custom Topics")) {
                         ForEach(vm.customTopics, id: \.self) { topic in
@@ -409,6 +432,10 @@ struct ScheduledTopicsSelectorView: View {
         .onAppear {
             Task {
                 await vm.loadCustomTopics()
+                // Ensure trending topics are loaded
+                if vm.trendingTopics.isEmpty {
+                    await vm.fetchTrendingTopics()
+                }
             }
         }
     }
@@ -423,7 +450,7 @@ struct TimePicker10Min: View {
     @State private var selectedAMPM: Int = 0 // 0 = AM, 1 = PM
     
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 8) {
             // Hour picker (1-12)
             Picker("Hour", selection: $selectedHour) {
                 ForEach(1...12, id: \.self) { hour in
@@ -431,7 +458,6 @@ struct TimePicker10Min: View {
                 }
             }
             .pickerStyle(.wheel)
-            .frame(width: 50)
             .onChange(of: selectedHour) { _, _ in
                 updateTime()
             }
@@ -447,7 +473,6 @@ struct TimePicker10Min: View {
                 }
             }
             .pickerStyle(.wheel)
-            .frame(width: 50)
             .onChange(of: selectedMinute) { _, _ in
                 updateTime()
             }
@@ -458,11 +483,16 @@ struct TimePicker10Min: View {
                 Text("PM").tag(1)
             }
             .pickerStyle(.wheel)
-            .frame(width: 50)
             .onChange(of: selectedAMPM) { _, _ in
                 updateTime()
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(
+            Capsule()
+                .fill(Color(.systemGray6))
+        )
         .onAppear {
             updateFromDate()
         }

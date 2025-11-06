@@ -5,25 +5,17 @@ const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Persistent file for admin-set trending topics override
-const OVERRIDE_FILE = path.join(__dirname, '../server_data/trending_override.json');
+// Persistent file for admin-set recommended topics override
+const OVERRIDE_FILE = path.join(__dirname, '../server_data/recommended_override.json');
 
 function readOverride() {
   try {
-    if (!fs.existsSync(OVERRIDE_FILE)) {
-      console.log('[TRENDING ADMIN] No override file found');
-      return null;
-    }
+    if (!fs.existsSync(OVERRIDE_FILE)) return null;
     const raw = fs.readFileSync(OVERRIDE_FILE, 'utf8');
     const data = JSON.parse(raw);
-    if (!data || !Array.isArray(data.topics)) {
-      console.log('[TRENDING ADMIN] Override file exists but invalid format');
-      return null;
-    }
-    console.log(`[TRENDING ADMIN] Loaded ${data.topics.length} trending topics from override file`);
+    if (!data || !Array.isArray(data.topics)) return null;
     return data;
-  } catch (error) {
-    console.error('[TRENDING ADMIN] Error reading override file:', error);
+  } catch {
     return null;
   }
 }
@@ -32,13 +24,11 @@ function writeOverride(payload) {
   try {
     const dir = path.dirname(OVERRIDE_FILE);
     if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+      try { fs.mkdirSync(dir, { recursive: true }); } catch {}
     }
-    fs.writeFileSync(OVERRIDE_FILE, JSON.stringify(payload, null, 2), 'utf8');
-    console.log(`[TRENDING ADMIN] Saved ${payload.topics.length} trending topics to override file`);
+    fs.writeFileSync(OVERRIDE_FILE, JSON.stringify(payload, null, 2));
     return true;
-  } catch (error) {
-    console.error('[TRENDING ADMIN] Error writing override file:', error);
+  } catch {
     return false;
   }
 }
@@ -76,7 +66,7 @@ router.put('/', authenticateToken, async (req, res) => {
     };
     const ok = writeOverride(payload);
     if (!ok) return res.status(500).json({ error: 'Failed to persist override' });
-    res.json({ message: 'Trending topics override saved', override: payload });
+    res.json({ message: 'Recommended topics override saved', override: payload });
   } catch (e) {
     res.status(500).json({ error: 'Failed to set override' });
   }
@@ -88,12 +78,11 @@ router.delete('/', authenticateToken, async (req, res) => {
     if (fs.existsSync(OVERRIDE_FILE)) {
       try { fs.unlinkSync(OVERRIDE_FILE); } catch {}
     }
-    res.json({ message: 'Trending topics override cleared' });
+    res.json({ message: 'Recommended topics override cleared' });
   } catch (e) {
     res.status(500).json({ error: 'Failed to clear override' });
   }
 });
 
 module.exports = router;
-
 
