@@ -134,26 +134,53 @@ const fallbackAuth = {
   },
   
   canFetchNews(user) {
-    const today = new Date().toDateString();
-    const lastUsageDate = user.lastUsageDate.toDateString();
+    // Helper function to get date string in PST timezone
+    const getDateStringInPST = (date = new Date()) => {
+      // Get date components in PST (America/Los_Angeles timezone)
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      const parts = formatter.formatToParts(date);
+      const year = parts.find(p => p.type === 'year').value;
+      const month = parts.find(p => p.type === 'month').value;
+      const day = parts.find(p => p.type === 'day').value;
+      
+      // Create a date object from PST date components and return its date string
+      // This ensures consistent format matching toDateString()
+      const pstDate = new Date(`${year}-${month}-${day}T00:00:00`);
+      return pstDate.toDateString();
+    };
     
-    // Reset daily count if it's a new day
+    const today = getDateStringInPST();
+    const lastUsageDate = user.lastUsageDate ? getDateStringInPST(new Date(user.lastUsageDate)) : today;
+    
+    // Reset daily count if it's a new day (resets at midnight PST)
     if (lastUsageDate !== today) {
       user.dailyUsageCount = 0;
       user.lastUsageDate = new Date();
     }
     
-    // Premium users have unlimited access
+    // Define limits
+    const freeUserLimit = 3;
+    const premiumUserLimit = 20;
+    
+    // Premium users limited to 20 summaries per day
     if (user.isPremium) {
-      return { allowed: true, reason: 'premium' };
+      if (user.dailyUsageCount >= premiumUserLimit) {
+        return { allowed: false, reason: 'daily_limit_reached', dailyCount: user.dailyUsageCount, limit: premiumUserLimit };
+      }
+      return { allowed: true, reason: 'premium', dailyCount: user.dailyUsageCount, limit: premiumUserLimit };
     }
     
-    // Free users limited to 1 summary per day
-    if (user.dailyUsageCount >= 1) {
-      return { allowed: false, reason: 'daily_limit_reached', dailyCount: user.dailyUsageCount };
+    // Free users limited to 3 summaries per day
+    if (user.dailyUsageCount >= freeUserLimit) {
+      return { allowed: false, reason: 'daily_limit_reached', dailyCount: user.dailyUsageCount, limit: freeUserLimit };
     }
     
-    return { allowed: true, reason: 'free_quota', dailyCount: user.dailyUsageCount };
+    return { allowed: true, reason: 'free_quota', dailyCount: user.dailyUsageCount, limit: freeUserLimit };
   },
   
   async incrementUsage(user) {

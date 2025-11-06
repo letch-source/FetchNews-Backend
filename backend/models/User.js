@@ -48,7 +48,15 @@ const userSchema = new mongoose.Schema({
       type: Date,
       default: Date.now
     },
-    audioUrl: String
+    audioUrl: String,
+    sources: [{
+      id: String,
+      title: String,
+      summary: String,
+      source: String,
+      url: String,
+      topic: String
+    }]
   }],
   resetPasswordToken: {
     type: String,
@@ -119,30 +127,60 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };
 
+// Helper function to get date string in PST timezone
+function getDateStringInPST(date = new Date()) {
+  // Get date components in PST (America/Los_Angeles timezone)
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.formatToParts(date);
+  const year = parts.find(p => p.type === 'year').value;
+  const month = parts.find(p => p.type === 'month').value;
+  const day = parts.find(p => p.type === 'day').value;
+  
+  // Create a date object from PST date components and return its date string
+  // This ensures consistent format matching toDateString()
+  const pstDate = new Date(`${year}-${month}-${day}T00:00:00`);
+  return pstDate.toDateString();
+}
+
 // Check if user can fetch news
 userSchema.methods.canFetchNews = function() {
-  const today = new Date().toDateString();
-  const lastUsageDate = this.lastUsageDate.toDateString();
+  // Get today's date string in PST timezone (resets at midnight PST)
+  const now = new Date();
+  const today = getDateStringInPST(now);
+  const lastUsageDate = this.lastUsageDate ? getDateStringInPST(new Date(this.lastUsageDate)) : today;
   
-  // Reset daily count if it's a new day (save will happen in incrementUsage if needed)
+  // Reset daily count if it's a new day (resets at midnight PST)
+  // The date string comparison ensures reset happens when date changes in PST
   if (lastUsageDate !== today) {
     this.dailyUsageCount = 0;
-    this.lastUsageDate = new Date();
+    this.lastUsageDate = now;
     // Don't await here - let incrementUsage handle the save
     this.save().catch(err => console.error('[USER] Error resetting daily count:', err));
   }
   
-  // Premium users have unlimited access
+  // Define limits
+  const freeUserLimit = 3;
+  const premiumUserLimit = 20;
+  
+  // Premium users limited to 20 summaries per day
   if (this.isPremium) {
-    return { allowed: true, reason: 'premium' };
+    if (this.dailyUsageCount >= premiumUserLimit) {
+      return { allowed: false, reason: 'daily_limit_reached', dailyCount: this.dailyUsageCount, limit: premiumUserLimit };
+    }
+    return { allowed: true, reason: 'premium', dailyCount: this.dailyUsageCount, limit: premiumUserLimit };
   }
   
-  // Free users limited to 1 summary per day
-  if (this.dailyUsageCount >= 1) {
-    return { allowed: false, reason: 'daily_limit_reached', dailyCount: this.dailyUsageCount };
+  // Free users limited to 3 summaries per day
+  if (this.dailyUsageCount >= freeUserLimit) {
+    return { allowed: false, reason: 'daily_limit_reached', dailyCount: this.dailyUsageCount, limit: freeUserLimit };
   }
   
-  return { allowed: true, reason: 'free_quota', dailyCount: this.dailyUsageCount };
+  return { allowed: true, reason: 'free_quota', dailyCount: this.dailyUsageCount, limit: freeUserLimit };
 };
 
 // Increment usage count

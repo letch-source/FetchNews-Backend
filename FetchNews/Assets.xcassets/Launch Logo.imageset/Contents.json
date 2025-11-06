@@ -6,7 +6,28 @@
       "scale" : "1x"
     },
     {
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "dark"
+        }
+      ],
+      "filename" : "Fetch_Logo_Grey.png",
+      "idiom" : "universal",
+      "scale" : "1x"
+    },
+    {
       "filename" : "FetchNews Logo 1.png",
+      "idiom" : "universal",
+      "scale" : "2x"
+    },
+    {
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "dark"
+        }
+      ],
       "idiom" : "universal",
       "scale" : "2x"
     },
@@ -16,15 +37,14 @@
       "scale" : "3x"
     },
     {
-      "filename" : "FetchNews Logo Dark.png",
-      "idiom" : "universal",
-      "scale" : "1x",
       "appearances" : [
         {
           "appearance" : "luminosity",
           "value" : "dark"
         }
-      ]
+      ],
+      "idiom" : "universal",
+      "scale" : "3x"
     }
   ],
   "info" : {
