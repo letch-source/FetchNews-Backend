@@ -44,7 +44,7 @@ struct CustomTopicView: View {
                             .font(.system(size: 50))
                             .foregroundColor(.blue)
                         
-                        Text("Custom Topics")
+                        Text("My Topics")
                             .font(.title2)
                             .fontWeight(.bold)
                         
@@ -77,7 +77,7 @@ struct CustomTopicView: View {
                 // Current custom topics
                 if !vm.customTopics.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Your Custom Topics")
+                        Text("Your Topics")
                             .font(.headline)
                             .padding(.horizontal)
                         
@@ -146,7 +146,7 @@ struct CustomTopicView: View {
             }
             .padding(.bottom, 20)
         }
-        .navigationTitle("Custom Topics")
+        .navigationTitle("My Topics")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Done") { dismiss() }

@@ -29,7 +29,6 @@ struct HomeView: View {
     @State private var scrubValue: Double = 0
     @State private var showAllSelected = false
     @State private var showAllTrending = false
-    @State private var showAllRecommended = false
     @State private var showAllCustom = false
     @State private var isScrolledInRecents = false
 
@@ -78,14 +77,6 @@ struct HomeView: View {
                         selectedTopics: vm.selectedTopics,
                         onTopicToggle: { topic in vm.toggle(topic) },
                         showAll: $showAllTrending
-                    )
-                    
-                    // Recommended Topics Section
-                    RecommendedTopicsSection(
-                        recommendedTopics: vm.recommendedTopics,
-                        selectedTopics: vm.selectedTopics,
-                        onTopicToggle: { topic in vm.toggle(topic) },
-                        showAll: $showAllRecommended
                     )
                     
                     // Custom Topics Section
@@ -475,70 +466,6 @@ struct TrendingTopicsSection: View {
     }
 }
 
-struct RecommendedTopicsSection: View {
-    let recommendedTopics: [String]
-    let selectedTopics: Set<String>
-    let onTopicToggle: (String) -> Void
-    @Binding var showAll: Bool
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Recommended")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.primary)
-                Spacer()
-                if !recommendedTopics.isEmpty {
-                    Button(showAll ? "Show less" : "See all") {
-                        showAll.toggle()
-                    }
-                    .font(.subheadline)
-                    .foregroundColor(.blue)
-                }
-            }
-            .padding(.horizontal, 20)
-            
-            if recommendedTopics.isEmpty {
-                // Show unavailable message when no recommended topics
-                Text("Recommended topics unavailable")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
-            } else if showAll {
-                // Vertical stacked layout
-                LazyVGrid(columns: [
-                    GridItem(.adaptive(minimum: 140), spacing: 10, alignment: .center)
-                ], alignment: .leading, spacing: 10) {
-                    ForEach(recommendedTopics, id: \.self) { topic in
-                        TopicChip(
-                            title: topic,
-                            isActive: selectedTopics.contains(topic.lowercased()),
-                            minWidth: 140
-                        ) { onTopicToggle(topic.lowercased()) }
-                    }
-                }
-                .padding(.horizontal, 20)
-            } else {
-                // Horizontal scroll layout
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(recommendedTopics, id: \.self) { topic in
-                            TopicChip(
-                                title: topic,
-                                isActive: selectedTopics.contains(topic.lowercased()),
-                                minWidth: 140
-                            ) { onTopicToggle(topic.lowercased()) }
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                }
-            }
-        }
-    }
-}
-
 struct CustomTopicsSection: View {
     let customTopics: [String]
     let selectedTopics: Set<String>
@@ -551,7 +478,7 @@ struct CustomTopicsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Custom")
+                Text("My Topics")
                     .font(.headline)
                     .fontWeight(.semibold)
                     .foregroundColor(.primary)

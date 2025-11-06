@@ -80,6 +80,11 @@ struct FetchNewsApp: App {
             }
             .animation(.easeInOut(duration: 0.3), value: authVM.isAuthenticated)
             .animation(.easeInOut(duration: 0.2), value: authVM.isInitializing)
+            .sheet(isPresented: $authVM.showTopicOnboarding) {
+                TopicOnboardingView()
+                    .environmentObject(vm)
+                    .environmentObject(authVM)
+            }
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 // Check for scheduled summaries when app becomes active
                 if newPhase == .active && authVM.isAuthenticated {

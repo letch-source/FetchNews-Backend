@@ -432,7 +432,7 @@ struct ScheduledTopicsSelectorView: View {
                 }
                 
                 if !vm.customTopics.isEmpty {
-                    Section(header: Text("Custom Topics")) {
+                    Section(header: Text("My Topics")) {
                         ForEach(vm.customTopics, id: \.self) { topic in
                             HStack {
                                 Text(topic)

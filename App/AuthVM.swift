@@ -15,9 +15,11 @@ final class AuthVM: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
     @Published var isInitializing: Bool = true
+    @Published var showTopicOnboarding: Bool = false
     
     private let tokenKey = "auth_token"
     private let userKey = "current_user"
+    private let onboardingCompletedKey = "onboarding_completed"
     
     init() {
         // Load stored auth asynchronously to avoid blocking UI
@@ -48,6 +50,9 @@ final class AuthVM: ObservableObject {
             let response = try await ApiClient.register(email: email, password: password)
             print("✅ Registration successful, user: \(response.user.email)")
             await handleAuthSuccess(response: response)
+            
+            // Show topic onboarding for new users
+            showTopicOnboarding = true
         } catch {
             print("❌ Registration failed: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
