@@ -41,6 +41,42 @@
             color: #666;
         }
 
+        .nav-tabs {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            border-bottom: 2px solid #eee;
+        }
+
+        .nav-tab {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            border-bottom: 3px solid transparent;
+            color: #666;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .nav-tab:hover {
+            color: #667eea;
+        }
+
+        .nav-tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .page-section {
+            display: none;
+        }
+
+        .page-section.active {
+            display: block;
+        }
+
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -349,10 +385,16 @@
         <div class="header">
             <h1>📊 FetchNews Analytics Dashboard</h1>
             <p>Real-time statistics and admin actions</p>
+            <div class="nav-tabs">
+                <button class="nav-tab active" onclick="switchPage('dashboard')">Dashboard</button>
+                <button class="nav-tab" onclick="switchPage('users')">Users</button>
+            </div>
         </div>
 
         <div id="error-container"></div>
 
+        <!-- Dashboard Page -->
+        <div id="dashboard-page" class="page-section active">
         <div class="stats-grid" id="stats-grid">
             <div class="stat-card">
                 <h3>Total Users</h3>
@@ -510,6 +552,20 @@
             </div>
             <div id="actions-container">
                 <div class="loading">Loading...</div>
+            </div>
+        </div>
+        </div>
+
+        <!-- Users Page -->
+        <div id="users-page" class="page-section">
+            <div class="actions-section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2>👥 All Users</h2>
+                    <button class="refresh-btn" onclick="loadUsers()">🔄 Refresh</button>
+                </div>
+                <div id="users-container">
+                    <div class="loading">Loading users...</div>
+                </div>
             </div>
         </div>
     </div>
@@ -921,6 +977,111 @@
             }
         }
 
+        async function loadUsers() {
+            const container = document.getElementById('users-container');
+            
+            try {
+                const data = await fetchWithAuth('/api/admin/users');
+                const users = data.users || [];
+
+                if (users.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No users found</div>';
+                    return;
+                }
+
+                // Create stats summary
+                const totalUsers = users.length;
+                const premiumUsers = users.filter(u => u.isPremium).length;
+                const freeUsers = totalUsers - premiumUsers;
+                const totalListeningTime = users.reduce((sum, u) => sum + u.totalListeningTime, 0);
+
+                let html = '<div class="stats-grid" style="margin-bottom: 20px;">';
+                html += `
+                    <div class="stat-card">
+                        <h3>Total Users</h3>
+                        <div class="value">${totalUsers}</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Premium Users</h3>
+                        <div class="value">${premiumUsers}</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Free Users</h3>
+                        <div class="value">${freeUsers}</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Total Listening Time</h3>
+                        <div class="value">${formatTime(totalListeningTime)}</div>
+                    </div>
+                `;
+                html += '</div>';
+
+                // Create users table
+                html += '<table class="actions-table"><thead><tr>';
+                html += '<th>Email</th><th>Premium</th><th>Daily Usage</th><th>Total Fetches</th><th>Listening Time</th><th>Member Since</th>';
+                html += '</tr></thead><tbody>';
+
+                users.forEach(user => {
+                    const premiumBadge = user.isPremium 
+                        ? '<span class="action-badge upgrade">Premium</span>' 
+                        : '<span class="action-badge">Free</span>';
+                    
+                    const usageText = `${user.dailyUsageCount} / ${user.dailyLimit}`;
+                    const usageColor = user.dailyUsageCount >= user.dailyLimit ? '#dc3545' : '#667eea';
+                    
+                    html += '<tr>';
+                    html += `<td style="font-weight: 500;">${user.email}</td>`;
+                    html += `<td>${premiumBadge}</td>`;
+                    html += `<td><span style="color: ${usageColor}; font-weight: 600;">${usageText}</span></td>`;
+                    html += `<td>${user.totalFetches}</td>`;
+                    html += `<td>${formatTime(user.totalListeningTime)}</td>`;
+                    html += `<td>${formatDate(user.createdAt)}</td>`;
+                    html += '</tr>';
+                });
+
+                html += '</tbody></table>';
+                container.innerHTML = html;
+            } catch (error) {
+                container.innerHTML = `<div class="error">Failed to load users: ${error.message}</div>`;
+            }
+        }
+
+        function formatTime(minutes) {
+            if (minutes < 60) {
+                return `${minutes}m`;
+            }
+            const hours = Math.floor(minutes / 60);
+            const mins = minutes % 60;
+            return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+        }
+
+        function formatDate(dateString) {
+            if (!dateString) return '-';
+            const date = new Date(dateString);
+            return date.toLocaleDateString();
+        }
+
+        function switchPage(page) {
+            // Update navigation tabs
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Update page sections
+            document.querySelectorAll('.page-section').forEach(section => {
+                section.classList.remove('active');
+            });
+            
+            if (page === 'dashboard') {
+                document.getElementById('dashboard-page').classList.add('active');
+            } else if (page === 'users') {
+                document.getElementById('users-page').classList.add('active');
+                // Load users when switching to users page
+                loadUsers();
+            }
+        }
+
         async function loadData() {
             await Promise.all([loadStats(), loadActions(), loadTrendingTopics(), loadRecommendedTopics()]);
         }
@@ -928,8 +1089,14 @@
         // Load data on page load
         loadData();
 
-        // Auto-refresh every 30 seconds
-        setInterval(loadData, 30000);
+        // Auto-refresh every 30 seconds (only for dashboard)
+        setInterval(() => {
+            if (document.getElementById('dashboard-page').classList.contains('active')) {
+                loadData();
+            } else if (document.getElementById('users-page').classList.contains('active')) {
+                loadUsers();
+            }
+        }, 30000);
     </script>
 </body>
 </html>
