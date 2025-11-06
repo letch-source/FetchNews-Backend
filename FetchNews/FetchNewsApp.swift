@@ -18,59 +18,64 @@ struct FetchNewsApp: App {
 
     var body: some Scene {
         WindowGroup {
-            Group {
-                if authVM.isInitializing {
-                    // Show loading screen while checking authentication
-                    VStack(spacing: 20) {
-                        Image("Launch Logo")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 100, height: 100)
-                        
-                        Text("Fetch News")
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                        
-                        ProgressView()
-                            .scaleEffect(1.2)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(.systemBackground))
-                } else if authVM.isAuthenticated {
-                    if useNewUI {
-                        // New UI with bottom navigation
-                        MainTabView()
-                            .environmentObject(vm)
-                            .environmentObject(authVM)
-                            .onAppear {
-                                // Skip heavy initialization during UI testing
-                                if ProcessInfo.processInfo.environment["UITESTING"] != "1" {
-                                    Task {
-                                        await vm.initializeIfNeeded()
-                                        // Check for scheduled summaries on app launch
-                                        await vm.checkForScheduledSummary()
+            ZStack {
+                // Background
+                Color.darkGreyBackground
+                    .ignoresSafeArea()
+                
+                Group {
+                    if authVM.isInitializing {
+                        // Show loading screen while checking authentication
+                        VStack(spacing: 20) {
+                            Image("Launch Logo")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 100, height: 100)
+                            
+                            Text("Fetch News")
+                                .font(.largeTitle)
+                                .fontWeight(.bold)
+                            
+                            ProgressView()
+                                .scaleEffect(1.2)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if authVM.isAuthenticated {
+                        if useNewUI {
+                            // New UI with bottom navigation
+                            MainTabView()
+                                .environmentObject(vm)
+                                .environmentObject(authVM)
+                                .onAppear {
+                                    // Skip heavy initialization during UI testing
+                                    if ProcessInfo.processInfo.environment["UITESTING"] != "1" {
+                                        Task {
+                                            await vm.initializeIfNeeded()
+                                            // Check for scheduled summaries on app launch
+                                            await vm.checkForScheduledSummary()
+                                        }
                                     }
                                 }
-                            }
+                        } else {
+                            // Old UI (fallback)
+                            ContentView()
+                                .environmentObject(vm)
+                                .environmentObject(authVM)
+                                .onAppear {
+                                    // Skip heavy initialization during UI testing
+                                    if ProcessInfo.processInfo.environment["UITESTING"] != "1" {
+                                        Task {
+                                            await vm.initializeIfNeeded()
+                                            // Check for scheduled summaries on app launch
+                                            await vm.checkForScheduledSummary()
+                                        }
+                                    }
+                                }
+                        }
                     } else {
-                        // Old UI (fallback)
-                        ContentView()
-                            .environmentObject(vm)
+                        WelcomeView()
                             .environmentObject(authVM)
-                            .onAppear {
-                                // Skip heavy initialization during UI testing
-                                if ProcessInfo.processInfo.environment["UITESTING"] != "1" {
-                                    Task {
-                                        await vm.initializeIfNeeded()
-                                        // Check for scheduled summaries on app launch
-                                        await vm.checkForScheduledSummary()
-                                    }
-                                }
-                            }
                     }
-                } else {
-                    WelcomeView()
-                        .environmentObject(authVM)
                 }
             }
             .animation(.easeInOut(duration: 0.3), value: authVM.isAuthenticated)

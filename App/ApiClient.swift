@@ -367,6 +367,28 @@ final class ApiClient {
         }
     }
     
+    // MARK: - Recommended Topics
+    
+    static func getRecommendedTopics() async throws -> RecommendedTopicsResponse {
+        let endpoint = "/api/recommended-topics"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(RecommendedTopicsResponse.self, from: data)
+        } else {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+    }
+    
     // MARK: - Summary History
     
     static func getSummaryHistory() async throws -> [SummaryHistoryEntry] {
@@ -675,14 +697,41 @@ final class ApiClient {
 
         do {
             let (data, resp) = try await session.data(for: req)
-            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? -1
-                print("TTS API error: HTTP \(statusCode)")
+            guard let http = resp as? HTTPURLResponse else {
+                print("❌ [TTS] Invalid response type")
                 throw URLError(.badServerResponse)
             }
-            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            return json?["audioUrl"] as? String
+            
+            guard (200..<300).contains(http.statusCode) else {
+                let statusCode = http.statusCode
+                let responseBody = String(data: data, encoding: .utf8) ?? "Unable to decode"
+                print("❌ [TTS] API error: HTTP \(statusCode)")
+                print("   Response body: \(responseBody)")
+                throw URLError(.badServerResponse)
+            }
+            
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                print("❌ [TTS] Invalid JSON response")
+                throw NetworkError.decodingError(NSError(domain: "TTS", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"]))
+            }
+            
+            let audioUrl = json["audioUrl"] as? String
+            if audioUrl == nil {
+                print("⚠️ [TTS] Response missing audioUrl field. Response: \(json)")
+            }
+            return audioUrl
         } catch {
+            // Check if this is a cancellation - don't log or treat as error
+            if let urlError = error as? URLError, urlError.code == .cancelled {
+                // Silently handle cancellation - this is expected when tasks are cancelled
+                throw CancellationError()
+            }
+            
+            // Check for Swift Task cancellation
+            if error is CancellationError {
+                throw error
+            }
+            
             print("Error in TTS: \(error)")
             if let urlError = error as? URLError {
                 switch urlError.code {
@@ -976,13 +1025,32 @@ final class ApiClient {
         }
     }
     
-    static func updateScheduledSummary(_ summary: ScheduledSummary) async throws -> ScheduledSummary {
+    static func updateScheduledSummary(_ summary: ScheduledSummary, timezone: String? = nil) async throws -> ScheduledSummary {
         let endpoint = "/api/scheduled-summaries/\(summary.id)"
         var req = URLRequest(url: base.appendingPathComponent(endpoint))
         req.httpMethod = "PUT"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let token = authToken { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        req.httpBody = try JSONEncoder().encode(summary)
+        
+        // Include timezone if provided
+        var body: [String: Any] = [
+            "id": summary.id,
+            "name": summary.name,
+            "time": summary.time,
+            "topics": summary.topics,
+            "customTopics": summary.customTopics,
+            "days": summary.days,
+            "isEnabled": summary.isEnabled,
+            "createdAt": summary.createdAt
+        ]
+        if let lastRun = summary.lastRun {
+            body["lastRun"] = lastRun
+        }
+        if let timezone = timezone {
+            body["timezone"] = timezone
+        }
+        
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await session.data(for: req)
         guard let httpResponse = response as? HTTPURLResponse else { throw NetworkError.invalidResponse }
         if httpResponse.statusCode == 200 {

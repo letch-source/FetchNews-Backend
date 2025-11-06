@@ -10,6 +10,8 @@ import AVFoundation
 
 struct SummaryHistoryView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var vm: NewsVM
+    @EnvironmentObject var authVM: AuthVM
     @State private var summaryHistory: [SummaryHistoryEntry] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
@@ -17,47 +19,74 @@ struct SummaryHistoryView: View {
     @State private var showingSummaryDetail = false
     
     var body: some View {
-        NavigationView {
-            VStack {
-                if isLoading {
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .scaleEffect(1.2)
-                        Text("Loading history...")
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if summaryHistory.isEmpty {
-                    VStack(spacing: 20) {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 60))
-                            .foregroundColor(.gray)
-                        
-                        Text("No History Yet")
-                            .font(.title2)
+        ZStack {
+            Color.darkGreyBackground
+                .ignoresSafeArea()
+            
+            VStack(spacing: 0) {
+                // Header
+                header
+            
+            // Content
+            if isLoading {
+                VStack(spacing: 16) {
+                    ProgressView()
+                        .scaleEffect(1.2)
+                    Text("Loading history...")
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if summaryHistory.isEmpty {
+                VStack(spacing: 20) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 60))
+                        .foregroundColor(.gray)
+                    
+                    Text("No History Yet")
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                    
+                    Text("Your summary history will appear here after you fetch your first news summary.")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        // History Title
+                        Text("History")
+                            .font(.title3)
                             .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 16)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         
-                        Text("Your summary history will appear here after you fetch your first news summary.")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(Array(summaryHistory.enumerated()), id: \.element.id) { index, entry in
-                            SummaryHistoryRow(entry: entry) {
-                                selectedSummary = entry
+                        VStack(spacing: 0) {
+                            ForEach(Array(summaryHistory.enumerated()), id: \.element.id) { index, entry in
+                                SummaryHistoryRow(entry: entry) {
+                                    selectedSummary = entry
+                                }
+                                
+                                // Add divider between items (not after the last one)
+                                if index < summaryHistory.count - 1 {
+                                    Rectangle()
+                                        .fill(Color(red: 0.5, green: 0.5, blue: 0.5))
+                                        .frame(height: 1)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
+                                }
                             }
                         }
-                        .onDelete(perform: deleteSummary)
                     }
-                    .listStyle(PlainListStyle())
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 16)
                 }
             }
-            .navigationTitle("Summary History")
-            .navigationBarTitleDisplayMode(.inline)
+            }
         }
         .task {
             await loadSummaryHistory()
@@ -74,6 +103,46 @@ struct SummaryHistoryView: View {
                 Text(error)
             }
         }
+        .sheet(isPresented: $vm.showingSubscriptionView) {
+            SubscriptionView()
+                .environmentObject(vm)
+                .environmentObject(authVM)
+        }
+    }
+    
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Fetch News")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                    
+                    Text("News for Busy People")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                
+                // Premium button - only show if user is not premium
+                if let user = authVM.currentUser, !user.isPremium {
+                    Button("PREMIUM") {
+                        vm.showSubscriptionView()
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.yellow)
+                    .foregroundColor(.black)
+                    .cornerRadius(8)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(Color.darkGreyBackground)
     }
     
     private func loadSummaryHistory() async {
@@ -97,7 +166,7 @@ struct SummaryHistoryView: View {
                 let summaryToDelete = summaryHistory[index]
                 do {
                     _ = try await ApiClient.deleteSummaryFromHistory(summaryId: summaryToDelete.id)
-                    await MainActor.run {
+                    _ = await MainActor.run {
                         self.summaryHistory.remove(at: index)
                     }
                 } catch {
@@ -164,7 +233,11 @@ struct SummaryHistoryRow: View {
                     Spacer()
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.darkGreyBackground)
+            .cornerRadius(8)
         }
         .buttonStyle(PlainButtonStyle())
     }
@@ -189,7 +262,11 @@ struct SummaryDetailView: View {
     
     var body: some View {
         NavigationView {
-            ScrollView {
+            ZStack {
+                Color.darkGreyBackground
+                    .ignoresSafeArea()
+                
+                ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     // Header
                     VStack(alignment: .leading, spacing: 8) {
@@ -250,38 +327,49 @@ struct SummaryDetailView: View {
                     
                     // Sources
                     if let sources = entry.sources, !sources.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Sources")
-                                .font(.headline)
-                            
-                            ForEach(Array(sources.enumerated()), id: \.offset) { index, sourceItem in
-                                HStack {
-                                    Image(systemName: "link")
-                                        .font(.caption)
-                                        .foregroundColor(.blue)
-                                    
-                                    Text(sourceItem.title ?? sourceItem.source)
-                                        .font(.body)
-                                        .foregroundColor(.blue)
-                                    
-                                    Spacer()
-                                    
-                                    if let url = sourceItem.url, !url.isEmpty {
-                                        Link(destination: URL(string: url) ?? URL(string: "https://example.com")!) {
-                                            Image(systemName: "arrow.up.right.square")
-                                                .font(.caption)
-                                                .foregroundColor(.blue)
+                        // Filter out sources with empty source names
+                        let validSources = sources.filter { !$0.source.isEmpty }
+                        
+                        if !validSources.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Sources")
+                                    .font(.headline)
+                                
+                                ForEach(Array(validSources.enumerated()), id: \.offset) { index, sourceItem in
+                                    HStack {
+                                        Image(systemName: "link")
+                                            .font(.caption)
+                                            .foregroundColor(.blue)
+                                        
+                                        Text(sourceItem.title ?? sourceItem.source)
+                                            .font(.body)
+                                            .foregroundColor(.blue)
+                                        
+                                        Spacer()
+                                        
+                                        if let url = sourceItem.url, !url.isEmpty {
+                                            Link(destination: URL(string: url) ?? URL(string: "https://example.com")!) {
+                                                Image(systemName: "arrow.up.right.square")
+                                                    .font(.caption)
+                                                    .foregroundColor(.blue)
+                                            }
                                         }
                                     }
+                                    .padding(.vertical, 2)
                                 }
-                                .padding(.vertical, 2)
                             }
+                        } else {
+                            Text("Sources (empty)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.vertical, 8)
                         }
                     }
                 }
                 .padding()
+                }
             }
-            .navigationTitle("Summary Details")
+            .navigationTitle("Fetch Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -289,6 +377,9 @@ struct SummaryDetailView: View {
                         dismiss()
                     }
                 }
+            }
+            .onAppear {
+                // Sources are now properly loaded - no need for verbose logging
             }
         }
     }
@@ -315,44 +406,53 @@ struct AudioPlayerView: View {
     @State private var currentTime: TimeInterval = 0
     @State private var duration: TimeInterval = 0
     @State private var timeObserver: Any?
+    @State private var isAvailable = true
+    @State private var errorObserver: Any?
     
     var body: some View {
-        VStack(spacing: 12) {
-            // Play/Pause Button
-            Button(action: togglePlayPause) {
-                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 50))
-                    .foregroundColor(.blue)
-            }
-            
-            // Progress Bar
-            VStack(spacing: 4) {
-                Slider(value: $currentTime, in: 0...duration, onEditingChanged: { editing in
-                    if !editing {
-                        let time = CMTime(seconds: currentTime, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-                        player?.seek(to: time)
-                    }
-                })
-                .accentColor(.blue)
+        if isAvailable {
+            VStack(spacing: 12) {
+                // Play/Pause Button
+                Button(action: togglePlayPause) {
+                    Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 50))
+                        .foregroundColor(.blue)
+                }
                 
-                HStack {
-                    Text(formatTime(currentTime))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                // Progress Bar
+                VStack(spacing: 4) {
+                    Slider(value: $currentTime, in: 0...duration, onEditingChanged: { editing in
+                        if !editing {
+                            let time = CMTime(seconds: currentTime, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+                            player?.seek(to: time)
+                        }
+                    })
+                    .accentColor(.blue)
                     
-                    Spacer()
-                    
-                    Text(formatTime(duration))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    HStack {
+                        Text(formatTime(currentTime))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Spacer()
+                        
+                        Text(formatTime(duration))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
-        }
-        .onAppear {
-            setupAudioPlayer()
-        }
-        .onDisappear {
-            stopAudio()
+            .onAppear {
+                setupAudioPlayer()
+            }
+            .onDisappear {
+                stopAudio()
+            }
+        } else {
+            Text("Audio unavailable")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.vertical, 8)
         }
     }
     
@@ -369,6 +469,36 @@ struct AudioPlayerView: View {
             currentTime = time.seconds
         }
         
+        // Set up error observer for failed playback
+        errorObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime,
+            object: playerItem,
+            queue: .main
+        ) { [self] notification in
+            if let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? NSError {
+                print("Audio playback failed: \(error.localizedDescription)")
+                // Check if it's a 404 or file not found error
+                if error.code == -1100 || error.domain == "CoreMediaErrorDomain" || error.code == -12938 {
+                    isAvailable = false
+                }
+            }
+        }
+        
+        // Check player item status immediately after a short delay
+        Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+            await MainActor.run {
+                if let item = player?.currentItem, item.status == .failed {
+                    if let error = item.error as NSError? {
+                        print("Player item failed: \(error.localizedDescription)")
+                        if error.code == -12938 || error.domain == "CoreMediaErrorDomain" || error.code == -1100 {
+                            isAvailable = false
+                        }
+                    }
+                }
+            }
+        }
+        
         // Get duration
         Task {
             do {
@@ -379,7 +509,21 @@ struct AudioPlayerView: View {
                     }
                 }
             } catch {
-                print("Failed to load duration: \(error)")
+                print("Failed to load duration: \(error.localizedDescription)")
+                // Check if it's a 404 error
+                if let urlError = error as? URLError {
+                    if urlError.code == .fileDoesNotExist || urlError.code == .badServerResponse {
+                        await MainActor.run {
+                            isAvailable = false
+                        }
+                    }
+                } else if let nsError = error as NSError? {
+                    if nsError.code == -12938 || nsError.domain == "CoreMediaErrorDomain" || nsError.code == -1100 {
+                        await MainActor.run {
+                            isAvailable = false
+                        }
+                    }
+                }
             }
         }
         
@@ -418,6 +562,10 @@ struct AudioPlayerView: View {
         if let timeObserver = timeObserver {
             player?.removeTimeObserver(timeObserver)
             self.timeObserver = nil
+        }
+        if let errorObserver = errorObserver {
+            NotificationCenter.default.removeObserver(errorObserver)
+            self.errorObserver = nil
         }
         isPlaying = false
         currentTime = 0

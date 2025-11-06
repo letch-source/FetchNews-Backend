@@ -14,6 +14,10 @@ struct MainTabView: View {
     
     var body: some View {
         ZStack {
+            // Background
+            Color.darkGreyBackground
+                .ignoresSafeArea()
+            
             // Main content
             Group {
                 switch selectedTab {
@@ -97,16 +101,24 @@ struct CustomBottomNavigation: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .padding(.bottom, 11) // Moved down 3 pixels (8 + 3 = 11)
-            .background(Color(.systemBackground))
+            .background(Color.black)
             .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: -2)
             
             // Floating Fetch News Button (Center) - positioned over the navigation bar
-            DynamicFetchButton(state: vm.fetchButtonState) {
-                Task { await vm.fetch() }
+            ZStack {
+                // Black circle behind the button
+                Circle()
+                    .fill(Color.black)
+                    .frame(width: 60, height: 60)
+                    .offset(y: -15)
+                
+                DynamicFetchButton(state: vm.fetchButtonState) {
+                    Task { await vm.fetch() }
+                }
+                .disabled(vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty)
+                .opacity((vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty) ? 0.6 : 1.0)
+                .offset(y: -15) // Positioned above the navigation bar
             }
-            .disabled(vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty)
-            .opacity((vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty) ? 0.6 : 1.0)
-            .offset(y: -15) // Positioned above the navigation bar
         }
     }
 }
@@ -120,8 +132,12 @@ struct AccountView: View {
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                // Header
+            ZStack {
+                Color.darkGreyBackground
+                    .ignoresSafeArea()
+                
+                VStack(spacing: 0) {
+                    // Header
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
@@ -153,16 +169,16 @@ struct AccountView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 16)
-                .background(Color(.systemBackground))
+                .background(Color.darkGreyBackground)
                 
                 // Account Content
                 ScrollView {
                     VStack(spacing: 24) {
                         if let user = authVM.currentUser {
-                            // Account Information
+                            // Account
                             VStack(alignment: .leading, spacing: 16) {
-                                Text("Account Information")
-                                    .font(.headline)
+                                Text("Account")
+                                    .font(.title3)
                                     .fontWeight(.semibold)
                                     .foregroundColor(.primary)
                                 
@@ -189,32 +205,23 @@ struct AccountView: View {
                                             .foregroundColor(user.isPremium ? .yellow : .secondary)
                                     }
                                     
-                                    if !user.isPremium {
-                                        HStack {
-                                            Text("Daily Usage")
+                                    HStack {
+                                        Text("Daily Usage")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.primary)
+                                        Spacer()
+                                        if user.isPremium {
+                                            Text("Unlimited")
                                                 .font(.subheadline)
-                                                .fontWeight(.medium)
-                                                .foregroundColor(.primary)
-                                            Spacer()
-                                            Text("\(user.dailyUsageCount)/10 summaries")
+                                                .foregroundColor(.secondary)
+                                        } else {
+                                            Text("\(user.dailyUsageCount)/3 summaries")
                                                 .font(.subheadline)
                                                 .foregroundColor(.secondary)
                                         }
                                     }
-                                }
-                                .padding()
-                                .background(Color(.systemGray6))
-                                .cornerRadius(12)
-                            }
-                            
-                            // Account Actions
-                            VStack(alignment: .leading, spacing: 16) {
-                                Text("Account")
-                                    .font(.headline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.primary)
-                                
-                                VStack(spacing: 12) {
+                                    
                                     Button("Sign Out") {
                                         authVM.logout()
                                     }
@@ -233,6 +240,7 @@ struct AccountView: View {
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
+                }
                 }
             }
         }

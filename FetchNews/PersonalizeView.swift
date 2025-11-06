@@ -15,10 +15,15 @@ struct PersonalizeView: View {
     @State private var scheduledEnabled: Bool = false
     @State private var scheduledTopics: Set<String> = []
     @State private var scheduledCustomTopics: Set<String> = []
+    @State private var saveTask: Task<Void, Never>? = nil
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
+            ZStack {
+                Color.darkGreyBackground
+                    .ignoresSafeArea()
+                
+                VStack(spacing: 0) {
                 // Header
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
@@ -34,24 +39,24 @@ struct PersonalizeView: View {
                         }
                         Spacer()
                         
-                        // Premium indicator - Hidden
-                        // if let user = authVM.currentUser, user.isPremium {
-                        //     Button("PREMIUM") {
-                        //         // Already premium, could show premium features
-                        //     }
-                        //     .font(.subheadline.weight(.semibold))
-                        //     .padding(.horizontal, 12)
-                        //     .padding(.vertical, 6)
-                        //     .background(Color.yellow)
-                        //     .foregroundColor(.black)
-                        //     .cornerRadius(8)
-                        // }
+                        // Premium button - only show if user is not premium
+                        if let user = authVM.currentUser, !user.isPremium {
+                            Button("PREMIUM") {
+                                vm.showSubscriptionView()
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.yellow)
+                            .foregroundColor(.black)
+                            .cornerRadius(8)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 16)
-                .background(Color(.systemBackground))
+                .background(Color.darkGreyBackground)
                 
                 // Personalization Content
                 ScrollView {
@@ -87,6 +92,7 @@ struct PersonalizeView: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
                 }
+                }
             }
         }
         .sheet(isPresented: $showingScheduledTopics) {
@@ -102,44 +108,45 @@ struct PersonalizeView: View {
             }
         }
         .onChange(of: scheduledTime) { oldValue, newValue in
-            Task {
-                // Ensure we have loaded the summary first
-                if vm.scheduledSummaries.isEmpty {
-                    await loadScheduledSummary()
-                }
-                await saveScheduledSummary()
-            }
+            debouncedSave()
         }
         .onChange(of: scheduledEnabled) { oldValue, newValue in
-            Task {
-                // Ensure we have loaded the summary first
-                if vm.scheduledSummaries.isEmpty {
-                    await loadScheduledSummary()
-                }
-                await saveScheduledSummary()
-            }
+            debouncedSave()
         }
         .onChange(of: scheduledTopics) { oldValue, newValue in
-            Task {
-                // Ensure we have loaded the summary first
-                if vm.scheduledSummaries.isEmpty {
-                    await loadScheduledSummary()
-                }
-                await saveScheduledSummary()
-            }
+            debouncedSave()
         }
         .onChange(of: scheduledCustomTopics) { oldValue, newValue in
-            Task {
-                // Ensure we have loaded the summary first
-                if vm.scheduledSummaries.isEmpty {
-                    await loadScheduledSummary()
-                }
-                await saveScheduledSummary()
-            }
+            debouncedSave()
+        }
+        .sheet(isPresented: $vm.showingSubscriptionView) {
+            SubscriptionView()
+                .environmentObject(vm)
+                .environmentObject(authVM)
         }
     }
     
     // MARK: - Scheduled Fetch Functions
+    
+    private func debouncedSave() {
+        // Cancel previous save task
+        saveTask?.cancel()
+        
+        // Create new save task with delay
+        saveTask = Task {
+            // Wait 500ms before saving to debounce rapid changes
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            
+            // Ensure we haven't been cancelled
+            guard !Task.isCancelled else { return }
+            
+            // Ensure we have loaded the summary first
+            if vm.scheduledSummaries.isEmpty {
+                await loadScheduledSummary()
+            }
+            await saveScheduledSummary()
+        }
+    }
     
     private func loadScheduledSummary() async {
         do {
@@ -149,19 +156,27 @@ struct PersonalizeView: View {
                     // Update vm.scheduledSummaries first
                     vm.scheduledSummaries = [summary]
                     
-                    // Load time
-                    let formatter = DateFormatter()
-                    formatter.dateFormat = "HH:mm"
-                    if let time = formatter.date(from: summary.time) {
-                        scheduledTime = roundTo10Minutes(time)
+                    // IMPORTANT: Only update settings if they haven't been loaded yet
+                    // This prevents scheduled fetches from overwriting user's current selections
+                    // Only load on initial app launch or if settings are empty
+                    let shouldLoadSettings = scheduledTopics.isEmpty && scheduledCustomTopics.isEmpty
+                    
+                    if shouldLoadSettings {
+                        // Load time
+                        let formatter = DateFormatter()
+                        formatter.dateFormat = "HH:mm"
+                        if let time = formatter.date(from: summary.time) {
+                            scheduledTime = roundTo10Minutes(time)
+                        }
+                        
+                        // Load enabled state
+                        scheduledEnabled = summary.isEnabled
+                        
+                        // Load topics
+                        scheduledTopics = Set(summary.topics)
+                        scheduledCustomTopics = Set(summary.customTopics)
                     }
-                    
-                    // Load enabled state
-                    scheduledEnabled = summary.isEnabled
-                    
-                    // Load topics
-                    scheduledTopics = Set(summary.topics)
-                    scheduledCustomTopics = Set(summary.customTopics)
+                    // Otherwise, preserve the user's current selections
                 }
             } else {
                 // No summary yet - set defaults
@@ -226,6 +241,8 @@ struct PersonalizeView: View {
         let topicsToSave = Array(scheduledTopics)
         let customTopicsToSave = Array(scheduledCustomTopics)
         
+        print("💾 Saving scheduled summary - topics: \(topicsToSave.count), customTopics: \(customTopicsToSave.count)")
+        
         let summaryToSave = ScheduledSummary(
             id: summary.id, // Use the existing ID (backend ensures it exists)
             name: "Daily Fetch",
@@ -239,13 +256,31 @@ struct PersonalizeView: View {
         )
         
         do {
-            // Always update (summary always exists)
-            let updatedSummary = try await ApiClient.updateScheduledSummary(summaryToSave)
+            // Always update (summary always exists) - include timezone
+            let userTimezone = TimeZone.current.identifier
+            let updatedSummary = try await ApiClient.updateScheduledSummary(summaryToSave, timezone: userTimezone)
             await MainActor.run {
                 vm.scheduledSummaries = [updatedSummary]
-                // Sync local state with saved topics
-                scheduledTopics = Set(updatedSummary.topics)
-                scheduledCustomTopics = Set(updatedSummary.customTopics)
+                
+                // IMPORTANT: Only sync topics if we actually sent them (preserve user's current selections)
+                // This prevents scheduled fetches from overwriting the user's selected topics
+                // Only update if the user explicitly changed topics (which triggers this save)
+                // The updatedSummary should match what we sent, so we can verify it matches
+                let sentTopics = Set(topicsToSave)
+                let receivedTopics = Set(updatedSummary.topics)
+                
+                // Only update if they match what we sent (user explicitly saved)
+                // If they don't match, the server might have returned different topics
+                // In that case, preserve the user's current selections
+                if sentTopics == receivedTopics {
+                    scheduledTopics = receivedTopics
+                }
+                // Similarly for custom topics
+                let sentCustomTopics = Set(customTopicsToSave)
+                let receivedCustomTopics = Set(updatedSummary.customTopics)
+                if sentCustomTopics == receivedCustomTopics {
+                    scheduledCustomTopics = receivedCustomTopics
+                }
             }
         } catch {
             print("Error saving scheduled fetch: \(error)")
@@ -347,7 +382,11 @@ struct ScheduledTopicsSelectorView: View {
     
     var body: some View {
         NavigationView {
-            Form {
+            ZStack {
+                Color.darkGreyBackground
+                    .ignoresSafeArea()
+                
+                Form {
                 Section(header: Text("Regular Topics")) {
                     ForEach(allTopics, id: \.self) { topic in
                         HStack {
@@ -418,6 +457,8 @@ struct ScheduledTopicsSelectorView: View {
                 Section(footer: Text("Select at least one topic for your scheduled fetch.")) {
                     EmptyView()
                 }
+            }
+            .scrollContentBackground(.hidden)
             }
             .navigationTitle("Select Topics")
             .navigationBarTitleDisplayMode(.inline)
@@ -504,7 +545,7 @@ struct TimePicker10Min: View {
     private func updateFromDate() {
         let calendar = Calendar.current
         let components = calendar.dateComponents([.hour, .minute], from: scheduledTime)
-        var hour24 = components.hour ?? 8
+        let hour24 = components.hour ?? 8
         
         // Determine AM/PM
         if hour24 >= 12 {

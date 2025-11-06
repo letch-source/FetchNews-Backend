@@ -16,7 +16,7 @@ class StoreKitManager: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     
-    private let productIDs = ["com.fetchnews.premium.monthly"]
+    private let productIDs = ["Premium"]
     
     init() {
         Task {
@@ -56,10 +56,10 @@ class StoreKitManager: ObservableObject {
                 // Update purchased products
                 await updatePurchasedProducts()
                 
-                // Send receipt to backend for validation
+                // Send receipt to backend for validation (this updates user's subscription status)
                 await validateReceipt(verification: verification)
                 
-                // Finish the transaction
+                // Finish the transaction after validation
                 await transaction.finish()
                 
                 return transaction
@@ -103,7 +103,7 @@ class StoreKitManager: ObservableObject {
     }
     
     var premiumProduct: StoreKit.Product? {
-        return products.first { $0.id == "com.fetchnews.premium.monthly" }
+        return products.first { $0.id == "Premium" }
     }
 }
 

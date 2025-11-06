@@ -122,31 +122,56 @@ struct SubscriptionView: View {
         } message: {
             Text(errorMessage)
         }
-        .alert("Upgraded for free. Thanks for beta testing!", isPresented: $showingBetaSuccess) {
+        .alert("Upgrade Successful!", isPresented: $showingBetaSuccess) {
             Button("Awesome!") {
                 dismiss()
             }
+        } message: {
+            Text("Your premium subscription is now active. Enjoy unlimited news summaries!")
         }
     }
     
     private func purchasePremium() async {
         isPurchasing = true
         
-        // Simulate processing time
-        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+        guard let product = storeKitManager.premiumProduct else {
+            errorMessage = "Product not available. Please try again later."
+            showingError = true
+            isPurchasing = false
+            return
+        }
         
         do {
-            // Upgrade user to premium for free (beta testing)
-            try await ApiClient.setUserPremiumStatus(email: authVM.currentUser?.email ?? "", isPremium: true)
+            // Purchase the product through StoreKit
+            _ = try await storeKitManager.purchase(product)
             
-            // Refresh user data
+            // StoreKitManager already validates the receipt with the backend
+            // and the backend updates the user's subscription status
+            
+            // Refresh user data to get the updated premium status
             await authVM.refreshUser()
             
             // Show success message
             showingBetaSuccess = true
             
+            // Close the view after a short delay
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+            dismiss()
+            
+        } catch let error as StoreKitError {
+            switch error {
+            case .userCancelled:
+                // User cancelled, don't show error
+                break
+            case .pending:
+                errorMessage = "Your purchase is pending approval. Premium access will be activated once approved."
+                showingError = true
+            case .unknown:
+                errorMessage = "Purchase failed. Please try again."
+                showingError = true
+            }
         } catch {
-            errorMessage = "Failed to upgrade account: \(error.localizedDescription)"
+            errorMessage = "Failed to complete purchase: \(error.localizedDescription)"
             showingError = true
         }
         
@@ -158,9 +183,35 @@ struct SubscriptionView: View {
         
         do {
             try await storeKitManager.restorePurchases()
+            
+            // After restoring, check if we have any active subscriptions
+            // If so, validate with backend to sync subscription status
             if storeKitManager.isPremium {
-                // Restore successful, refresh user data
+                // For each purchased product, validate the receipt
+                for await result in StoreKit.Transaction.currentEntitlements {
+                    if case .verified(let transaction) = result {
+                        if transaction.revocationDate == nil {
+                            // Get JWS representation from the verification result, not the transaction
+                            let jws = result.jwsRepresentation
+                            do {
+                                // Validate with backend to update subscription status
+                                try await ApiClient.validateReceipt(
+                                    receipt: jws,
+                                    transactionID: String(transaction.id)
+                                )
+                            } catch {
+                                print("Failed to validate restored purchase: \(error)")
+                            }
+                        }
+                    }
+                }
+                
+                // Refresh user data to get the updated premium status
                 await authVM.refreshUser()
+                
+                // Show success and dismiss
+                showingBetaSuccess = true
+                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
                 dismiss()
             } else {
                 errorMessage = "No previous purchases found."

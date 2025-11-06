@@ -49,11 +49,19 @@ final class NewsVM: ObservableObject {
     // Trending topics (fetched from backend)
     @Published var trendingTopics: [String] = []
     
+    // Recommended topics (fetched from backend)
+    @Published var recommendedTopics: [String] = []
+    
     // Timer for automatic trending topics refresh
     private var trendingTopicsTimer: Timer?
     
+    // Timer for periodic scheduled summary checking
+    private var scheduledSummaryTimer: Timer?
+    private var lastScheduledSummaryCheck: Date?
+    
     deinit {
         trendingTopicsTimer?.invalidate()
+        scheduledSummaryTimer?.invalidate()
     }
     
     // Last fetched topics for "Fetch again" functionality
@@ -150,13 +158,15 @@ final class NewsVM: ObservableObject {
         
         // Parallelize async operations for better performance
         if ApiClient.isAuthenticated {
-            // Run trending topics fetch in parallel with other operations
-            async let trendingTask = fetchTrendingTopics()
-            async let customTopicsTask = loadCustomTopics()
-            async let settingsTask = loadRemoteSettings()
+            // Run trending topics and recommended topics fetch in parallel with other operations
+            async let trendingTask: Void = fetchTrendingTopics()
+            async let recommendedTask: Void = fetchRecommendedTopics()
+            async let customTopicsTask: Void = loadCustomTopics()
+            async let settingsTask: Void = loadRemoteSettings()
             
-            // Wait for trending topics first (no auth required, can show immediately)
+            // Wait for trending topics and recommended topics first (no auth required, can show immediately)
             await trendingTask
+            await recommendedTask
             
             // Wait for user-specific data
             await customTopicsTask
@@ -164,14 +174,17 @@ final class NewsVM: ObservableObject {
             
             // Load news sources for premium users in parallel
             if let authVM = authVM, authVM.currentUser?.isPremium == true {
-                async let availableSourcesTask = loadAvailableNewsSources()
-                async let selectedSourcesTask = loadSelectedNewsSources()
+                async let availableSourcesTask: Void = loadAvailableNewsSources()
+                async let selectedSourcesTask: Void = loadSelectedNewsSources()
                 await availableSourcesTask
                 await selectedSourcesTask
             }
         } else {
-            // Not authenticated - just fetch trending topics
-            await fetchTrendingTopics()
+            // Not authenticated - just fetch trending topics and recommended topics
+            async let trendingTask: Void = fetchTrendingTopics()
+            async let recommendedTask: Void = fetchRecommendedTopics()
+            await trendingTask
+            await recommendedTask
         }
     }
     
@@ -465,7 +478,11 @@ final class NewsVM: ObservableObject {
                 currentSummaryVoice = selectedVoice
                 needsNewAudio = false
             }
+        } catch is CancellationError {
+            // TTS was cancelled - silently handle this
+            return
         } catch {
+            // Only show error for non-cancellation errors
             lastError = "Failed to re-record audio: \(error.localizedDescription)"
         }
         
@@ -608,20 +625,45 @@ final class NewsVM: ObservableObject {
 
                 // TTS
                 phase = .tts
-                if let text = self.combined?.summary {
-                    let url = try await ApiClient.tts(text: text, voice: selectedVoice, speed: playbackRate)
-                    if let audioUrl = url {
-                        self.combined = Combined(
-                            id: self.combined!.id,
-                            title: self.combined!.title,
-                            summary: self.combined!.summary,
-                            audioUrl: audioUrl
-                        )
-                        self.prepareAudio(urlString: audioUrl, title: self.combined!.title)
-                        // Record the voice used for this summary
-                        self.currentSummaryVoice = self.selectedVoice
-                        self.needsNewAudio = false
+                if let text = self.combined?.summary, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    do {
+                        // Check for cancellation again right before TTS call
+                        try Task.checkCancellation()
+                        print("🎤 [TTS] Starting TTS generation for summary (length: \(text.count) chars)")
+                        let url = try await ApiClient.tts(text: text, voice: selectedVoice, speed: playbackRate)
+                        // Check for cancellation after TTS call completes
+                        try Task.checkCancellation()
+                        if let audioUrl = url {
+                            print("✅ [TTS] Successfully generated audio: \(audioUrl)")
+                            self.combined = Combined(
+                                id: self.combined!.id,
+                                title: self.combined!.title,
+                                summary: self.combined!.summary,
+                                audioUrl: audioUrl
+                            )
+                            self.prepareAudio(urlString: audioUrl, title: self.combined!.title)
+                            // Record the voice used for this summary
+                            self.currentSummaryVoice = self.selectedVoice
+                            self.needsNewAudio = false
+                        } else {
+                            print("⚠️ [TTS] TTS API returned nil audioUrl")
+                            // Don't show error - audio is optional
+                        }
+                    } catch is CancellationError {
+                        // TTS was cancelled - this is expected behavior, not an error
+                        print("ℹ️ [TTS] TTS generation was cancelled")
+                        return
+                    } catch {
+                        // Log TTS errors but don't block the summary
+                        print("❌ [TTS] Failed to generate audio: \(error.localizedDescription)")
+                        if let networkError = error as? NetworkError {
+                            print("   Error type: \(networkError.errorDescription)")
+                        }
+                        // Continue without audio - summary is still usable
+                        // Don't set lastError here - TTS failures shouldn't prevent using the summary
                     }
+                } else {
+                    print("⚠️ [TTS] Skipping TTS - summary text is empty or nil")
                 }
 
                 isDirty = false
@@ -638,8 +680,8 @@ final class NewsVM: ObservableObject {
                 // Refresh user data to update usage count
                 await authVM?.refreshUser()
             } catch {
-                // Don't show error if task was cancelled
-                if Task.isCancelled {
+                // Don't show error if task was cancelled (including CancellationError)
+                if Task.isCancelled || error is CancellationError {
                     return
                 }
                 
@@ -746,6 +788,40 @@ final class NewsVM: ObservableObject {
                 self.isPlaying = false
                 self.currentTime = self.duration
                 self.updateNowPlaying(isPlaying: false)
+            }
+        }
+
+        // Observe playback failures (e.g., 404 errors)
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor in
+                guard let self = self else { return }
+                if let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? NSError {
+                    print("Audio playback failed: \(error.localizedDescription)")
+                    // Check if it's a 404 or file not found error
+                    if error.code == -1100 || error.domain == "CoreMediaErrorDomain" || error.code == -12938 {
+                        // Audio file not found - disable playback
+                        self.canPlay = false
+                    }
+                }
+            }
+        }
+        
+        // Check item status after a short delay to catch early failures
+        Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+            await MainActor.run {
+                if let currentItem = p.currentItem, currentItem.status == .failed {
+                    if let error = currentItem.error as NSError? {
+                        print("Audio item failed to load: \(error.localizedDescription)")
+                        if error.code == -12938 || error.domain == "CoreMediaErrorDomain" || error.code == -1100 {
+                            canPlay = false
+                        }
+                    }
+                }
             }
         }
 
@@ -874,6 +950,21 @@ final class NewsVM: ObservableObject {
         }
     }
     
+    func fetchRecommendedTopics() async {
+        do {
+            let response = try await ApiClient.getRecommendedTopics()
+            await MainActor.run {
+                self.recommendedTopics = response.recommendedTopics
+            }
+        } catch {
+            print("Failed to fetch recommended topics: \(error)")
+            // Fallback to default topics if fetch fails
+            await MainActor.run {
+                self.recommendedTopics = ["Business", "Entertainment", "Health", "Science"]
+            }
+        }
+    }
+    
     private func setupTrendingTopicsTimer() {
         // Cancel existing timer if any
         trendingTopicsTimer?.invalidate()
@@ -967,6 +1058,19 @@ final class NewsVM: ObservableObject {
     func saveSummaryToHistory() async {
         guard let summary = combined else { return }
         
+        // Convert items to SourceItem format expected by backend
+        let sourceItems: [[String: Any?]] = items.compactMap { item in
+            guard let source = item.source, !source.isEmpty else { return nil }
+            return [
+                "id": item.id,
+                "title": item.title,
+                "summary": item.summary,
+                "source": source,
+                "url": item.url,
+                "topic": item.topic
+            ]
+        }
+        
         let summaryData: [String: Any] = [
             "id": summary.id,
             "title": summary.title,
@@ -975,7 +1079,7 @@ final class NewsVM: ObservableObject {
             "length": length.rawValue,
             "wordCount": length.rawValue,
             "audioUrl": summary.audioUrl ?? "",
-            "sources": items.compactMap { $0.source }.filter { !$0.isEmpty }
+            "sources": sourceItems
         ]
         
         do {
@@ -1035,6 +1139,8 @@ final class NewsVM: ObservableObject {
                 )
                 
                 // Set last fetched topics from the scheduled fetch's topics
+                // Note: This updates lastFetchedTopics but does NOT change the user's selected topics
+                // The user's selected topics for their next fetch remain unchanged
                 lastFetchedTopics = Set(mostRecent.topics)
                 
                 // Convert sources to items if available
@@ -1057,11 +1163,43 @@ final class NewsVM: ObservableObject {
                 // Reset player state for new summary
                 resetPlayerState()
                 
-                print("✅ Loaded scheduled fetch '\(mostRecent.title)' to homepage")
+                // Prepare audio if audioUrl is available
+                if let audioUrlString = mostRecent.audioUrl, !audioUrlString.isEmpty {
+                    prepareAudio(urlString: audioUrlString, title: mostRecent.title)
+                    print("✅ Loaded scheduled fetch '\(mostRecent.title)' to homepage with audio")
+                } else {
+                    print("✅ Loaded scheduled fetch '\(mostRecent.title)' to homepage (no audio)")
+                }
             }
         } catch {
             print("Failed to check for scheduled fetch: \(error)")
         }
+    }
+    
+    // Start periodic checking for scheduled summaries (every 2 minutes)
+    func startPeriodicScheduledSummaryCheck() {
+        stopPeriodicScheduledSummaryCheck() // Stop any existing timer
+        
+        // Check immediately
+        Task { @MainActor in
+            await checkForScheduledSummary()
+        }
+        
+        // Then check every 2 minutes
+        scheduledSummaryTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.checkForScheduledSummary()
+            }
+        }
+        
+        print("🔄 Started periodic scheduled summary check (every 2 minutes)")
+    }
+    
+    // Stop periodic checking for scheduled summaries
+    func stopPeriodicScheduledSummaryCheck() {
+        scheduledSummaryTimer?.invalidate()
+        scheduledSummaryTimer = nil
+        print("⏹️ Stopped periodic scheduled summary check")
     }
     
     private func parseTimestamp(_ timestamp: String) -> Date? {

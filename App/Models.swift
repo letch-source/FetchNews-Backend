@@ -231,6 +231,22 @@ struct SourceItem: Codable, Hashable {
         self.topic = nil
     }
     
+    // Custom decoder to handle missing source field
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(String.self, forKey: .id)
+        self.title = try container.decodeIfPresent(String.self, forKey: .title)
+        self.summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        // Try to decode source, but provide empty string if missing
+        self.source = try container.decodeIfPresent(String.self, forKey: .source) ?? ""
+        self.url = try container.decodeIfPresent(String.self, forKey: .url)
+        self.topic = try container.decodeIfPresent(String.self, forKey: .topic)
+    }
+    
+    private enum CodingKeys: String, CodingKey {
+        case id, title, summary, source, url, topic
+    }
+    
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
         hasher.combine(source)
@@ -334,6 +350,11 @@ struct NewsSourcesResponse: Codable {
 
 struct TrendingTopicsResponse: Codable {
     let trendingTopics: [String]
+    let lastUpdated: String?
+}
+
+struct RecommendedTopicsResponse: Codable {
+    let recommendedTopics: [String]
     let lastUpdated: String?
 }
 

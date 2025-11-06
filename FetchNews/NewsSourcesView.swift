@@ -92,7 +92,7 @@ struct NewsSourcesView: View {
                             }
                         }
                         .padding()
-                        .background(Color(.systemBackground))
+                        .background(Color.darkGreyBackground)
                         
                         // Sources list
                         if isLoading {

@@ -35,7 +35,7 @@ struct ScheduledSummariesView: View {
                     }
                     .padding()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(.systemBackground))
+                    .background(Color.darkGreyBackground)
                 } else {
                     // Scheduled summary (only one allowed)
                     if vm.scheduledSummaries.isEmpty {

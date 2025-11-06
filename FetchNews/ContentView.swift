@@ -7,6 +7,14 @@
 
 import SwiftUI
 
+// MARK: - Color Extensions
+
+extension Color {
+    static let darkGreyBackground = Color(red: 0.15, green: 0.15, blue: 0.15)
+    static let buttonGrey = Color(red: 0.35, green: 0.35, blue: 0.35)
+    static let buttonGreyText = Color(red: 0.7, green: 0.7, blue: 0.7)
+}
+
 // MARK: - Constants
 
 let ALL_TOPICS: [String] = [
@@ -300,13 +308,13 @@ struct ContentView: View {
                                     Spacer()
                                 }
                                 Rectangle()
-                                    .fill(Color(.systemBackground))
+                                    .fill(Color.darkGreyBackground)
                                     .frame(height: 12)
                                     .accessibilityHidden(true)
                             }
                             .padding(.horizontal)
                             .padding(.top, 2)
-                            .background(Color(.systemBackground))
+                            .background(Color.darkGreyBackground)
                             .zIndex(1)
                         }
                     }
@@ -399,7 +407,7 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
-        .background(Color(.systemBackground))
+        .background(Color.darkGreyBackground)
     }
 }
 
@@ -489,12 +497,8 @@ struct TopicChip: View {
                 .padding(.vertical, 6)
                 .padding(.horizontal, 12)
                 .frame(minWidth: minWidth)
-                .background(isActive ? Color.white : Color.clear)
-                .foregroundColor(isActive ? .black : .white)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 999)
-                        .stroke(Color.white, lineWidth: 1)
-                )
+                .background(isActive ? Color.blue : Color.buttonGrey)
+                .foregroundColor(.white)
                 .cornerRadius(999)
         }
     }
@@ -511,9 +515,8 @@ struct LengthChip: View {
                 .lineLimit(1)
                 .padding(.vertical, 6)
                 .padding(.horizontal, 12)
-                .background(isActive ? Color.white : Color.clear)
-                .foregroundColor(isActive ? .black : .white)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white, lineWidth: 1))
+                .background(isActive ? Color.blue : Color.buttonGrey)
+                .foregroundColor(.white)
                 .cornerRadius(10)
         }
     }
@@ -645,7 +648,11 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationView {
-            Form {
+            ZStack {
+                Color.darkGreyBackground
+                    .ignoresSafeArea()
+                
+                Form {
                 Section(header: Text("Playback Speed"), footer: Text("Adjust the playback speed for audio summaries.")) {
                     Picker("Speed", selection: $vm.playbackRate) {
                         ForEach(speeds, id: \.self) { s in
@@ -778,6 +785,8 @@ struct SettingsView: View {
                         }
                         .foregroundColor(.red)
                     }
+                }
+                .scrollContentBackground(.hidden)
                 }
             }
             .navigationTitle("Settings")

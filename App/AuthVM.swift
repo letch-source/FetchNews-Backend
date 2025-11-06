@@ -205,12 +205,14 @@ final class AuthVM: ObservableObject {
     
     var canFetchNews: Bool {
         guard let user = currentUser else { return false }
-        return user.isPremium || user.dailyUsageCount < 10
+        let limit = user.isPremium ? 20 : 3
+        return user.dailyUsageCount < limit
     }
     
     var remainingSummaries: Int {
         guard let user = currentUser else { return 0 }
-        return user.isPremium ? -1 : max(0, 10 - user.dailyUsageCount)
+        let limit = user.isPremium ? 20 : 3
+        return max(0, limit - user.dailyUsageCount)
     }
     
     // MARK: - Testing Methods

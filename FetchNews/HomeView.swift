@@ -82,6 +82,7 @@ struct HomeView: View {
                     
                     // Recommended Topics Section
                     RecommendedTopicsSection(
+                        recommendedTopics: vm.recommendedTopics,
                         selectedTopics: vm.selectedTopics,
                         onTopicToggle: { topic in vm.toggle(topic) },
                         showAll: $showAllRecommended
@@ -186,13 +187,13 @@ struct HomeView: View {
                                     Spacer()
                                 }
                                 Rectangle()
-                                    .fill(Color(.systemBackground))
+                                    .fill(Color.darkGreyBackground)
                                     .frame(height: 12)
                                     .accessibilityHidden(true)
                             }
                             .padding(.horizontal)
                             .padding(.top, 2)
-                            .background(Color(.systemBackground))
+                            .background(Color.darkGreyBackground)
                             .zIndex(1)
                         }
                     }
@@ -217,7 +218,16 @@ struct HomeView: View {
                         .padding(.top, 60)
                     }
 
-                    Spacer(minLength: 100) // Extra space for custom bottom navigation
+                    // Add extra bottom padding when audio player is visible so content can scroll above it
+                    Spacer(minLength: vm.canPlay ? 150 : 100) // Extra space for audio player + navigation
+                }
+            }
+            // Adjust scroll content insets when audio player is visible
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if vm.canPlay {
+                    // Spacer that matches the audio player height (~100px for bubble + 80px bottom padding = 180px)
+                    // This allows content to scroll above the audio player
+                    Color.clear.frame(height: 180)
                 }
             }
         }
@@ -257,6 +267,23 @@ struct HomeView: View {
         .onAppear {
             // Set the authVM reference in NewsVM for limit checking
             vm.authVM = authVM
+            
+            // Check for scheduled summaries when HomeView appears
+            Task {
+                await vm.checkForScheduledSummary()
+            }
+            
+            // Start periodic checking for scheduled summaries every 2 minutes
+            vm.startPeriodicScheduledSummaryCheck()
+        }
+        .onDisappear {
+            // Stop periodic checking when HomeView disappears
+            vm.stopPeriodicScheduledSummaryCheck()
+        }
+        .sheet(isPresented: $vm.showingSubscriptionView) {
+            SubscriptionView()
+                .environmentObject(vm)
+                .environmentObject(authVM)
         }
     }
 
@@ -275,24 +302,24 @@ struct HomeView: View {
                 }
                 Spacer()
                 
-                // Premium indicator - Hidden
-                // if let user = authVM.currentUser, user.isPremium {
-                //     Button("PREMIUM") {
-                //         // Already premium, could show premium features
-                //     }
-                //     .font(.subheadline.weight(.semibold))
-                //     .padding(.horizontal, 12)
-                //     .padding(.vertical, 6)
-                //     .background(Color.yellow)
-                //     .foregroundColor(.black)
-                //     .cornerRadius(8)
-                // }
+                // Premium button - only show if user is not premium
+                if let user = authVM.currentUser, !user.isPremium {
+                    Button("PREMIUM") {
+                        vm.showSubscriptionView()
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.yellow)
+                    .foregroundColor(.black)
+                    .cornerRadius(8)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
-        .background(Color(.systemBackground))
+        .background(Color.darkGreyBackground)
     }
 }
 
@@ -449,12 +476,10 @@ struct TrendingTopicsSection: View {
 }
 
 struct RecommendedTopicsSection: View {
+    let recommendedTopics: [String]
     let selectedTopics: Set<String>
     let onTopicToggle: (String) -> Void
     @Binding var showAll: Bool
-    
-    // Use some of the predefined topics as "recommended"
-    private let recommendedTopics = ["Business", "Entertainment", "Health", "Science"]
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -464,15 +489,24 @@ struct RecommendedTopicsSection: View {
                     .fontWeight(.semibold)
                     .foregroundColor(.primary)
                 Spacer()
-                Button(showAll ? "Show less" : "See all") {
-                    showAll.toggle()
+                if !recommendedTopics.isEmpty {
+                    Button(showAll ? "Show less" : "See all") {
+                        showAll.toggle()
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.blue)
                 }
-                .font(.subheadline)
-                .foregroundColor(.blue)
             }
             .padding(.horizontal, 20)
             
-            if showAll {
+            if recommendedTopics.isEmpty {
+                // Show unavailable message when no recommended topics
+                Text("Recommended topics unavailable")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+            } else if showAll {
                 // Vertical stacked layout
                 LazyVGrid(columns: [
                     GridItem(.adaptive(minimum: 140), spacing: 10, alignment: .center)

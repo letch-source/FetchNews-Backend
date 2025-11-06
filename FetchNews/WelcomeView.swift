@@ -27,21 +27,20 @@ struct WelcomeView: View {
                                 .aspectRatio(contentMode: .fit)
                                 .frame(width: 120, height: 120)
                             
-                            Text("FetchNews")
+                            Text("Fetch News")
                                 .font(.largeTitle)
                                 .fontWeight(.bold)
                                 .foregroundColor(.primary)
+                            
+                            Text("News for busy people")
+                                .font(.title3)
+                                .foregroundColor(.secondary)
                         }
                         
                         Spacer()
                         
                         // Features
                         VStack(spacing: 16) {
-                            Text("Stay informed with AI-powered news summaries")
-                                .font(.title2)
-                                .fontWeight(.medium)
-                                .multilineTextAlignment(.center)
-                                .foregroundColor(.secondary)
                             
                             VStack(spacing: 12) {
                                 FeatureRow(icon: "newspaper", text: "Daily news summaries")
@@ -91,6 +90,7 @@ struct WelcomeView: View {
                         .padding(.bottom, max(20, geometry.safeAreaInsets.bottom + 20))
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.darkGreyBackground)
                 }
             }
             .navigationTitle("")
