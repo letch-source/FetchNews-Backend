@@ -127,16 +127,35 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };
 
+// Helper function to get date string in PST timezone
+function getDateStringInPST(date = new Date()) {
+  // Get date components in PST (America/Los_Angeles timezone)
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.formatToParts(date);
+  const year = parts.find(p => p.type === 'year').value;
+  const month = parts.find(p => p.type === 'month').value;
+  const day = parts.find(p => p.type === 'day').value;
+  
+  // Create a date object from PST date components and return its date string
+  // This ensures consistent format matching toDateString()
+  const pstDate = new Date(`${year}-${month}-${day}T00:00:00`);
+  return pstDate.toDateString();
+}
+
 // Check if user can fetch news
 userSchema.methods.canFetchNews = function() {
-  // Get today's date string (uses local timezone - resets at midnight for the server's timezone)
-  // Note: If server is in UTC, this resets at UTC midnight. For user timezone, we'd need timezone info.
+  // Get today's date string in PST timezone (resets at midnight PST)
   const now = new Date();
-  const today = now.toDateString();
-  const lastUsageDate = this.lastUsageDate ? new Date(this.lastUsageDate).toDateString() : today;
+  const today = getDateStringInPST(now);
+  const lastUsageDate = this.lastUsageDate ? getDateStringInPST(new Date(this.lastUsageDate)) : today;
   
-  // Reset daily count if it's a new day (resets at midnight in server's timezone)
-  // The toDateString() comparison ensures reset happens when date changes
+  // Reset daily count if it's a new day (resets at midnight PST)
+  // The date string comparison ensures reset happens when date changes in PST
   if (lastUsageDate !== today) {
     this.dailyUsageCount = 0;
     this.lastUsageDate = now;

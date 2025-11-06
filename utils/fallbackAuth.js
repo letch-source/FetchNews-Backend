@@ -134,10 +134,30 @@ const fallbackAuth = {
   },
   
   canFetchNews(user) {
-    const today = new Date().toDateString();
-    const lastUsageDate = user.lastUsageDate ? new Date(user.lastUsageDate).toDateString() : today;
+    // Helper function to get date string in PST timezone
+    const getDateStringInPST = (date = new Date()) => {
+      // Get date components in PST (America/Los_Angeles timezone)
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      const parts = formatter.formatToParts(date);
+      const year = parts.find(p => p.type === 'year').value;
+      const month = parts.find(p => p.type === 'month').value;
+      const day = parts.find(p => p.type === 'day').value;
+      
+      // Create a date object from PST date components and return its date string
+      // This ensures consistent format matching toDateString()
+      const pstDate = new Date(`${year}-${month}-${day}T00:00:00`);
+      return pstDate.toDateString();
+    };
     
-    // Reset daily count if it's a new day (resets at midnight in user's timezone)
+    const today = getDateStringInPST();
+    const lastUsageDate = user.lastUsageDate ? getDateStringInPST(new Date(user.lastUsageDate)) : today;
+    
+    // Reset daily count if it's a new day (resets at midnight PST)
     if (lastUsageDate !== today) {
       user.dailyUsageCount = 0;
       user.lastUsageDate = new Date();
