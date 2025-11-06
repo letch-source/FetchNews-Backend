@@ -41,7 +41,6 @@ router.get('/', authenticateToken, async (req, res) => {
     // Ensure sources are properly serialized from Mongoose subdocuments
     const formattedHistory = summaryHistory.map(entry => {
       const entryObj = entry.toObject ? entry.toObject() : entry;
-<<<<<<< Updated upstream
       const timestamp = entry.timestamp instanceof Date ? entry.timestamp : new Date(entry.timestamp);
       const timestampISO = timestamp.toISOString();
       
