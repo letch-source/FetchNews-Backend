@@ -86,10 +86,16 @@ function ensureCompleteSentence(text) {
   return text + '.';
 }
 
-// AI-powered article relevance filter
+// AI-powered article relevance filter (optimized for memory efficiency)
 // Uses OpenAI to verify articles match the requested topic/category
 // This addresses API miscategorization issues in a general way
-async function filterArticlesByRelevance(articles, topicOrCategory, openaiClient) {
+async function filterArticlesByRelevance(articles, topicOrCategory) {
+  // Check if AI filtering is disabled via environment variable
+  if (process.env.DISABLE_AI_FILTER === 'true') {
+    console.log('[AI-FILTER] Disabled via DISABLE_AI_FILTER env variable');
+    return articles;
+  }
+  
   if (!articles || articles.length === 0) {
     return articles;
   }
@@ -99,14 +105,26 @@ async function filterArticlesByRelevance(articles, topicOrCategory, openaiClient
     return articles;
   }
   
+  // Create cache key from article titles + topic
+  const cacheKey = `${topicOrCategory}:${articles.map(a => a.title).join('|')}`;
+  const cacheHash = cacheKey.substring(0, 100); // Limit key size
+  
+  // Check cache first
+  const cached = filterCache.get(cacheHash);
+  if (cached && (Date.now() - cached.timestamp) < FILTER_CACHE_TTL) {
+    console.log(`[AI-FILTER] Using cached result for "${topicOrCategory}"`);
+    // Return filtered articles based on cached indices
+    return articles.filter((_, idx) => !cached.indicesToRemove.has(idx));
+  }
+  
   console.log(`[AI-FILTER] Checking relevance of ${articles.length} articles for topic: "${topicOrCategory}"`);
   
   try {
-    // Prepare article summaries for batch classification
+    // Prepare article summaries for batch classification (limit description length)
     const articleSummaries = articles.map((article, idx) => {
       const title = article.title || '';
       const description = article.description || '';
-      return `${idx}. "${title}" - ${description.substring(0, 150)}`;
+      return `${idx}. "${title}" - ${description.substring(0, 100)}`;
     }).join('\n\n');
     
     // Use GPT to classify article relevance in a single API call
@@ -140,23 +158,38 @@ Return format: Just the numbers or "NONE" (e.g., "1,5,7" or "NONE")`;
         }
       ],
       temperature: 0.1,
-      max_tokens: 100
+      max_tokens: 50 // Reduced from 100 to save memory
     });
     
     const result = response.choices[0]?.message?.content?.trim() || "NONE";
     console.log(`[AI-FILTER] GPT classification result: ${result}`);
     
-    if (result === "NONE") {
+    let indicesToRemove = new Set();
+    
+    if (result !== "NONE") {
+      // Parse the indices to filter
+      indicesToRemove = new Set(
+        result.split(',')
+          .map(n => parseInt(n.trim()))
+          .filter(n => !isNaN(n) && n >= 0 && n < articles.length)
+      );
+    }
+    
+    // Cache the result
+    if (filterCache.size >= FILTER_CACHE_MAX_SIZE) {
+      // Remove oldest entry when cache is full
+      const firstKey = filterCache.keys().next().value;
+      filterCache.delete(firstKey);
+    }
+    filterCache.set(cacheHash, {
+      indicesToRemove,
+      timestamp: Date.now()
+    });
+    
+    if (indicesToRemove.size === 0) {
       console.log(`[AI-FILTER] All articles are relevant, no filtering needed`);
       return articles;
     }
-    
-    // Parse the indices to filter
-    const indicesToRemove = new Set(
-      result.split(',')
-        .map(n => parseInt(n.trim()))
-        .filter(n => !isNaN(n) && n >= 0 && n < articles.length)
-    );
     
     // Filter out irrelevant articles
     const filtered = articles.filter((article, idx) => {
@@ -576,6 +609,14 @@ if (!JWT_SECRET) {
 const MEDIASTACK_KEY = process.env.MEDIASTACK_KEY || "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 
+// Create a single shared OpenAI client instance to reduce memory usage
+const openaiClient = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+// In-memory cache for AI filtering results to reduce API calls and memory usage
+const filterCache = new Map();
+const FILTER_CACHE_MAX_SIZE = 100;
+const FILTER_CACHE_TTL = 3600000; // 1 hour
+
 // --- In-memory data store fallback (replace with SQLite later) ---
 let users = []; // [{ email, passwordHash, topics: [], location: "" }]
 
@@ -711,8 +752,7 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [])
   
   // Apply AI-powered relevance filter to remove miscategorized articles
   const topicName = qParts.filter(Boolean).join(" ");
-  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-  const filteredArticles = await filterArticlesByRelevance(mappedArticles, topicName, openai);
+  const filteredArticles = await filterArticlesByRelevance(mappedArticles, topicName);
   
   // Removed source printing log
   return filteredArticles;
@@ -854,8 +894,7 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
   }));
   
   // Apply AI-powered relevance filter to remove miscategorized articles
-  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-  const filteredArticles = await filterArticlesByRelevance(articles, category || 'general', openai);
+  const filteredArticles = await filterArticlesByRelevance(articles, category || 'general');
   
   // Removed source printing log
   return filteredArticles;
@@ -1085,7 +1124,7 @@ async function summarizeArticles(topic, geo, articles, wordCount, goodNewsOnly =
   }
 
   try {
-    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    // Use shared OpenAI client to reduce memory usage
     
     // Optimized article preparation for ChatGPT (limit to 4 articles for faster processing)
     const articleTexts = articles.slice(0, 4).map((article, index) => {
@@ -1139,7 +1178,7 @@ Requirements:
 
     console.log(`Sending ${articles.length} articles to ChatGPT for summarization`);
 
-    const completion = await openai.chat.completions.create({
+    const completion = await openaiClient.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -2087,10 +2126,10 @@ app.post("/api/tts", async (req, res) => {
     
     console.log(`TTS cache miss - generating new audio with voice: ${voice}`);
 
-    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    // Use shared OpenAI client to reduce memory usage
 
     async function tryModel(model, voice) {
-      return await openai.audio.speech.create({
+      return await openaiClient.audio.speech.create({
         model,
         voice,
         input: finalText,
