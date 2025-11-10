@@ -16,79 +16,76 @@ struct WelcomeView: View {
         NavigationView {
             GeometryReader { geometry in
                 let isSmallScreen = geometry.size.height < 700
-                let logoSize: CGFloat = isSmallScreen ? 80 : 120
-                let sectionSpacing: CGFloat = isSmallScreen ? 25 : 40
-                let featureSpacing: CGFloat = isSmallScreen ? 10 : 12
+                let logoSize: CGFloat = isSmallScreen ? 70 : 100
                 
-                ScrollView {
-                    VStack(spacing: sectionSpacing) {
-                        // Top spacer
-                        Color.clear.frame(height: isSmallScreen ? 30 : 50)
+                VStack(spacing: 0) {
+                    Spacer()
+                    
+                    // Logo and title
+                    VStack(spacing: isSmallScreen ? 12 : 16) {
+                        Image("Launch Logo")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: logoSize, height: logoSize)
                         
-                        // Logo and title
-                        VStack(spacing: isSmallScreen ? 16 : 20) {
-                            Image("Launch Logo")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: logoSize, height: logoSize)
-                            
-                            Text("Fetch News")
-                                .font(isSmallScreen ? .title : .largeTitle)
-                                .fontWeight(.bold)
-                                .foregroundColor(.primary)
-                            
-                            Text("News for busy people")
-                                .font(isSmallScreen ? .body : .title3)
-                                .foregroundColor(.secondary)
-                        }
+                        Text("Fetch News")
+                            .font(isSmallScreen ? .title2 : .largeTitle)
+                            .fontWeight(.bold)
+                            .foregroundColor(.primary)
                         
-                        // Features
-                        VStack(spacing: featureSpacing) {
-                            FeatureRow(icon: "newspaper", text: "Daily news summaries")
-                            FeatureRow(icon: "speaker.wave.3", text: "Audio narration")
-                            FeatureRow(icon: "star", text: "Premium features available")
-                            FeatureRow(icon: "clock", text: "Scheduled summaries")
-                            FeatureRow(icon: "person.crop.circle", text: "Personalized topics")
-                        }
-                        .padding(.horizontal, 20)
-                        
-                        // Action buttons
-                        VStack(spacing: isSmallScreen ? 12 : 16) {
-                            Button(action: {
-                                showingLogin = true
-                            }) {
-                                Text("Login")
-                                    .font(isSmallScreen ? .body.weight(.semibold) : .headline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, isSmallScreen ? 14 : 16)
-                                    .background(Color.blue)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(12)
-                            }
-                            
-                            Button(action: {
-                                showingSignUp = true
-                            }) {
-                                Text("Sign Up")
-                                    .font(isSmallScreen ? .body.weight(.semibold) : .headline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, isSmallScreen ? 14 : 16)
-                                    .background(Color.white)
-                                    .foregroundColor(.blue)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(Color.blue, lineWidth: 2)
-                                    )
-                                    .cornerRadius(12)
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                        
-                        // Bottom padding
-                        Color.clear.frame(height: max(20, geometry.safeAreaInsets.bottom + 20))
+                        Text("News for busy people")
+                            .font(isSmallScreen ? .subheadline : .title3)
+                            .foregroundColor(.secondary)
                     }
-                    .frame(minHeight: geometry.size.height)
+                    
+                    Spacer()
+                    
+                    // Features
+                    VStack(spacing: isSmallScreen ? 8 : 10) {
+                        FeatureRow(icon: "newspaper", text: "Daily news summaries")
+                        FeatureRow(icon: "speaker.wave.3", text: "Audio narration")
+                        FeatureRow(icon: "star", text: "Premium features available")
+                        FeatureRow(icon: "clock", text: "Scheduled summaries")
+                        FeatureRow(icon: "person.crop.circle", text: "Personalized topics")
+                    }
+                    .padding(.horizontal, 20)
+                    
+                    Spacer()
+                    
+                    // Action buttons
+                    VStack(spacing: isSmallScreen ? 10 : 14) {
+                        Button(action: {
+                            showingLogin = true
+                        }) {
+                            Text("Login")
+                                .font(isSmallScreen ? .body.weight(.semibold) : .headline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, isSmallScreen ? 13 : 15)
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(12)
+                        }
+                        
+                        Button(action: {
+                            showingSignUp = true
+                        }) {
+                            Text("Sign Up")
+                                .font(isSmallScreen ? .body.weight(.semibold) : .headline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, isSmallScreen ? 13 : 15)
+                                .background(Color.white)
+                                .foregroundColor(.blue)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Color.blue, lineWidth: 2)
+                                )
+                                .cornerRadius(12)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, max(30, geometry.safeAreaInsets.bottom + 30))
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.darkGreyBackground)
             }
             .navigationTitle("")
