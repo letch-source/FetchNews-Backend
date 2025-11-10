@@ -15,55 +15,52 @@ struct WelcomeView: View {
     var body: some View {
         NavigationView {
             GeometryReader { geometry in
-                VStack(spacing: 0) {
-                    // Main content
-                    VStack(spacing: 40) {
-                        Spacer()
+                let isSmallScreen = geometry.size.height < 700
+                let logoSize: CGFloat = isSmallScreen ? 80 : 120
+                let sectionSpacing: CGFloat = isSmallScreen ? 25 : 40
+                let featureSpacing: CGFloat = isSmallScreen ? 10 : 12
+                
+                ScrollView {
+                    VStack(spacing: sectionSpacing) {
+                        // Top spacer
+                        Color.clear.frame(height: isSmallScreen ? 30 : 50)
                         
                         // Logo and title
-                        VStack(spacing: 20) {
+                        VStack(spacing: isSmallScreen ? 16 : 20) {
                             Image("Launch Logo")
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
-                                .frame(width: 120, height: 120)
+                                .frame(width: logoSize, height: logoSize)
                             
                             Text("Fetch News")
-                                .font(.largeTitle)
+                                .font(isSmallScreen ? .title : .largeTitle)
                                 .fontWeight(.bold)
                                 .foregroundColor(.primary)
                             
                             Text("News for busy people")
-                                .font(.title3)
+                                .font(isSmallScreen ? .body : .title3)
                                 .foregroundColor(.secondary)
                         }
                         
-                        Spacer()
-                        
                         // Features
-                        VStack(spacing: 16) {
-                            
-                            VStack(spacing: 12) {
-                                FeatureRow(icon: "newspaper", text: "Daily news summaries")
-                                FeatureRow(icon: "speaker.wave.3", text: "Audio narration")
-                                FeatureRow(icon: "star", text: "Premium features available")
-                                FeatureRow(icon: "clock", text: "Scheduled summaries")
-                                FeatureRow(icon: "person.crop.circle", text: "Personalized topics")
-                            }
+                        VStack(spacing: featureSpacing) {
+                            FeatureRow(icon: "newspaper", text: "Daily news summaries")
+                            FeatureRow(icon: "speaker.wave.3", text: "Audio narration")
+                            FeatureRow(icon: "star", text: "Premium features available")
+                            FeatureRow(icon: "clock", text: "Scheduled summaries")
+                            FeatureRow(icon: "person.crop.circle", text: "Personalized topics")
                         }
                         .padding(.horizontal, 20)
                         
-                        Spacer()
-                        
                         // Action buttons
-                        VStack(spacing: 16) {
+                        VStack(spacing: isSmallScreen ? 12 : 16) {
                             Button(action: {
                                 showingLogin = true
                             }) {
                                 Text("Login")
-                                    .font(.headline)
-                                    .fontWeight(.semibold)
+                                    .font(isSmallScreen ? .body.weight(.semibold) : .headline.weight(.semibold))
                                     .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 16)
+                                    .padding(.vertical, isSmallScreen ? 14 : 16)
                                     .background(Color.blue)
                                     .foregroundColor(.white)
                                     .cornerRadius(12)
@@ -73,10 +70,9 @@ struct WelcomeView: View {
                                 showingSignUp = true
                             }) {
                                 Text("Sign Up")
-                                    .font(.headline)
-                                    .fontWeight(.semibold)
+                                    .font(isSmallScreen ? .body.weight(.semibold) : .headline.weight(.semibold))
                                     .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 16)
+                                    .padding(.vertical, isSmallScreen ? 14 : 16)
                                     .background(Color.white)
                                     .foregroundColor(.blue)
                                     .overlay(
@@ -87,11 +83,13 @@ struct WelcomeView: View {
                             }
                         }
                         .padding(.horizontal, 20)
-                        .padding(.bottom, max(20, geometry.safeAreaInsets.bottom + 20))
+                        
+                        // Bottom padding
+                        Color.clear.frame(height: max(20, geometry.safeAreaInsets.bottom + 20))
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.darkGreyBackground)
+                    .frame(minHeight: geometry.size.height)
                 }
+                .background(Color.darkGreyBackground)
             }
             .navigationTitle("")
             .navigationBarHidden(true)
