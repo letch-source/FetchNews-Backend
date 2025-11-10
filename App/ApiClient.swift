@@ -206,6 +206,26 @@ final class ApiClient {
         }
     }
     
+    static func verifyEmail(token: String) async throws -> String {
+        let endpoint = "/api/auth/verify-email?token=\(token)"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "GET"
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            let response = try JSONDecoder().decode([String: String].self, from: data)
+            return response["message"] ?? "Email verified successfully"
+        } else {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+    }
+    
     // MARK: - Custom Topics
     
     static func getCustomTopics() async throws -> [String] {
