@@ -24,82 +24,95 @@ struct ResetPasswordView: View {
     
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 30) {
-                    // Header
-                    VStack(spacing: 16) {
-                        Image(systemName: "lock.rotation")
-                            .font(.system(size: 50))
-                            .foregroundColor(.blue)
-                        
-                        Text("Set New Password")
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                        
-                        Text("Enter your new password")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding(.top, 40)
-                    
-                    // Password fields
-                    VStack(spacing: 20) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("New Password")
-                                .font(.headline)
-                            SecureField("Enter new password", text: $newPassword)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .focused($focusedField, equals: .newPassword)
-                                .submitLabel(.next)
-                                .onSubmit {
-                                    focusedField = .confirmPassword
-                                }
+            GeometryReader { geometry in
+                let isSmallScreen = geometry.size.height < 700 // iPhone SE and similar
+                let sectionSpacing: CGFloat = isSmallScreen ? 16 : 30
+                let headerSpacing: CGFloat = isSmallScreen ? 8 : 16
+                let formSpacing: CGFloat = isSmallScreen ? 12 : 20
+                let topPadding: CGFloat = isSmallScreen ? 20 : 40
+                let iconSize: CGFloat = isSmallScreen ? 40 : 50
+                let horizontalPadding: CGFloat = isSmallScreen ? 16 : 20
+                let bottomPadding: CGFloat = isSmallScreen ? 60 : 100
+                
+                ScrollView {
+                    VStack(spacing: sectionSpacing) {
+                        // Header
+                        VStack(spacing: headerSpacing) {
+                            Image(systemName: "lock.rotation")
+                                .font(.system(size: iconSize))
+                                .foregroundColor(.blue)
+                            
+                            Text("Set New Password")
+                                .font(isSmallScreen ? .title2 : .largeTitle)
+                                .fontWeight(.bold)
+                            
+                            Text("Enter your new password")
+                                .font(isSmallScreen ? .subheadline : .body)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
                         }
+                        .padding(.top, topPadding)
                         
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Confirm Password")
-                                .font(.headline)
-                            SecureField("Confirm new password", text: $confirmPassword)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .focused($focusedField, equals: .confirmPassword)
-                                .submitLabel(.go)
-                                .onSubmit {
-                                    Task {
-                                        await resetPassword()
+                        // Password fields
+                        VStack(spacing: formSpacing) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("New Password")
+                                    .font(isSmallScreen ? .subheadline : .headline)
+                                SecureField("Enter new password", text: $newPassword)
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .focused($focusedField, equals: .newPassword)
+                                    .submitLabel(.next)
+                                    .onSubmit {
+                                        focusedField = .confirmPassword
                                     }
-                                }
-                        }
-                    }
-                    
-                    // Reset password button
-                    Button(action: {
-                        Task {
-                            await resetPassword()
-                        }
-                    }) {
-                        HStack {
-                            if isLoading {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    .scaleEffect(0.8)
                             }
-                            Text(isLoading ? "Resetting..." : "Reset Password")
+                            
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Confirm Password")
+                                    .font(isSmallScreen ? .subheadline : .headline)
+                                SecureField("Confirm new password", text: $confirmPassword)
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .focused($focusedField, equals: .confirmPassword)
+                                    .submitLabel(.go)
+                                    .onSubmit {
+                                        Task {
+                                            await resetPassword()
+                                        }
+                                    }
+                            }
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(isFormValid ? Color.blue : Color.gray)
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
+                        
+                        // Reset password button
+                        Button(action: {
+                            Task {
+                                await resetPassword()
+                            }
+                        }) {
+                            HStack {
+                                if isLoading {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        .scaleEffect(0.8)
+                                }
+                                Text(isLoading ? "Resetting..." : "Reset Password")
+                                    .font(isSmallScreen ? .body : .headline)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, isSmallScreen ? 12 : 16)
+                            .background(isFormValid ? Color.blue : Color.gray)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
+                        }
+                        .disabled(!isFormValid || isLoading)
+                        
+                        Spacer()
+                        
+                        Color.clear.frame(height: bottomPadding)
                     }
-                    .disabled(!isFormValid || isLoading)
-                    
-                    Spacer()
-                    
-                    Color.clear.frame(height: 100) // Add bottom padding
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.bottom, isSmallScreen ? 10 : 20)
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 20)
+            }
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
@@ -123,7 +136,6 @@ struct ResetPasswordView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 focusedField = .newPassword
             }
-        }
         }
     }
     
