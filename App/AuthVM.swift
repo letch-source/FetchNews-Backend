@@ -227,6 +227,7 @@ final class AuthVM: ObservableObject {
         user = User(
             id: user.id,
             email: user.email,
+            emailVerified: user.emailVerified,
             isPremium: isPremium,
             dailyUsageCount: user.dailyUsageCount,
             subscriptionId: user.subscriptionId,

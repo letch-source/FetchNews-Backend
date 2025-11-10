@@ -66,6 +66,18 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  emailVerified: {
+    type: Boolean,
+    default: false
+  },
+  emailVerificationToken: {
+    type: String,
+    default: null
+  },
+  emailVerificationExpires: {
+    type: Date,
+    default: null
+  },
   // User preferences
   selectedVoice: {
     type: String,
@@ -267,6 +279,25 @@ userSchema.methods.generatePasswordResetToken = function() {
 userSchema.methods.clearPasswordResetToken = function() {
   this.resetPasswordToken = undefined;
   this.resetPasswordExpires = undefined;
+  return this.save();
+};
+
+// Generate email verification token
+userSchema.methods.generateEmailVerificationToken = function() {
+  const crypto = require('crypto');
+  const verificationToken = crypto.randomBytes(32).toString('hex');
+  
+  this.emailVerificationToken = crypto.createHash('sha256').update(verificationToken).digest('hex');
+  this.emailVerificationExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+  
+  return verificationToken;
+};
+
+// Verify email
+userSchema.methods.verifyEmail = function() {
+  this.emailVerified = true;
+  this.emailVerificationToken = undefined;
+  this.emailVerificationExpires = undefined;
   return this.save();
 };
 

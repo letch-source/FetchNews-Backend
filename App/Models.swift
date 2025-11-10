@@ -169,6 +169,7 @@ struct BatchSummarizeResponse: Codable {
 struct User: Codable {
     let id: String
     let email: String
+    let emailVerified: Bool
     let isPremium: Bool
     let dailyUsageCount: Int
     let subscriptionId: String?

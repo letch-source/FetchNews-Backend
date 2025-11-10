@@ -3,6 +3,12 @@ const mongoose = require('mongoose');
 const { generateToken, authenticateToken } = require('../middleware/auth');
 const fallbackAuth = require('../utils/fallbackAuth');
 const User = require('../models/User'); // Import once at top
+const { 
+  sendPasswordResetEmail, 
+  sendVerificationEmail, 
+  isValidEmail, 
+  isDisposableEmail 
+} = require('../utils/emailService');
 
 const router = express.Router();
 
@@ -21,6 +27,16 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
+    // Validate email format
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'Please enter a valid email address' });
+    }
+
+    // Check for disposable email
+    if (isDisposableEmail(email)) {
+      return res.status(400).json({ error: 'Disposable email addresses are not allowed' });
+    }
+
     if (password.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
@@ -36,6 +52,19 @@ router.post('/register', async (req, res) => {
       // Create new user
       user = new User({ email, password });
       await user.save();
+
+      // Generate email verification token
+      const verificationToken = user.generateEmailVerificationToken();
+      await user.save();
+
+      // Send verification email
+      const verificationUrl = `${process.env.FRONTEND_ORIGIN || 'https://your-app.com'}/verify-email?token=${verificationToken}`;
+      const emailResult = await sendVerificationEmail(email, verificationUrl);
+      
+      if (!emailResult.success) {
+        console.error('Failed to send verification email:', emailResult.error);
+        // Continue registration even if email fails
+      }
     } else {
       // Use fallback authentication
       const existingUser = await fallbackAuth.findUserByEmail(email);
@@ -44,17 +73,19 @@ router.post('/register', async (req, res) => {
       }
       
       user = await fallbackAuth.createUser(email, password);
+      // Note: Email verification not supported in fallback mode
     }
 
     // Generate token
     const token = generateToken(user._id);
 
     res.status(201).json({
-      message: 'User created successfully',
+      message: 'User created successfully. Please check your email to verify your account.',
       token,
       user: {
         id: user._id,
         email: user.email,
+        emailVerified: user.emailVerified || false,
         isPremium: user.isPremium,
         dailyUsageCount: user.dailyUsageCount,
         subscriptionId: user.subscriptionId,
@@ -115,6 +146,7 @@ router.post('/login', async (req, res) => {
       user: {
         id: user._id,
         email: user.email,
+        emailVerified: user.emailVerified || false,
         isPremium: user.isPremium,
         dailyUsageCount: user.dailyUsageCount,
         subscriptionId: user.subscriptionId,
@@ -137,6 +169,7 @@ router.get('/me', authenticateToken, async (req, res) => {
       user: {
         id: user._id,
         email: user.email,
+        emailVerified: user.emailVerified || false,
         isPremium: user.isPremium,
         dailyUsageCount: user.dailyUsageCount,
         subscriptionId: user.subscriptionId,
@@ -279,18 +312,23 @@ router.post('/forgot-password', async (req, res) => {
     if (isDatabaseAvailable()) {
       resetToken = user.generatePasswordResetToken();
       await user.save();
+
+      // Send password reset email
+      const resetUrl = `${process.env.FRONTEND_ORIGIN || 'https://your-app.com'}/reset-password?token=${resetToken}`;
+      const emailResult = await sendPasswordResetEmail(email, resetUrl);
+      
+      if (!emailResult.success) {
+        console.error('Failed to send password reset email:', emailResult.error);
+      } else {
+        console.log(`Password reset email sent to ${email}`);
+      }
     } else {
       // For fallback, generate a simple token
       resetToken = require('crypto').randomBytes(32).toString('hex');
+      const resetUrl = `${process.env.FRONTEND_ORIGIN || 'https://your-app.com'}/reset-password?token=${resetToken}`;
+      console.log(`Password reset link for ${email}: ${resetUrl}`);
+      console.log('Note: Email sending not supported in fallback mode');
     }
-
-    // In a real app, you would send an email here
-    // For now, we'll just log the reset link
-    const resetUrl = `${process.env.FRONTEND_ORIGIN || 'https://your-app.com'}/reset-password?token=${resetToken}`;
-    console.log(`Password reset link for ${email}: ${resetUrl}`);
-    
-    // TODO: Send email with reset link
-    // await sendPasswordResetEmail(email, resetUrl);
 
   } catch (error) {
     console.error('Forgot password error:', error);
@@ -343,6 +381,85 @@ router.post('/reset-password', async (req, res) => {
   } catch (error) {
     console.error('Reset password error:', error);
     res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// Verify email with token
+router.get('/verify-email', async (req, res) => {
+  try {
+    const { token } = req.query;
+
+    if (!token) {
+      return res.status(400).json({ error: 'Verification token is required' });
+    }
+
+    if (!isDatabaseAvailable()) {
+      return res.status(400).json({ error: 'Email verification not available in fallback mode' });
+    }
+
+    const crypto = require('crypto');
+    
+    // Hash the token to compare with stored hash
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    
+    const user = await User.findOne({
+      emailVerificationToken: hashedToken,
+      emailVerificationExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid or expired verification token' });
+    }
+
+    // Verify the email
+    await user.verifyEmail();
+
+    res.json({ 
+      message: 'Email verified successfully',
+      user: {
+        id: user._id,
+        email: user.email,
+        emailVerified: true
+      }
+    });
+
+  } catch (error) {
+    console.error('Email verification error:', error);
+    res.status(500).json({ error: 'Failed to verify email' });
+  }
+});
+
+// Resend verification email
+router.post('/resend-verification', authenticateToken, async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (!isDatabaseAvailable()) {
+      return res.status(400).json({ error: 'Email verification not available in fallback mode' });
+    }
+
+    if (user.emailVerified) {
+      return res.status(400).json({ error: 'Email is already verified' });
+    }
+
+    // Generate new verification token
+    const verificationToken = user.generateEmailVerificationToken();
+    await user.save();
+
+    // Send verification email
+    const verificationUrl = `${process.env.FRONTEND_ORIGIN || 'https://your-app.com'}/verify-email?token=${verificationToken}`;
+    const emailResult = await sendVerificationEmail(user.email, verificationUrl);
+    
+    if (!emailResult.success) {
+      console.error('Failed to send verification email:', emailResult.error);
+      return res.status(500).json({ error: 'Failed to send verification email' });
+    }
+
+    res.json({ message: 'Verification email sent successfully' });
+
+  } catch (error) {
+    console.error('Resend verification error:', error);
+    res.status(500).json({ error: 'Failed to resend verification email' });
   }
 });
 
