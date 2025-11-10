@@ -16,32 +16,32 @@ struct WelcomeView: View {
         NavigationView {
             GeometryReader { geometry in
                 let isSmallScreen = geometry.size.height < 700
-                let logoSize: CGFloat = isSmallScreen ? 70 : 100
+                let logoSize: CGFloat = isSmallScreen ? 90 : 110
                 
                 VStack(spacing: 0) {
                     Spacer()
                     
                     // Logo and title
-                    VStack(spacing: isSmallScreen ? 12 : 16) {
+                    VStack(spacing: isSmallScreen ? 14 : 18) {
                         Image("Launch Logo")
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: logoSize, height: logoSize)
                         
                         Text("Fetch News")
-                            .font(isSmallScreen ? .title2 : .largeTitle)
+                            .font(isSmallScreen ? .title : .largeTitle)
                             .fontWeight(.bold)
                             .foregroundColor(.primary)
                         
                         Text("News for busy people")
-                            .font(isSmallScreen ? .subheadline : .title3)
+                            .font(isSmallScreen ? .body : .title3)
                             .foregroundColor(.secondary)
                     }
                     
                     Spacer()
                     
                     // Features
-                    VStack(spacing: isSmallScreen ? 8 : 10) {
+                    VStack(spacing: isSmallScreen ? 9 : 11) {
                         FeatureRow(icon: "newspaper", text: "Daily news summaries")
                         FeatureRow(icon: "speaker.wave.3", text: "Audio narration")
                         FeatureRow(icon: "star", text: "Premium features available")
