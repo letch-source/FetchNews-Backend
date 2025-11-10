@@ -16,7 +16,7 @@ struct WelcomeView: View {
         NavigationView {
             GeometryReader { geometry in
                 let isSmallScreen = geometry.size.height < 700
-                let logoSize: CGFloat = isSmallScreen ? 90 : 110
+                let logoSize: CGFloat = isSmallScreen ? 135 : 165
                 
                 VStack(spacing: 0) {
                     Spacer()
