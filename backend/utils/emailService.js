@@ -32,7 +32,7 @@ const sendPasswordResetEmail = async (email, resetUrl) => {
     const transport = initializeTransporter();
     
     const mailOptions = {
-      from: `"FetchNews" <${process.env.SMTP_USER}>`,
+      from: `"FetchNews" <${process.env.SMTP_FROM_EMAIL || 'noreply@fetchnews.app'}>`,
       to: email,
       subject: 'Password Reset Request - FetchNews',
       html: `
@@ -112,7 +112,7 @@ const sendVerificationEmail = async (email, verificationUrl) => {
     const transport = initializeTransporter();
     
     const mailOptions = {
-      from: `"FetchNews" <${process.env.SMTP_USER}>`,
+      from: `"FetchNews" <${process.env.SMTP_FROM_EMAIL || 'noreply@fetchnews.app'}>`,
       to: email,
       subject: 'Verify Your Email - FetchNews',
       html: `
