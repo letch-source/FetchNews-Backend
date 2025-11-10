@@ -110,7 +110,12 @@ struct ForgotPasswordView: View {
             isEmailFocused = false
         }
         .alert("Reset Password", isPresented: $showingAlert) {
-            Button("OK") { }
+            Button("OK") {
+                // Close the sheet after user acknowledges the message
+                if authVM.errorMessage == nil {
+                    showingForgotPassword = false
+                }
+            }
         } message: {
             Text(alertMessage)
         }
@@ -133,7 +138,7 @@ struct ForgotPasswordView: View {
         } else {
             alertMessage = message ?? "Password reset link sent to your email"
             showingAlert = true
-            showingForgotPassword = false
+            // Don't close the sheet here - let the alert's OK button handle it
         }
     }
     
