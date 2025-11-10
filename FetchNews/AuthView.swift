@@ -31,31 +31,35 @@ struct AuthView: View {
     var body: some View {
         NavigationView {
             GeometryReader { geometry in
+                let isSmallScreen = geometry.size.height < 700
+                let topPadding: CGFloat = isSmallScreen ? 10 : 20
+                let sectionSpacing: CGFloat = isSmallScreen ? 20 : 30
+                
                 ScrollView {
-                    VStack(spacing: 30) {
+                    VStack(spacing: sectionSpacing) {
                         // Header
-                        VStack(spacing: 16) {
+                        VStack(spacing: isSmallScreen ? 12 : 16) {
                             Image("Launch Logo")
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
-                                .frame(width: 100, height: 100)
+                                .frame(width: isSmallScreen ? 80 : 100, height: isSmallScreen ? 80 : 100)
                             
                             Text("Fetch News")
-                                .font(.largeTitle)
+                                .font(isSmallScreen ? .title : .largeTitle)
                                 .fontWeight(.bold)
                             
                             Text(isLoginMode ? "Welcome back!" : "Create your account")
-                                .font(.title3)
+                                .font(isSmallScreen ? .body : .title3)
                                 .foregroundColor(.secondary)
                         }
-                        .padding(.top, max(20, geometry.safeAreaInsets.top + 20))
+                        .padding(.top, topPadding)
                 
                 // Form
-                VStack(spacing: 20) {
+                VStack(spacing: isSmallScreen ? 16 : 20) {
                     // Email field
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Email")
-                            .font(.headline)
+                            .font(isSmallScreen ? .subheadline.weight(.semibold) : .headline)
                         TextField("Enter your email", text: $email)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                             .textContentType(.emailAddress)
@@ -72,7 +76,7 @@ struct AuthView: View {
                     // Password field
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Password")
-                            .font(.headline)
+                            .font(isSmallScreen ? .subheadline.weight(.semibold) : .headline)
                         SecureField("Enter your password", text: $password)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                             .textContentType(isLoginMode ? .password : .newPassword)
@@ -93,7 +97,7 @@ struct AuthView: View {
                     if !isLoginMode {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Confirm Password")
-                                .font(.headline)
+                                .font(isSmallScreen ? .subheadline.weight(.semibold) : .headline)
                             SecureField("Confirm your password", text: $confirmPassword)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
                                 .textContentType(.newPassword)
@@ -122,11 +126,10 @@ struct AuthView: View {
                                 .scaleEffect(0.8)
                         }
                         Text(isLoginMode ? "Sign In" : "Create Account")
-                            .font(.headline)
-                            .fontWeight(.semibold)
+                            .font(isSmallScreen ? .body.weight(.semibold) : .headline.weight(.semibold))
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
+                    .padding(.vertical, isSmallScreen ? 14 : 16)
                     .background(isFormValid ? Color.blue : Color.gray)
                     .foregroundColor(.white)
                     .cornerRadius(12)
@@ -153,11 +156,12 @@ struct AuthView: View {
                             .font(.subheadline)
                             .foregroundColor(.blue)
                     }
-                        }
+                }
                         
-                        Spacer()
+                // Bottom padding to ensure content is not cut off
+                Color.clear.frame(height: 40)
                     }
-                    .frame(minHeight: geometry.size.height)
+                    .padding(.bottom, 20)
                 }
             }
             .navigationTitle("")
