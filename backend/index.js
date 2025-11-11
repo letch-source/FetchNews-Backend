@@ -473,6 +473,53 @@ app.get("/api/trending-topics", async (req, res) => {
   }
 });
 
+// Recommended topics endpoint (public)
+app.get("/api/recommended-topics", async (req, res) => {
+  try {
+    // Default recommended topics
+    const defaultTopics = ["Business", "Entertainment", "Health", "Science", "Technology", "Sports", "World", "General"];
+    
+    // Check for admin override
+    const overridePath = path.join(__dirname, "./server_data/recommended_override.json");
+    let usingOverride = false;
+    let overrideData = null;
+    try {
+      if (fs.existsSync(overridePath)) {
+        const raw = fs.readFileSync(overridePath, 'utf8');
+        const data = JSON.parse(raw);
+        if (data && Array.isArray(data.topics) && data.topics.length > 0) {
+          usingOverride = true;
+          overrideData = data;
+        }
+      }
+    } catch (error) {
+      console.error('Error reading recommended topics override:', error);
+    }
+
+    if (usingOverride) {
+      return res.json({
+        recommendedTopics: overrideData.topics,
+        lastUpdated: overrideData.lastUpdated || null,
+        source: "override",
+        setBy: overrideData.setBy || null
+      });
+    }
+
+    // Return default topics
+    res.json({
+      recommendedTopics: defaultTopics,
+      lastUpdated: null,
+      source: "default"
+    });
+  } catch (error) {
+    console.error('Get recommended topics error:', error);
+    res.status(500).json({ 
+      error: 'Failed to get recommended topics',
+      details: error.message 
+    });
+  }
+});
+
 // Manual trending topics update endpoint (for testing)
 app.post("/api/trending-topics/update", async (req, res) => {
   try {
