@@ -8,7 +8,11 @@ const User = require('../models/User');
 const router = express.Router();
 
 // Initialize Google OAuth client
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+// Use iOS Client ID for verification (tokens from iOS are issued for iOS Client ID)
+// Fallback to Web Client ID if iOS Client ID not set
+const iosClientId = process.env.GOOGLE_IOS_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+const webClientId = process.env.GOOGLE_CLIENT_ID;
+const client = new OAuth2Client(iosClientId);
 
 // Check if database is available
 const isDatabaseAvailable = () => {
@@ -25,14 +29,41 @@ router.post('/google', async (req, res) => {
     }
 
     // Verify the ID token with Google
+    // Try iOS Client ID first (since tokens from iOS are issued for iOS Client ID)
+    // Then try Web Client ID as fallback (for tokens from web clients)
     let ticket;
-    try {
-      ticket = await client.verifyIdToken({
-        idToken: idToken,
-        audience: process.env.GOOGLE_CLIENT_ID
-      });
-    } catch (error) {
-      console.error('Google token verification error:', error);
+    let verificationError = null;
+    
+    // Try iOS Client ID first
+    if (iosClientId) {
+      try {
+        ticket = await client.verifyIdToken({
+          idToken: idToken,
+          audience: iosClientId
+        });
+      } catch (error) {
+        verificationError = error;
+        console.log(`[AUTH] Verification with iOS Client ID failed, trying Web Client ID...`);
+      }
+    }
+    
+    // If iOS Client ID verification failed, try Web Client ID
+    if (!ticket && webClientId && webClientId !== iosClientId) {
+      try {
+        const webClient = new OAuth2Client(webClientId);
+        ticket = await webClient.verifyIdToken({
+          idToken: idToken,
+          audience: webClientId
+        });
+      } catch (error) {
+        verificationError = error;
+        console.error('Google token verification error:', error);
+        return res.status(401).json({ error: 'Invalid Google token. Please ensure GOOGLE_IOS_CLIENT_ID is set in backend environment.' });
+      }
+    }
+    
+    if (!ticket) {
+      console.error('Google token verification failed with both client IDs');
       return res.status(401).json({ error: 'Invalid Google token' });
     }
 
