@@ -49,14 +49,30 @@ router.post('/google', async (req, res) => {
       user = await User.findOne({ googleId });
 
       if (!user) {
-        // Only create new users with Google accounts - no account linking
-        // Create new user with Google account
-        user = new User({
-          email: email.toLowerCase(),
-          googleId: googleId,
-          emailVerified: email_verified || false
-        });
-        await user.save();
+        // Check if user exists by email (for migration - link Google account)
+        user = await User.findOne({ email: email.toLowerCase() });
+        
+        if (user) {
+          // Link Google account to existing user (migration scenario)
+          if (!user.googleId) {
+            user.googleId = googleId;
+            if (email_verified) {
+              user.emailVerified = true;
+            }
+            await user.save();
+          } else {
+            // User has different googleId - this shouldn't happen, but handle gracefully
+            return res.status(400).json({ error: 'Email already associated with different Google account' });
+          }
+        } else {
+          // Create new user with Google account
+          user = new User({
+            email: email.toLowerCase(),
+            googleId: googleId,
+            emailVerified: email_verified || false
+          });
+          await user.save();
+        }
       } else {
         // Update email verification status if needed
         if (email_verified && !user.emailVerified) {
@@ -123,7 +139,24 @@ router.post('/google', async (req, res) => {
     });
   } catch (error) {
     console.error('Google authentication error:', error);
-    res.status(500).json({ error: 'Authentication failed' });
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    
+    // Provide more specific error messages
+    if (error.message && error.message.includes('Google ID is required')) {
+      return res.status(400).json({ error: 'Account migration error. Please contact support.' });
+    }
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ error: `Validation error: ${error.message}` });
+    }
+    if (error.code === 11000) {
+      return res.status(400).json({ error: 'Account already exists with this email or Google ID' });
+    }
+    
+    res.status(500).json({ error: 'Authentication failed', details: process.env.NODE_ENV === 'development' ? error.message : undefined });
   }
 });
 
