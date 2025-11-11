@@ -105,6 +105,7 @@ router.post('/google', async (req, res) => {
         selectedNewsSources: user.selectedNewsSources || [],
         scheduledSummaries: user.scheduledSummaries || []
       };
+      console.log(`[AUTH] User ${user.email} selectedTopics count: ${(preferences.selectedTopics || []).length}`);
     } else {
       preferences = fallbackAuth.getPreferences ? fallbackAuth.getPreferences(user) : {
         selectedVoice: user.selectedVoice || 'alloy',
