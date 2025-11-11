@@ -34,6 +34,22 @@ router.post('/google', async (req, res) => {
     let ticket;
     let verificationError = null;
     
+    // Log client IDs being used (without exposing full values)
+    console.log(`[AUTH] iOS Client ID configured: ${iosClientId ? 'Yes' : 'No'} (${iosClientId ? iosClientId.substring(0, 20) + '...' : 'not set'})`);
+    console.log(`[AUTH] Web Client ID configured: ${webClientId ? 'Yes' : 'No'} (${webClientId ? webClientId.substring(0, 20) + '...' : 'not set'})`);
+    
+    // Decode token without verification to check audience (for debugging)
+    try {
+      const { decode } = require('jsonwebtoken');
+      const decoded = decode(idToken, { complete: true });
+      if (decoded && decoded.payload) {
+        console.log(`[AUTH] Token audience (aud): ${decoded.payload.aud}`);
+        console.log(`[AUTH] Token issuer (iss): ${decoded.payload.iss}`);
+      }
+    } catch (e) {
+      console.log(`[AUTH] Could not decode token for debugging: ${e.message}`);
+    }
+    
     // Try iOS Client ID first
     if (iosClientId) {
       try {
@@ -41,9 +57,11 @@ router.post('/google', async (req, res) => {
           idToken: idToken,
           audience: iosClientId
         });
+        console.log(`[AUTH] ✅ Token verified successfully with iOS Client ID`);
       } catch (error) {
         verificationError = error;
-        console.log(`[AUTH] Verification with iOS Client ID failed, trying Web Client ID...`);
+        console.log(`[AUTH] ❌ Verification with iOS Client ID failed: ${error.message}`);
+        console.log(`[AUTH] Trying Web Client ID...`);
       }
     }
     
@@ -55,16 +73,25 @@ router.post('/google', async (req, res) => {
           idToken: idToken,
           audience: webClientId
         });
+        console.log(`[AUTH] ✅ Token verified successfully with Web Client ID`);
       } catch (error) {
         verificationError = error;
-        console.error('Google token verification error:', error);
-        return res.status(401).json({ error: 'Invalid Google token. Please ensure GOOGLE_IOS_CLIENT_ID is set in backend environment.' });
+        console.error(`[AUTH] ❌ Verification with Web Client ID also failed: ${error.message}`);
+        return res.status(401).json({ 
+          error: 'Invalid Google token. Token audience does not match configured client IDs.',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
       }
     }
     
     if (!ticket) {
-      console.error('Google token verification failed with both client IDs');
-      return res.status(401).json({ error: 'Invalid Google token' });
+      console.error('[AUTH] ❌ Google token verification failed with both client IDs');
+      console.error(`[AUTH] iOS Client ID: ${iosClientId || 'NOT SET'}`);
+      console.error(`[AUTH] Web Client ID: ${webClientId || 'NOT SET'}`);
+      return res.status(401).json({ 
+        error: 'Invalid Google token. Please ensure GOOGLE_IOS_CLIENT_ID is set correctly in backend environment.',
+        hint: 'The token audience must match one of the configured client IDs.'
+      });
     }
 
     const payload = ticket.getPayload();
