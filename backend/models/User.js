@@ -196,27 +196,36 @@ userSchema.methods.canFetchNews = async function() {
   const today = getDateStringInPST(now);
   const lastUsageDate = this.lastUsageDate ? getDateStringInPST(new Date(this.lastUsageDate)) : today;
   
+  // Define limits
+  const freeUserLimit = 3;
+  const premiumUserLimit = 20;
+  const userLimit = this.isPremium ? premiumUserLimit : freeUserLimit;
+  
   // Reset daily count if it's a new day (resets at midnight PST)
-  // The date string comparison ensures reset happens when date changes in PST
-  if (lastUsageDate !== today) {
-    console.log(`[USER] Resetting daily count for user ${this.email}: ${this.dailyUsageCount} -> 0 (lastUsageDate: ${lastUsageDate}, today: ${today})`);
+  // Also reset if count is unreasonably high (safety check for stuck counts)
+  const shouldReset = lastUsageDate !== today || this.dailyUsageCount > userLimit * 2;
+  
+  if (shouldReset) {
+    const reason = lastUsageDate !== today ? 'new_day' : 'stuck_count';
+    console.log(`[USER] Resetting daily count for user ${this.email}: ${this.dailyUsageCount} -> 0 (reason: ${reason}, lastUsageDate: ${lastUsageDate}, today: ${today})`);
     this.dailyUsageCount = 0;
     this.lastUsageDate = now;
     // Await the save to ensure the reset persists before checking limits
     try {
       await this.save();
+      console.log(`[USER] Successfully reset daily count for user ${this.email}`);
     } catch (err) {
       console.error('[USER] Error resetting daily count:', err);
     }
   }
   
-  // Define limits
-  const freeUserLimit = 3;
-  const premiumUserLimit = 20;
+  // Log current state for debugging
+  console.log(`[USER] Checking limits for user ${this.email}: isPremium=${this.isPremium}, dailyUsageCount=${this.dailyUsageCount}, lastUsageDate=${this.lastUsageDate}`);
   
   // Premium users limited to 20 summaries per day
   if (this.isPremium) {
     if (this.dailyUsageCount >= premiumUserLimit) {
+      console.log(`[USER] Premium user ${this.email} has reached limit: ${this.dailyUsageCount}/${premiumUserLimit}`);
       return { allowed: false, reason: 'daily_limit_reached', dailyCount: this.dailyUsageCount, limit: premiumUserLimit };
     }
     return { allowed: true, reason: 'premium', dailyCount: this.dailyUsageCount, limit: premiumUserLimit };
@@ -224,6 +233,7 @@ userSchema.methods.canFetchNews = async function() {
   
   // Free users limited to 3 summaries per day
   if (this.dailyUsageCount >= freeUserLimit) {
+    console.log(`[USER] Free user ${this.email} has reached limit: ${this.dailyUsageCount}/${freeUserLimit}`);
     return { allowed: false, reason: 'daily_limit_reached', dailyCount: this.dailyUsageCount, limit: freeUserLimit };
   }
   

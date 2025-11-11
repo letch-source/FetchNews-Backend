@@ -1605,7 +1605,11 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     if (req.user) {
       let usageCheck;
       if (mongoose.connection.readyState === 1) {
+        // Call canFetchNews which may reset the count
         usageCheck = await req.user.canFetchNews();
+        // Reload user from database to ensure we have the latest data
+        const User = require('./models/User');
+        req.user = await User.findById(req.user._id);
       } else {
         usageCheck = fallbackAuth.canFetchNews(req.user);
       }
@@ -1905,7 +1909,11 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
     if (req.user) {
       let usageCheck;
       if (mongoose.connection.readyState === 1) {
+        // Call canFetchNews which may reset the count
         usageCheck = await req.user.canFetchNews();
+        // Reload user from database to ensure we have the latest data
+        const User = require('./models/User');
+        req.user = await User.findById(req.user._id);
       } else {
         usageCheck = fallbackAuth.canFetchNews(req.user);
       }
