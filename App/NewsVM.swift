@@ -539,7 +539,7 @@ final class NewsVM: ObservableObject {
         
         // Check if user can fetch news (prevent unnecessary API calls)
         if let authVM = authVM, !authVM.canFetchNews {
-            lastError = "You've reached your daily limit of 10 summaries. Upgrade to Premium for unlimited access."
+            lastError = "You've reached your daily limit of 10 Fetches. Upgrade to Premium for unlimited access."
             return
         }
         

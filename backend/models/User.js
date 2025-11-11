@@ -190,7 +190,7 @@ function getDateStringInPST(date = new Date()) {
 }
 
 // Check if user can fetch news
-userSchema.methods.canFetchNews = function() {
+userSchema.methods.canFetchNews = async function() {
   // Get today's date string in PST timezone (resets at midnight PST)
   const now = new Date();
   const today = getDateStringInPST(now);
@@ -199,10 +199,15 @@ userSchema.methods.canFetchNews = function() {
   // Reset daily count if it's a new day (resets at midnight PST)
   // The date string comparison ensures reset happens when date changes in PST
   if (lastUsageDate !== today) {
+    console.log(`[USER] Resetting daily count for user ${this.email}: ${this.dailyUsageCount} -> 0 (lastUsageDate: ${lastUsageDate}, today: ${today})`);
     this.dailyUsageCount = 0;
     this.lastUsageDate = now;
-    // Don't await here - let incrementUsage handle the save
-    this.save().catch(err => console.error('[USER] Error resetting daily count:', err));
+    // Await the save to ensure the reset persists before checking limits
+    try {
+      await this.save();
+    } catch (err) {
+      console.error('[USER] Error resetting daily count:', err);
+    }
   }
   
   // Define limits

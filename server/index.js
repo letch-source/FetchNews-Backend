@@ -650,7 +650,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     if (req.user) {
       let usageCheck;
       if (mongoose.connection.readyState === 1) {
-        usageCheck = req.user.canFetchNews();
+        usageCheck = await req.user.canFetchNews();
       } else {
         usageCheck = fallbackAuth.canFetchNews(req.user);
       }
@@ -658,9 +658,9 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       if (!usageCheck.allowed) {
         return res.status(429).json({
           error: "Daily limit reached",
-          message: "You've reached your daily limit of 1 summary. Upgrade to Premium for unlimited access.",
+          message: `You've reached your daily limit of ${usageCheck.limit} Fetches. Upgrade to Premium for unlimited access.`,
           dailyCount: usageCheck.dailyCount,
-          limit: 1
+          limit: usageCheck.limit
         });
       }
     }
@@ -918,7 +918,7 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
     if (req.user) {
       let usageCheck;
       if (mongoose.connection.readyState === 1) {
-        usageCheck = req.user.canFetchNews();
+        usageCheck = await req.user.canFetchNews();
       } else {
         usageCheck = fallbackAuth.canFetchNews(req.user);
       }
@@ -926,9 +926,9 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
       if (!usageCheck.allowed) {
         return res.status(429).json({
           error: "Daily limit reached",
-          message: "You've reached your daily limit of 1 summary. Upgrade to Premium for unlimited access.",
+          message: `You've reached your daily limit of ${usageCheck.limit} Fetches. Upgrade to Premium for unlimited access.`,
           dailyCount: usageCheck.dailyCount,
-          limit: 1
+          limit: usageCheck.limit
         });
       }
     }
