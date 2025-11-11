@@ -538,9 +538,12 @@ final class NewsVM: ObservableObject {
         guard !selectedTopics.isEmpty, phase == .idle, isDirty else { return }
         
         // Check if user can fetch news (prevent unnecessary API calls)
-        if let authVM = authVM, !authVM.canFetchNews {
-            lastError = "You've reached your daily limit of 10 Fetches. Upgrade to Premium for unlimited access."
-            return
+        if let authVM = authVM, let user = authVM.currentUser {
+            let limit = user.isPremium ? 20 : 3
+            if user.dailyUsageCount >= limit {
+                lastError = "You've reached your daily limit of \(limit) Fetches. Upgrade to Premium for unlimited access."
+                return
+            }
         }
         
         // Check if premium user has selected at least 5 news sources
