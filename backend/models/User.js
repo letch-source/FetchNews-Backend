@@ -116,6 +116,24 @@ const userSchema = new mongoose.Schema({
     type: Object,
     default: {}
   },
+  pushNotificationToken: {
+    type: String,
+    default: null
+  },
+  notificationPreferences: {
+    scheduledSummaryNotifications: {
+      type: Boolean,
+      default: true
+    },
+    engagementReminders: {
+      type: Boolean,
+      default: true
+    },
+    lastReminderSent: {
+      type: Date,
+      default: null
+    }
+  },
   createdAt: {
     type: Date,
     default: Date.now

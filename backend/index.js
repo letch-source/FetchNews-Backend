@@ -25,6 +25,7 @@ const trendingAdminRoutes = require("./routes/trendingAdmin");
 const recommendedAdminRoutes = require("./routes/recommendedAdmin");
 const fallbackAuth = require("./utils/fallbackAuth");
 const User = require("./models/User");
+const { sendEngagementReminder } = require("./utils/notifications");
 
 // Connect to MongoDB
 connectDB();
@@ -621,6 +622,10 @@ app.post("/api/auth/timezone", authenticateToken, async (req, res) => {
 // Scheduled summaries routes
 const scheduledSummariesRoutes = require("./routes/scheduledSummaries");
 app.use("/api/scheduled-summaries", scheduledSummariesRoutes);
+
+// Notifications routes
+const notificationsRoutes = require("./routes/notifications");
+app.use("/api/notifications", notificationsRoutes);
 
 // Serve admin website
 // Admin directory is located in backend/admin (relative to this file)
@@ -2415,6 +2420,93 @@ async function checkScheduledSummaries() {
   }
 }
 
+// Engagement reminder system - sends reminders to users who haven't used the app recently
+async function checkEngagementReminders() {
+  try {
+    const now = new Date();
+    const hoursSinceLastUsage = 24; // Send reminder if user hasn't used app in 24 hours
+    const minHoursBetweenReminders = 48; // Don't send another reminder for 48 hours after last one
+    
+    console.log(`[ENGAGEMENT] Checking for users who need engagement reminders...`);
+    
+    // Find users who:
+    // 1. Have push notification token
+    // 2. Have engagement reminders enabled
+    // 3. Haven't used the app in the last X hours
+    // 4. Haven't received a reminder in the last Y hours
+    const cutoffDate = new Date(now.getTime() - hoursSinceLastUsage * 60 * 60 * 1000);
+    const reminderCutoffDate = new Date(now.getTime() - minHoursBetweenReminders * 60 * 60 * 1000);
+    
+    const users = await User.find({
+      pushNotificationToken: { $exists: true, $ne: null },
+      'notificationPreferences.engagementReminders': { $ne: false },
+      $or: [
+        { lastUsageDate: { $lt: cutoffDate } },
+        { lastUsageDate: { $exists: false } }
+      ],
+      $and: [
+        {
+          $or: [
+            { 'notificationPreferences.lastReminderSent': { $lt: reminderCutoffDate } },
+            { 'notificationPreferences.lastReminderSent': { $exists: false } }
+          ]
+        }
+      ]
+    });
+    
+    console.log(`[ENGAGEMENT] Found ${users.length} users eligible for engagement reminders`);
+    
+    let sentCount = 0;
+    for (const user of users) {
+      try {
+        // Check if user really hasn't used the app recently
+        const lastUsage = user.lastUsageDate ? new Date(user.lastUsageDate) : null;
+        const hoursSinceUsage = lastUsage 
+          ? (now.getTime() - lastUsage.getTime()) / (1000 * 60 * 60)
+          : Infinity;
+        
+        if (hoursSinceUsage < hoursSinceLastUsage) {
+          continue; // User has used app recently, skip
+        }
+        
+        // Check last reminder time
+        const lastReminder = user.notificationPreferences?.lastReminderSent 
+          ? new Date(user.notificationPreferences.lastReminderSent)
+          : null;
+        const hoursSinceReminder = lastReminder
+          ? (now.getTime() - lastReminder.getTime()) / (1000 * 60 * 60)
+          : Infinity;
+        
+        if (hoursSinceReminder < minHoursBetweenReminders) {
+          continue; // Sent reminder too recently, skip
+        }
+        
+        // Send reminder
+        const success = await sendEngagementReminder(user.pushNotificationToken);
+        
+        if (success) {
+          // Update last reminder sent time
+          if (!user.notificationPreferences) {
+            user.notificationPreferences = {};
+          }
+          user.notificationPreferences.lastReminderSent = now;
+          user.markModified('notificationPreferences');
+          await user.save();
+          
+          sentCount++;
+          console.log(`[ENGAGEMENT] Sent reminder to user ${user.email} (last usage: ${hoursSinceUsage.toFixed(1)}h ago)`);
+        }
+      } catch (error) {
+        console.error(`[ENGAGEMENT] Error sending reminder to user ${user.email}:`, error);
+      }
+    }
+    
+    console.log(`[ENGAGEMENT] Sent ${sentCount} engagement reminders`);
+  } catch (error) {
+    console.error('[ENGAGEMENT] Error checking engagement reminders:', error);
+  }
+}
+
 // Schedule checks every 10 minutes
 // Use global to persist across module reloads
 if (!global.schedulerInterval) {
@@ -2456,6 +2548,14 @@ function startScheduler() {
   global.schedulerInterval = setInterval(async () => {
     try {
       await checkScheduledSummaries();
+      // Check engagement reminders every hour (every 6th check, since we check every 10 minutes)
+      const checkCount = global.engagementCheckCount || 0;
+      global.engagementCheckCount = (checkCount + 1) % 6;
+      if (global.engagementCheckCount === 0) {
+        checkEngagementReminders().catch(error => {
+          console.error('[ENGAGEMENT] Error in engagement reminder check:', error);
+        });
+      }
     } catch (error) {
       console.error('[SCHEDULER] Error in scheduled check:', error);
     }

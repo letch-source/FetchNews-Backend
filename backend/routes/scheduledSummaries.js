@@ -8,6 +8,7 @@ const OpenAI = require('openai');
 const fs = require('fs').promises;
 const path = require('path');
 const { uploadAudioToB2, isB2Configured } = require('../utils/b2Storage');
+const { sendScheduledSummaryNotification } = require('../utils/notifications');
 
 const router = express.Router();
 
@@ -551,6 +552,22 @@ async function executeScheduledSummary(user, summary) {
     } else {
       await fallbackAuth.addSummaryToHistory(user, summaryData);
       await fallbackAuth.incrementUsage(user);
+    }
+    
+    // Send push notification if enabled and token is available
+    const notificationPrefs = user.notificationPreferences || {};
+    if (notificationPrefs.scheduledSummaryNotifications !== false && user.pushNotificationToken) {
+      try {
+        await sendScheduledSummaryNotification(
+          user.pushNotificationToken,
+          title,
+          summaryData.id
+        );
+        console.log(`[SCHEDULER] Sent notification for scheduled summary "${title}" to user ${user.email}`);
+      } catch (notifError) {
+        console.error(`[SCHEDULER] Failed to send notification:`, notifError);
+        // Don't fail the whole operation if notification fails
+      }
     }
     
     console.log(`[SCHEDULER] Successfully generated and saved summary "${title}" for user ${user.email}`);
