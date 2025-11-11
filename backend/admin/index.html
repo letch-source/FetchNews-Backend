@@ -571,25 +571,55 @@
     </div>
 
     <script>
-        // Get token from localStorage or prompt for it
+        // Track if we've prompted for token in this session
+        let hasPromptedForToken = false;
+
+        // Get token from localStorage or prompt for it (only once per session)
         function getAuthToken() {
-            // Try to get from localStorage first (if user logged in via frontend)
+            // Try to get from localStorage first
             let token = localStorage.getItem('authToken');
-            if (token) return token;
-            
-            // Otherwise, prompt for token
-            token = prompt('Enter your JWT authentication token:');
             if (token) {
-                localStorage.setItem('authToken', token);
-                return token;
+                token = token.trim();
+                if (token.length > 0) {
+                    return token;
+                }
+            }
+            
+            // Only prompt if we haven't prompted yet in this session
+            if (!hasPromptedForToken) {
+                hasPromptedForToken = true;
+                token = prompt('Enter your JWT authentication token:');
+                if (token) {
+                    token = token.trim();
+                    if (token.length > 0) {
+                        localStorage.setItem('authToken', token);
+                        return token;
+                    }
+                }
+            }
+            
+            return null;
+        }
+
+        // Function to manually re-authenticate (call this when token expires)
+        function reAuthenticate() {
+            hasPromptedForToken = false; // Reset flag to allow prompting again
+            localStorage.removeItem('authToken');
+            const token = prompt('Your session expired. Please enter a new JWT authentication token:');
+            if (token) {
+                const trimmedToken = token.trim();
+                if (trimmedToken.length > 0) {
+                    localStorage.setItem('authToken', trimmedToken);
+                    return trimmedToken;
+                }
             }
             return null;
         }
 
         async function fetchWithAuth(url, options = {}) {
-            const token = getAuthToken();
+            let token = getAuthToken();
             if (!token) {
-                throw new Error('No authentication token provided');
+                throw new Error('No authentication token provided. Please refresh the page and enter your token.');
             }
 
             const response = await fetch(url, {
@@ -602,9 +632,10 @@
             });
 
             if (response.status === 401) {
-                // Token expired or invalid
+                // Token expired or invalid - remove it and throw error
                 localStorage.removeItem('authToken');
-                throw new Error('Authentication failed. Please refresh and enter a new token.');
+                hasPromptedForToken = false; // Reset flag so user can re-authenticate
+                throw new Error('Authentication failed. Your token may have expired. Please refresh the page and enter a new token.');
             }
 
             if (!response.ok) {
@@ -836,7 +867,12 @@
                 showSuccess('Trending topics override saved successfully!');
                 await loadTrendingTopics();
             } catch (error) {
-                showError('Failed to save trending topics: ' + error.message);
+                // Check if it's an authentication error
+                if (error.message.includes('Authentication failed') || error.message.includes('No authentication token')) {
+                    showError('Authentication failed. Please refresh the page and enter your JWT token again.');
+                } else {
+                    showError('Failed to save trending topics: ' + error.message);
+                }
             }
         }
 
@@ -854,7 +890,12 @@
                 showSuccess('Override cleared! Trending topics will now be auto-generated.');
                 await loadTrendingTopics();
             } catch (error) {
-                showError('Failed to clear override: ' + error.message);
+                // Check if it's an authentication error
+                if (error.message.includes('Authentication failed') || error.message.includes('No authentication token')) {
+                    showError('Authentication failed. Please refresh the page and enter your JWT token again.');
+                } else {
+                    showError('Failed to clear override: ' + error.message);
+                }
             }
         }
 
@@ -1083,6 +1124,12 @@
         }
 
         async function loadData() {
+            // Check for token on page load - prompt only once if missing
+            const token = getAuthToken();
+            if (!token) {
+                console.warn('No authentication token found. Some features may not work.');
+            }
+            
             await Promise.all([loadStats(), loadActions(), loadTrendingTopics(), loadRecommendedTopics()]);
         }
 
