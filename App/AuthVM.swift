@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftUI
+import GoogleSignIn
 
 @MainActor
 final class AuthVM: ObservableObject {
@@ -41,37 +42,62 @@ final class AuthVM: ObservableObject {
     
     // MARK: - Authentication Methods
     
-    func registerUser(email: String, password: String) async {
+    func signInWithGoogle() async {
         isLoading = true
         errorMessage = nil
         
         do {
-            print("📝 Attempting registration for: \(email)")
-            let response = try await ApiClient.register(email: email, password: password)
-            print("✅ Registration successful, user: \(response.user.email)")
+            // Configure Google Sign-In if not already configured
+            if GIDSignIn.sharedInstance.configuration == nil {
+                guard let path = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist"),
+                      let plist = NSDictionary(contentsOfFile: path),
+                      let clientId = plist["CLIENT_ID"] as? String else {
+                    errorMessage = "Google Sign-In configuration not found. Please add GoogleService-Info.plist to your project."
+                    isLoading = false
+                    return
+                }
+                
+                let config = GIDConfiguration(clientID: clientId)
+                GIDSignIn.sharedInstance.configuration = config
+            }
+            
+            // Get the root view controller using modern API
+            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let rootViewController = windowScene.windows.first?.rootViewController else {
+                errorMessage = "Unable to present Google Sign-In"
+                isLoading = false
+                return
+            }
+            
+            // Sign in with Google
+            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: rootViewController)
+            
+            guard let idToken = result.user.idToken?.tokenString else {
+                errorMessage = "Failed to get ID token from Google"
+                isLoading = false
+                return
+            }
+            
+            print("✅ Google Sign-In successful, ID token received")
+            
+            // Send ID token to backend
+            let response = try await ApiClient.authenticateWithGoogle(idToken: idToken)
+            print("✅ Backend authentication successful, user: \(response.user.email)")
+            print("📋 User selectedTopics count: \(response.user.selectedTopics.count)")
             await handleAuthSuccess(response: response)
             
-            // Show topic onboarding for new users
-            showTopicOnboarding = true
+            // Show topic onboarding only if user hasn't selected topics yet
+            // Check both the response and the current user (in case it was updated)
+            let hasSelectedTopics = !response.user.selectedTopics.isEmpty || !(currentUser?.selectedTopics.isEmpty ?? true)
+            if !hasSelectedTopics {
+                print("📝 Showing topic onboarding - no topics selected")
+                showTopicOnboarding = true
+            } else {
+                print("✅ User has selected topics, skipping onboarding")
+                showTopicOnboarding = false
+            }
         } catch {
-            print("❌ Registration failed: \(error.localizedDescription)")
-            errorMessage = error.localizedDescription
-        }
-        
-        isLoading = false
-    }
-    
-    func loginUser(email: String, password: String) async {
-        isLoading = true
-        errorMessage = nil
-        
-        do {
-            print("🔐 Attempting login for: \(email)")
-            let response = try await ApiClient.login(email: email, password: password)
-            print("✅ Login successful, user: \(response.user.email)")
-            await handleAuthSuccess(response: response)
-        } catch {
-            print("❌ Login failed: \(error.localizedDescription)")
+            print("❌ Google Sign-In failed: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
         }
         
@@ -84,6 +110,9 @@ final class AuthVM: ObservableObject {
         UserDefaults.standard.removeObject(forKey: tokenKey)
         UserDefaults.standard.removeObject(forKey: userKey)
         ApiClient.setAuthToken(nil)
+        
+        // Sign out from Google
+        GIDSignIn.sharedInstance.signOut()
     }
     
     private func handleTokenExpiration() {
@@ -173,8 +202,23 @@ final class AuthVM: ObservableObject {
                     // Set the token in ApiClient
                     ApiClient.setAuthToken(token)
                     
+                    // Refresh user data from backend to get latest preferences
+                    await refreshUser()
+                    
                     // Set user's timezone automatically
                     await setUserTimezone()
+                    
+                    // Check if onboarding is needed based on latest user data
+                    if let currentUser = currentUser {
+                        print("📋 Loaded user selectedTopics count: \(currentUser.selectedTopics.count)")
+                        if currentUser.selectedTopics.isEmpty {
+                            print("📝 Showing topic onboarding - no topics in loaded user")
+                            showTopicOnboarding = true
+                        } else {
+                            print("✅ User has selected topics, skipping onboarding")
+                            showTopicOnboarding = false
+                        }
+                    }
                     
                     print("🔑 Authentication restored successfully")
                 } else {
@@ -233,41 +277,10 @@ final class AuthVM: ObservableObject {
             subscriptionId: user.subscriptionId,
             subscriptionExpiresAt: user.subscriptionExpiresAt,
             customTopics: user.customTopics,
-            summaryHistory: user.summaryHistory
+            summaryHistory: user.summaryHistory,
+            selectedTopics: user.selectedTopics
         )
         currentUser = user
         saveUser(user: user)
-    }
-    
-    // MARK: - Password Reset
-    
-    func requestPasswordReset(email: String) async -> String? {
-        isLoading = true
-        errorMessage = nil
-        
-        do {
-            let message = try await ApiClient.requestPasswordReset(email: email)
-            isLoading = false
-            return message
-        } catch {
-            errorMessage = error.localizedDescription
-            isLoading = false
-            return nil
-        }
-    }
-    
-    func resetPassword(token: String, newPassword: String) async -> String? {
-        isLoading = true
-        errorMessage = nil
-        
-        do {
-            let message = try await ApiClient.resetPassword(token: token, newPassword: newPassword)
-            isLoading = false
-            return message
-        } catch {
-            errorMessage = error.localizedDescription
-            isLoading = false
-            return nil
-        }
     }
 }

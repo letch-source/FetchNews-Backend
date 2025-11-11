@@ -176,6 +176,44 @@ struct User: Codable {
     let subscriptionExpiresAt: String?
     let customTopics: [String]
     let summaryHistory: [SummaryHistoryEntry]
+    let selectedTopics: [String]
+    
+    // Memberwise initializer for creating User instances in code
+    init(id: String, email: String, emailVerified: Bool, isPremium: Bool, dailyUsageCount: Int, subscriptionId: String?, subscriptionExpiresAt: String?, customTopics: [String], summaryHistory: [SummaryHistoryEntry], selectedTopics: [String] = []) {
+        self.id = id
+        self.email = email
+        self.emailVerified = emailVerified
+        self.isPremium = isPremium
+        self.dailyUsageCount = dailyUsageCount
+        self.subscriptionId = subscriptionId
+        self.subscriptionExpiresAt = subscriptionExpiresAt
+        self.customTopics = customTopics
+        self.summaryHistory = summaryHistory
+        self.selectedTopics = selectedTopics
+    }
+    
+    // Custom decoder to handle missing or null values gracefully
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        // Backend should always send id as a string (ObjectId converted via String())
+        let id = try container.decode(String.self, forKey: .id)
+        let email = try container.decode(String.self, forKey: .email)
+        let emailVerified = try container.decodeIfPresent(Bool.self, forKey: .emailVerified) ?? false
+        let isPremium = try container.decodeIfPresent(Bool.self, forKey: .isPremium) ?? false
+        let dailyUsageCount = try container.decodeIfPresent(Int.self, forKey: .dailyUsageCount) ?? 0
+        let subscriptionId = try container.decodeIfPresent(String.self, forKey: .subscriptionId)
+        let subscriptionExpiresAt = try container.decodeIfPresent(String.self, forKey: .subscriptionExpiresAt)
+        let customTopics = try container.decodeIfPresent([String].self, forKey: .customTopics) ?? []
+        let summaryHistory = try container.decodeIfPresent([SummaryHistoryEntry].self, forKey: .summaryHistory) ?? []
+        let selectedTopics = try container.decodeIfPresent([String].self, forKey: .selectedTopics) ?? []
+        
+        self.init(id: id, email: email, emailVerified: emailVerified, isPremium: isPremium, dailyUsageCount: dailyUsageCount, subscriptionId: subscriptionId, subscriptionExpiresAt: subscriptionExpiresAt, customTopics: customTopics, summaryHistory: summaryHistory, selectedTopics: selectedTopics)
+    }
+    
+    private enum CodingKeys: String, CodingKey {
+        case id, email, emailVerified, isPremium, dailyUsageCount, subscriptionId, subscriptionExpiresAt, customTopics, summaryHistory, selectedTopics
+    }
 }
 
 struct SummaryHistoryEntry: Codable, Identifiable {

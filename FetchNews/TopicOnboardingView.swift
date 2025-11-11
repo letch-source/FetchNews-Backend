@@ -21,7 +21,7 @@ struct TopicOnboardingView: View {
     
     // Predefined topics from CustomTopicView
     private let predefinedTopics = [
-        "Politics", "Local", "Environment", "Education", "Finance", "Travel",
+        "Politics", "Environment", "Education", "Finance", "Travel",
         "Food", "Fashion", "Art", "Music", "Gaming", "Cryptocurrency",
         "Real Estate", "Automotive", "Fitness", "Weather", "Space", "AI"
     ]
@@ -131,10 +131,24 @@ struct TopicOnboardingView: View {
                 await vm.addCustomTopic(topic)
             }
             
+            // IMPORTANT: Also save to selectedTopics so onboarding doesn't show again
+            // This will trigger saveSettings() which saves to backend preferences
+            await MainActor.run {
+                vm.selectedTopics = selectedTopics
+            }
+            
+            // Wait a moment for the preferences to save
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            
             // Reload custom topics to ensure sync
             await vm.loadCustomTopics()
             
+            // Refresh user data to sync selectedTopics to AuthVM's currentUser
+            await authVM.refreshUser()
+            
+            // Also hide onboarding flag in AuthVM
             await MainActor.run {
+                authVM.showTopicOnboarding = false
                 isSubmitting = false
                 // Dismiss this view to show the main app
                 dismiss()
