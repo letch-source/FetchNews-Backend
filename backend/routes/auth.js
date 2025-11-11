@@ -48,27 +48,15 @@ router.post('/google', async (req, res) => {
       // Try to find user by Google ID first
       user = await User.findOne({ googleId });
 
-      // If not found, try to find by email (for account linking)
       if (!user) {
-        user = await User.findOne({ email: email.toLowerCase() });
-        
-        if (user) {
-          // Link Google account to existing email account
-          user.googleId = googleId;
-          // Mark email as verified if Google says it's verified
-          if (email_verified) {
-            user.emailVerified = true;
-          }
-          await user.save();
-        } else {
-          // Create new user with Google account
-          user = new User({
-            email: email.toLowerCase(),
-            googleId: googleId,
-            emailVerified: email_verified || false
-          });
-          await user.save();
-        }
+        // Only create new users with Google accounts - no account linking
+        // Create new user with Google account
+        user = new User({
+          email: email.toLowerCase(),
+          googleId: googleId,
+          emailVerified: email_verified || false
+        });
+        await user.save();
       } else {
         // Update email verification status if needed
         if (email_verified && !user.emailVerified) {
@@ -77,18 +65,41 @@ router.post('/google', async (req, res) => {
         }
       }
     } else {
-      // Fallback mode - create a simple user object
-      const existingUser = await fallbackAuth.findUserByEmail(email);
+      // Fallback mode - only create Google-authenticated users
+      const existingUser = await fallbackAuth.findUserByGoogleId(googleId);
       if (existingUser) {
         user = existingUser;
       } else {
-        user = await fallbackAuth.createUser(email, null); // No password for Google users
-        user.googleId = googleId;
+        user = await fallbackAuth.createGoogleUser(email, googleId);
       }
     }
 
     // Generate JWT token
     const token = generateToken(user._id);
+
+    // Get user preferences
+    let preferences = {};
+    if (isDatabaseAvailable()) {
+      preferences = user.getPreferences ? user.getPreferences() : {
+        selectedVoice: user.selectedVoice || 'alloy',
+        playbackRate: user.playbackRate || 1.0,
+        upliftingNewsOnly: user.upliftingNewsOnly || false,
+        lastFetchedTopics: user.lastFetchedTopics || [],
+        selectedTopics: user.selectedTopics || [],
+        selectedNewsSources: user.selectedNewsSources || [],
+        scheduledSummaries: user.scheduledSummaries || []
+      };
+    } else {
+      preferences = fallbackAuth.getPreferences ? fallbackAuth.getPreferences(user) : {
+        selectedVoice: user.selectedVoice || 'alloy',
+        playbackRate: user.playbackRate || 1.0,
+        upliftingNewsOnly: user.upliftingNewsOnly || false,
+        lastFetchedTopics: user.lastFetchedTopics || [],
+        selectedTopics: user.selectedTopics || [],
+        selectedNewsSources: user.selectedNewsSources || [],
+        scheduledSummaries: user.scheduledSummaries || []
+      };
+    }
 
     res.json({
       message: 'Authentication successful',
@@ -102,7 +113,12 @@ router.post('/google', async (req, res) => {
         subscriptionId: user.subscriptionId || null,
         subscriptionExpiresAt: user.subscriptionExpiresAt || null,
         customTopics: user.customTopics || [],
-        summaryHistory: user.summaryHistory || []
+        summaryHistory: user.summaryHistory || [],
+        selectedTopics: preferences.selectedTopics || [],
+        selectedVoice: preferences.selectedVoice || 'alloy',
+        playbackRate: preferences.playbackRate || 1.0,
+        upliftingNewsOnly: preferences.upliftingNewsOnly || false,
+        selectedNewsSources: preferences.selectedNewsSources || []
       }
     });
   } catch (error) {
@@ -115,6 +131,31 @@ router.post('/google', async (req, res) => {
 router.get('/me', authenticateToken, async (req, res) => {
   try {
     const user = req.user;
+    
+    // Get user preferences
+    let preferences = {};
+    if (isDatabaseAvailable()) {
+      preferences = user.getPreferences ? user.getPreferences() : {
+        selectedVoice: user.selectedVoice || 'alloy',
+        playbackRate: user.playbackRate || 1.0,
+        upliftingNewsOnly: user.upliftingNewsOnly || false,
+        lastFetchedTopics: user.lastFetchedTopics || [],
+        selectedTopics: user.selectedTopics || [],
+        selectedNewsSources: user.selectedNewsSources || [],
+        scheduledSummaries: user.scheduledSummaries || []
+      };
+    } else {
+      preferences = fallbackAuth.getPreferences ? fallbackAuth.getPreferences(user) : {
+        selectedVoice: user.selectedVoice || 'alloy',
+        playbackRate: user.playbackRate || 1.0,
+        upliftingNewsOnly: user.upliftingNewsOnly || false,
+        lastFetchedTopics: user.lastFetchedTopics || [],
+        selectedTopics: user.selectedTopics || [],
+        selectedNewsSources: user.selectedNewsSources || [],
+        scheduledSummaries: user.scheduledSummaries || []
+      };
+    }
+    
     res.json({
       user: {
         id: user._id,
@@ -125,7 +166,12 @@ router.get('/me', authenticateToken, async (req, res) => {
         subscriptionId: user.subscriptionId,
         subscriptionExpiresAt: user.subscriptionExpiresAt,
         customTopics: user.customTopics || [],
-        summaryHistory: user.summaryHistory || []
+        summaryHistory: user.summaryHistory || [],
+        selectedTopics: preferences.selectedTopics || [],
+        selectedVoice: preferences.selectedVoice || 'alloy',
+        playbackRate: preferences.playbackRate || 1.0,
+        upliftingNewsOnly: preferences.upliftingNewsOnly || false,
+        selectedNewsSources: preferences.selectedNewsSources || []
       }
     });
   } catch (error) {

@@ -11,8 +11,13 @@ const userSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: true,
+    required: false,
     minlength: 6
+  },
+  googleId: {
+    type: String,
+    required: true,
+    unique: true
   },
   isPremium: {
     type: Boolean,
@@ -121,9 +126,16 @@ const userSchema = new mongoose.Schema({
   }
 });
 
-// Hash password before saving
+// Validate that googleId is present before saving
 userSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
+  // Ensure googleId is always present (Google-only authentication)
+  if (!this.googleId) {
+    return next(new Error('Google ID is required. Only Google-authenticated accounts are allowed.'));
+  }
+  
+  // Hash password before saving (only if password exists and is modified)
+  // Note: Password is deprecated but kept for backwards compatibility
+  if (!this.isModified('password') || !this.password) return next();
   
   try {
     const salt = await bcrypt.genSalt(10);

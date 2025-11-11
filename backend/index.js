@@ -1474,50 +1474,19 @@ app.get("/api/test-mediastack", async (req, res) => {
   }
 });
 
-// Signup
+// Signup - DISABLED: Google Sign-In only
 app.post("/api/auth/signup", (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password)
-    return res.status(400).json({ error: "Email and password required" });
-
-  if (users.find((u) => u.email === email)) {
-    return res.status(400).json({ error: "Email already in use" });
-  }
-
-  const passwordHash = bcrypt.hashSync(password, 10);
-  const newUser = { email, passwordHash, topics: [], location: "" };
-  users.push(newUser);
-  saveUsers();
-
-  const token = createToken(newUser);
-  res.cookie("token", token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-  });
-  res.json({
-    message: "Signup successful",
-    user: { email, topics: [], location: "" },
+  res.status(403).json({ 
+    error: "Password-based signup is no longer supported. Please use Google Sign-In.",
+    googleSignInRequired: true
   });
 });
 
-// Login
+// Login - DISABLED: Google Sign-In only
 app.post("/api/auth/login", (req, res) => {
-  const { email, password } = req.body || {};
-  const user = users.find((u) => u.email === email);
-  if (!user) return res.status(400).json({ error: "Invalid credentials" });
-  if (!bcrypt.compareSync(password, user.passwordHash)) {
-    return res.status(400).json({ error: "Invalid credentials" });
-  }
-  const token = createToken(user);
-  res.cookie("token", token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-  });
-  res.json({
-    message: "Login successful",
-    user: { email, topics: user.topics, location: user.location },
+  res.status(403).json({ 
+    error: "Password-based login is no longer supported. Please use Google Sign-In.",
+    googleSignInRequired: true
   });
 });
 
@@ -2317,12 +2286,7 @@ async function checkScheduledSummaries() {
         const scheduledTimeMinutes = scheduledHour * 60 + scheduledMinute;
         const userTimeMinutes = userHour * 60 + userMinute;
         
-        // Check if current time matches the scheduled time (within 1 minute window)
-        // Since we check at :00, :10, :20, :30, :40, :50, we should catch scheduled times at those exact minutes
-        const timeDifference = Math.abs(userTimeMinutes - scheduledTimeMinutes);
-        const shouldExecute = timeDifference <= 1; // Allow 1 minute window for slight delays
-        
-        // Also check if summary hasn't already run today in user's timezone (prevent duplicate executions)
+        // Check if summary hasn't already run today in user's timezone (prevent duplicate executions)
         const lastRun = summary.lastRun ? new Date(summary.lastRun) : null;
         let alreadyRanToday = false;
         if (lastRun) {
@@ -2339,9 +2303,17 @@ async function checkScheduledSummaries() {
           alreadyRanToday = lastRunDateStr === nowDateStr;
         }
         
-        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (user time=${userTime}, server time=${currentTime}), user timezone=${userTimezone}, user day=${userDay}, timeDiff=${timeDifference}min, shouldExecute=${shouldExecute && !alreadyRanToday}`);
+        // Check if scheduled time has passed and is within the last 30 minutes
+        // This accounts for the 10-minute check interval and ensures we catch scheduled times
+        // even if the scheduler runs slightly after the scheduled time or if there were delays
+        const timeDifference = userTimeMinutes - scheduledTimeMinutes;
+        const hasPassed = timeDifference >= 0; // Scheduled time has passed today
+        const withinWindow = timeDifference <= 30; // Within last 30 minutes (to account for 10-min check interval and potential delays)
+        const shouldExecute = hasPassed && withinWindow && !alreadyRanToday;
         
-        if (shouldExecute && !alreadyRanToday) {
+        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (user time=${userTime}, server time=${currentTime}), user timezone=${userTimezone}, user day=${userDay}, timeDiff=${timeDifference}min, hasPassed=${hasPassed}, withinWindow=${withinWindow}, alreadyRanToday=${alreadyRanToday}, shouldExecute=${shouldExecute}`);
+        
+        if (shouldExecute) {
           console.log(`[SCHEDULER] Executing scheduled fetch "${summary.name}" for user ${user.email} on ${currentDay}`);
           
           try {
@@ -2392,57 +2364,45 @@ async function checkScheduledSummaries() {
   }
 }
 
-// Schedule checks at :00, :10, :20, :30, :40, and :50 minutes past each hour
-function scheduleNextCheck() {
-  const now = new Date();
-  const currentMinute = now.getMinutes();
-  const currentSecond = now.getSeconds();
+// Schedule checks every 10 minutes
+let schedulerInterval = null;
+let isSchedulerRunning = false;
+
+function startScheduler() {
+  // Prevent multiple schedulers from running
+  if (isSchedulerRunning) {
+    console.log('[SCHEDULER] Scheduler already running, skipping start');
+    return;
+  }
   
-  // Target minutes: 0, 10, 20, 30, 40, 50
-  const targetMinutes = [0, 10, 20, 30, 40, 50];
+  // Clear any existing interval
+  if (schedulerInterval) {
+    clearInterval(schedulerInterval);
+    schedulerInterval = null;
+  }
   
-  // Find next target minute
-  let nextMinute = null;
-  for (const target of targetMinutes) {
-    if (target > currentMinute || (target === currentMinute && currentSecond === 0)) {
-      nextMinute = target;
-      break;
+  isSchedulerRunning = true;
+  
+  // Run initial check immediately
+  checkScheduledSummaries().catch(error => {
+    console.error('[SCHEDULER] Error in initial check:', error);
+  });
+  
+  // Then check every 10 minutes (600000 ms)
+  schedulerInterval = setInterval(async () => {
+    try {
+      await checkScheduledSummaries();
+    } catch (error) {
+      console.error('[SCHEDULER] Error in scheduled check:', error);
     }
-  }
+  }, 600000); // 10 minutes = 600,000 milliseconds
   
-  // If no target found in this hour, use the first target of next hour
-  if (nextMinute === null) {
-    nextMinute = targetMinutes[0];
-  }
-  
-  // Calculate milliseconds until next check
-  let msUntilNext;
-  if (nextMinute > currentMinute) {
-    // Next check is in the same hour
-    const minutesUntilNext = nextMinute - currentMinute;
-    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
-    msUntilNext = secondsUntilNext * 1000;
-  } else if (nextMinute === currentMinute && currentSecond === 0) {
-    // We're exactly at a target minute, run immediately
-    msUntilNext = 0;
-  } else {
-    // Next check is in the next hour
-    const minutesUntilNext = 60 - currentMinute + nextMinute;
-    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
-    msUntilNext = secondsUntilNext * 1000;
-  }
-  
-  console.log(`[SCHEDULER] Next check scheduled in ${Math.floor(msUntilNext / 1000 / 60)} minutes ${Math.floor((msUntilNext / 1000) % 60)} seconds (at :${String(nextMinute).padStart(2, '0')})`);
-  
-  setTimeout(() => {
-    checkScheduledSummaries();
-    // Schedule the next check after this one completes
-    scheduleNextCheck();
-  }, msUntilNext);
+  console.log('[SCHEDULER] Scheduled summary checker enabled - checking every 10 minutes');
+  console.log('[SCHEDULER] Running initial check now, then every 10 minutes thereafter');
 }
 
 // Start the scheduling
-scheduleNextCheck();
+startScheduler();
 
 // --- Trending Topics Updater ---
 // Update trending topics every hour

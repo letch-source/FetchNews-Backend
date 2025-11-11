@@ -34,29 +34,42 @@ const createFallbackUser = async () => {
   return user;
 };
 
-// Fallback authentication functions
+// Fallback authentication functions - Google-only
 const fallbackAuth = {
-  async findUserByEmail(email) {
-    if (fallbackUsers.size === 0) {
-      await createFallbackUser();
+  async findUserByGoogleId(googleId) {
+    // Find user by googleId in fallback store
+    for (const user of fallbackUsers.values()) {
+      if (user.googleId === googleId) {
+        return user;
+      }
     }
-    return fallbackUsers.get(email);
+    return null;
+  },
+  
+  async findUserByEmail(email) {
+    // Only return if user has googleId (Google-authenticated)
+    const user = fallbackUsers.get(email);
+    if (user && user.googleId) {
+      return user;
+    }
+    return null;
   },
   
   async findUserById(id) {
-    if (fallbackUsers.size === 0) {
-      await createFallbackUser();
+    // Find user by id, but only if they have googleId
+    for (const user of fallbackUsers.values()) {
+      if (user._id === id && user.googleId) {
+        return user;
+      }
     }
-    // For fallback, we only have one user
-    return fallbackUsers.values().next().value;
+    return null;
   },
   
-  async createUser(email, password) {
-    const hashedPassword = await bcrypt.hash(password, 10);
+  async createGoogleUser(email, googleId) {
     const user = {
       _id: `fallback-${Date.now()}`,
       email,
-      password: hashedPassword,
+      googleId: googleId,
       isPremium: false,
       dailyUsageCount: 0,
       lastUsageDate: new Date(),
@@ -64,12 +77,26 @@ const fallbackAuth = {
       subscriptionExpiresAt: null,
       customTopics: [],
       summaryHistory: [],
+      emailVerified: true,
+      selectedVoice: 'alloy',
+      playbackRate: 1.0,
+      upliftingNewsOnly: false,
+      lastFetchedTopics: [],
+      selectedTopics: [],
+      selectedNewsSources: [],
+      scheduledSummaries: [],
+      preferences: {},
       createdAt: new Date(),
       updatedAt: new Date()
     };
     
     fallbackUsers.set(email, user);
     return user;
+  },
+  
+  // Deprecated - kept for backwards compatibility but should not be used
+  async createUser(email, password) {
+    throw new Error('Password-based authentication is no longer supported. Please use Google Sign-In.');
   },
   
   async comparePassword(user, candidatePassword) {

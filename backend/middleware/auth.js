@@ -37,6 +37,11 @@ const authenticateToken = async (req, res, next) => {
       return res.status(401).json({ error: 'Invalid token' });
     }
 
+    // Only allow Google-authenticated users
+    if (!user.googleId) {
+      return res.status(403).json({ error: 'Account must be linked to Google. Please sign in with Google.' });
+    }
+
     req.user = user;
     next();
   } catch (error) {
@@ -72,7 +77,8 @@ const optionalAuth = async (req, res, next) => {
         user = await fallbackAuth.findUserById(decoded.userId);
       }
       
-      if (user) {
+      // Only set user if they have googleId (Google-authenticated)
+      if (user && user.googleId) {
         req.user = user;
       }
     }
