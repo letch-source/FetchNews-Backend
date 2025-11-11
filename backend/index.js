@@ -22,10 +22,8 @@ const adminRoutes = require("./routes/adminActions");
 const preferencesRoutes = require("./routes/preferences");
 const newsSourcesRoutes = require("./routes/newsSources");
 const trendingAdminRoutes = require("./routes/trendingAdmin");
-const recommendedAdminRoutes = require("./routes/recommendedAdmin");
 const fallbackAuth = require("./utils/fallbackAuth");
 const User = require("./models/User");
-const { sendEngagementReminder } = require("./utils/notifications");
 
 // Connect to MongoDB
 connectDB();
@@ -88,130 +86,6 @@ function ensureCompleteSentence(text) {
   return text + '.';
 }
 
-// AI-powered article relevance filter (optimized for memory efficiency)
-// Uses OpenAI to verify articles match the requested topic/category
-// This addresses API miscategorization issues in a general way
-async function filterArticlesByRelevance(articles, topicOrCategory) {
-  // Check if AI filtering is disabled via environment variable
-  if (process.env.DISABLE_AI_FILTER === 'true') {
-    console.log('[AI-FILTER] Disabled via DISABLE_AI_FILTER env variable');
-    return articles;
-  }
-  
-  if (!articles || articles.length === 0) {
-    return articles;
-  }
-  
-  // Don't filter if we have very few articles (might be too aggressive)
-  if (articles.length <= 3) {
-    return articles;
-  }
-  
-  // Create cache key from article titles + topic
-  const cacheKey = `${topicOrCategory}:${articles.map(a => a.title).join('|')}`;
-  const cacheHash = cacheKey.substring(0, 100); // Limit key size
-  
-  // Check cache first
-  const cached = filterCache.get(cacheHash);
-  if (cached && (Date.now() - cached.timestamp) < FILTER_CACHE_TTL) {
-    console.log(`[AI-FILTER] Using cached result for "${topicOrCategory}"`);
-    // Return filtered articles based on cached indices
-    return articles.filter((_, idx) => !cached.indicesToRemove.has(idx));
-  }
-  
-  console.log(`[AI-FILTER] Checking relevance of ${articles.length} articles for topic: "${topicOrCategory}"`);
-  
-  try {
-    // Prepare article summaries for batch classification (limit description length)
-    const articleSummaries = articles.map((article, idx) => {
-      const title = article.title || '';
-      const description = article.description || '';
-      return `${idx}. "${title}" - ${description.substring(0, 100)}`;
-    }).join('\n\n');
-    
-    // Use GPT to classify article relevance in a single API call
-    const prompt = `You are a content classifier. Given a topic/category "${topicOrCategory}", analyze these news articles and identify which ones are NOT relevant to this topic.
-
-Articles to analyze:
-${articleSummaries}
-
-Instructions:
-- Return ONLY the numbers (0-indexed) of articles that are OFF-TOPIC or misclassified
-- Separate numbers with commas
-- If all articles are relevant, return "NONE"
-- Be strict: filter out articles that don't genuinely match the topic
-- Examples of misclassification:
-  * Sports/racing articles in "technology" (unless about racing tech/innovation)
-  * Celebrity gossip in "AI"
-  * Political articles in "gaming"
-  
-Return format: Just the numbers or "NONE" (e.g., "1,5,7" or "NONE")`;
-
-    const response = await openaiClient.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: "You are a precise content classifier. Return only numbers or NONE."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      temperature: 0.1,
-      max_tokens: 50 // Reduced from 100 to save memory
-    });
-    
-    const result = response.choices[0]?.message?.content?.trim() || "NONE";
-    console.log(`[AI-FILTER] GPT classification result: ${result}`);
-    
-    let indicesToRemove = new Set();
-    
-    if (result !== "NONE") {
-      // Parse the indices to filter
-      indicesToRemove = new Set(
-        result.split(',')
-          .map(n => parseInt(n.trim()))
-          .filter(n => !isNaN(n) && n >= 0 && n < articles.length)
-      );
-    }
-    
-    // Cache the result
-    if (filterCache.size >= FILTER_CACHE_MAX_SIZE) {
-      // Remove oldest entry when cache is full
-      const firstKey = filterCache.keys().next().value;
-      filterCache.delete(firstKey);
-    }
-    filterCache.set(cacheHash, {
-      indicesToRemove,
-      timestamp: Date.now()
-    });
-    
-    if (indicesToRemove.size === 0) {
-      console.log(`[AI-FILTER] All articles are relevant, no filtering needed`);
-      return articles;
-    }
-    
-    // Filter out irrelevant articles
-    const filtered = articles.filter((article, idx) => {
-      if (indicesToRemove.has(idx)) {
-        console.log(`[AI-FILTER] Excluding irrelevant article: "${article.title}"`);
-        return false;
-      }
-      return true;
-    });
-    
-    console.log(`[AI-FILTER] Filtered ${articles.length - filtered.length} irrelevant articles, ${filtered.length} remaining`);
-    return filtered;
-    
-  } catch (error) {
-    console.error(`[AI-FILTER] Error during relevance filtering: ${error.message}`);
-    // On error, return original articles (fail-safe)
-    return articles;
-  }
-}
-
 // Authentication routes
 app.use("/api/auth", authRoutes);
 
@@ -229,9 +103,6 @@ app.use("/api/admin", adminRoutes);
 
 // Admin trending topics management
 app.use("/api/admin/trending-topics", trendingAdminRoutes);
-
-// Admin recommended topics management
-app.use("/api/admin/recommended-topics", recommendedAdminRoutes);
 
 // Preferences routes
 app.use("/api/preferences", preferencesRoutes);
@@ -474,53 +345,6 @@ app.get("/api/trending-topics", async (req, res) => {
   }
 });
 
-// Recommended topics endpoint (public)
-app.get("/api/recommended-topics", async (req, res) => {
-  try {
-    // Default recommended topics
-    const defaultTopics = ["Business", "Entertainment", "Health", "Science", "Technology", "Sports", "World", "General"];
-    
-    // Check for admin override
-    const overridePath = path.join(__dirname, "./server_data/recommended_override.json");
-    let usingOverride = false;
-    let overrideData = null;
-    try {
-      if (fs.existsSync(overridePath)) {
-        const raw = fs.readFileSync(overridePath, 'utf8');
-        const data = JSON.parse(raw);
-        if (data && Array.isArray(data.topics) && data.topics.length > 0) {
-          usingOverride = true;
-          overrideData = data;
-        }
-      }
-    } catch (error) {
-      console.error('Error reading recommended topics override:', error);
-    }
-
-    if (usingOverride) {
-      return res.json({
-        recommendedTopics: overrideData.topics,
-        lastUpdated: overrideData.lastUpdated || null,
-        source: "override",
-        setBy: overrideData.setBy || null
-      });
-    }
-
-    // Return default topics
-    res.json({
-      recommendedTopics: defaultTopics,
-      lastUpdated: null,
-      source: "default"
-    });
-  } catch (error) {
-    console.error('Get recommended topics error:', error);
-    res.status(500).json({ 
-      error: 'Failed to get recommended topics',
-      details: error.message 
-    });
-  }
-});
-
 // Manual trending topics update endpoint (for testing)
 app.post("/api/trending-topics/update", async (req, res) => {
   try {
@@ -623,10 +447,6 @@ app.post("/api/auth/timezone", authenticateToken, async (req, res) => {
 const scheduledSummariesRoutes = require("./routes/scheduledSummaries");
 app.use("/api/scheduled-summaries", scheduledSummariesRoutes);
 
-// Notifications routes
-const notificationsRoutes = require("./routes/notifications");
-app.use("/api/notifications", notificationsRoutes);
-
 // Serve admin website
 // Admin directory is located in backend/admin (relative to this file)
 const adminPath = path.join(__dirname, "admin");
@@ -664,14 +484,6 @@ if (!JWT_SECRET) {
 }
 const MEDIASTACK_KEY = process.env.MEDIASTACK_KEY || "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-
-// Create a single shared OpenAI client instance to reduce memory usage
-const openaiClient = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-// In-memory cache for AI filtering results to reduce API calls and memory usage
-const filterCache = new Map();
-const FILTER_CACHE_MAX_SIZE = 100;
-const FILTER_CACHE_TTL = 3600000; // 1 hour
 
 // --- In-memory data store fallback (replace with SQLite later) ---
 let users = []; // [{ email, passwordHash, topics: [], location: "" }]
@@ -806,12 +618,8 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [])
     source: { id: article.source, name: article.source }
   }));
   
-  // Apply AI-powered relevance filter to remove miscategorized articles
-  const topicName = qParts.filter(Boolean).join(" ");
-  const filteredArticles = await filterArticlesByRelevance(mappedArticles, topicName);
-  
   // Removed source printing log
-  return filteredArticles;
+  return mappedArticles;
 }
 
 // Function to ensure variety by getting articles from multiple sources with progressive time expansion
@@ -949,11 +757,8 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
     source: { id: article.source, name: article.source }
   }));
   
-  // Apply AI-powered relevance filter to remove miscategorized articles
-  const filteredArticles = await filterArticlesByRelevance(articles, category || 'general');
-  
   // Removed source printing log
-  return filteredArticles;
+  return articles;
 }
 
 async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = []) {
@@ -1180,7 +985,7 @@ async function summarizeArticles(topic, geo, articles, wordCount, goodNewsOnly =
   }
 
   try {
-    // Use shared OpenAI client to reduce memory usage
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
     
     // Optimized article preparation for ChatGPT (limit to 4 articles for faster processing)
     const articleTexts = articles.slice(0, 4).map((article, index) => {
@@ -1234,7 +1039,7 @@ Requirements:
 
     console.log(`Sending ${articles.length} articles to ChatGPT for summarization`);
 
-    const completion = await openaiClient.chat.completions.create({
+    const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -1530,19 +1335,50 @@ app.get("/api/test-mediastack", async (req, res) => {
   }
 });
 
-// Signup - DISABLED: Google Sign-In only
+// Signup
 app.post("/api/auth/signup", (req, res) => {
-  res.status(403).json({ 
-    error: "Password-based signup is no longer supported. Please use Google Sign-In.",
-    googleSignInRequired: true
+  const { email, password } = req.body || {};
+  if (!email || !password)
+    return res.status(400).json({ error: "Email and password required" });
+
+  if (users.find((u) => u.email === email)) {
+    return res.status(400).json({ error: "Email already in use" });
+  }
+
+  const passwordHash = bcrypt.hashSync(password, 10);
+  const newUser = { email, passwordHash, topics: [], location: "" };
+  users.push(newUser);
+  saveUsers();
+
+  const token = createToken(newUser);
+  res.cookie("token", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  });
+  res.json({
+    message: "Signup successful",
+    user: { email, topics: [], location: "" },
   });
 });
 
-// Login - DISABLED: Google Sign-In only
+// Login
 app.post("/api/auth/login", (req, res) => {
-  res.status(403).json({ 
-    error: "Password-based login is no longer supported. Please use Google Sign-In.",
-    googleSignInRequired: true
+  const { email, password } = req.body || {};
+  const user = users.find((u) => u.email === email);
+  if (!user) return res.status(400).json({ error: "Invalid credentials" });
+  if (!bcrypt.compareSync(password, user.passwordHash)) {
+    return res.status(400).json({ error: "Invalid credentials" });
+  }
+  const token = createToken(user);
+  res.cookie("token", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  });
+  res.json({
+    message: "Login successful",
+    user: { email, topics: user.topics, location: user.location },
   });
 });
 
@@ -1605,11 +1441,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     if (req.user) {
       let usageCheck;
       if (mongoose.connection.readyState === 1) {
-        // Call canFetchNews which may reset the count
-        usageCheck = await req.user.canFetchNews();
-        // Reload user from database to ensure we have the latest data
-        const User = require('./models/User');
-        req.user = await User.findById(req.user._id);
+        usageCheck = req.user.canFetchNews();
       } else {
         usageCheck = fallbackAuth.canFetchNews(req.user);
       }
@@ -1617,9 +1449,9 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       if (!usageCheck.allowed) {
         return res.status(429).json({
           error: "Daily limit reached",
-          message: `You've reached your daily limit of ${usageCheck.limit} Fetches. Upgrade to Premium for unlimited access.`,
+          message: "You've reached your daily limit of 10 summaries. Upgrade to Premium for unlimited access.",
           dailyCount: usageCheck.dailyCount,
-          limit: usageCheck.limit
+          limit: 1
         });
       }
     }
@@ -1909,11 +1741,7 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
     if (req.user) {
       let usageCheck;
       if (mongoose.connection.readyState === 1) {
-        // Call canFetchNews which may reset the count
-        usageCheck = await req.user.canFetchNews();
-        // Reload user from database to ensure we have the latest data
-        const User = require('./models/User');
-        req.user = await User.findById(req.user._id);
+        usageCheck = req.user.canFetchNews();
       } else {
         usageCheck = fallbackAuth.canFetchNews(req.user);
       }
@@ -1921,9 +1749,9 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
       if (!usageCheck.allowed) {
         return res.status(429).json({
           error: "Daily limit reached",
-          message: `You've reached your daily limit of ${usageCheck.limit} Fetches. Upgrade to Premium for unlimited access.`,
+          message: "You've reached your daily limit of 10 summaries. Upgrade to Premium for unlimited access.",
           dailyCount: usageCheck.dailyCount,
-          limit: usageCheck.limit
+          limit: 1
         });
       }
     }
@@ -2159,10 +1987,10 @@ app.post("/api/tts", async (req, res) => {
     
     console.log(`TTS cache miss - generating new audio with voice: ${voice}`);
 
-    // Use shared OpenAI client to reduce memory usage
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
     async function tryModel(model, voice) {
-      return await openaiClient.audio.speech.create({
+      return await openai.audio.speech.create({
         model,
         voice,
         input: finalText,
@@ -2350,7 +2178,12 @@ async function checkScheduledSummaries() {
         const scheduledTimeMinutes = scheduledHour * 60 + scheduledMinute;
         const userTimeMinutes = userHour * 60 + userMinute;
         
-        // Check if summary hasn't already run today in user's timezone (prevent duplicate executions)
+        // Check if current time matches the scheduled time (within 1 minute window)
+        // Since we check at :00, :10, :20, :30, :40, :50, we should catch scheduled times at those exact minutes
+        const timeDifference = Math.abs(userTimeMinutes - scheduledTimeMinutes);
+        const shouldExecute = timeDifference <= 1; // Allow 1 minute window for slight delays
+        
+        // Also check if summary hasn't already run today in user's timezone (prevent duplicate executions)
         const lastRun = summary.lastRun ? new Date(summary.lastRun) : null;
         let alreadyRanToday = false;
         if (lastRun) {
@@ -2367,17 +2200,9 @@ async function checkScheduledSummaries() {
           alreadyRanToday = lastRunDateStr === nowDateStr;
         }
         
-        // Check if scheduled time has passed and is within the last 30 minutes
-        // This accounts for the 10-minute check interval and ensures we catch scheduled times
-        // even if the scheduler runs slightly after the scheduled time or if there were delays
-        const timeDifference = userTimeMinutes - scheduledTimeMinutes;
-        const hasPassed = timeDifference >= 0; // Scheduled time has passed today
-        const withinWindow = timeDifference <= 30; // Within last 30 minutes (to account for 10-min check interval and potential delays)
-        const shouldExecute = hasPassed && withinWindow && !alreadyRanToday;
+        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (user time=${userTime}, server time=${currentTime}), user timezone=${userTimezone}, user day=${userDay}, timeDiff=${timeDifference}min, shouldExecute=${shouldExecute && !alreadyRanToday}`);
         
-        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (user time=${userTime}, server time=${currentTime}), user timezone=${userTimezone}, user day=${userDay}, timeDiff=${timeDifference}min, hasPassed=${hasPassed}, withinWindow=${withinWindow}, alreadyRanToday=${alreadyRanToday}, shouldExecute=${shouldExecute}`);
-        
-        if (shouldExecute) {
+        if (shouldExecute && !alreadyRanToday) {
           console.log(`[SCHEDULER] Executing scheduled fetch "${summary.name}" for user ${user.email} on ${currentDay}`);
           
           try {
@@ -2428,164 +2253,108 @@ async function checkScheduledSummaries() {
   }
 }
 
-// Engagement reminder system - sends reminders to users who haven't used the app recently
-async function checkEngagementReminders() {
-  try {
-    const now = new Date();
-    const hoursSinceLastUsage = 24; // Send reminder if user hasn't used app in 24 hours
-    const minHoursBetweenReminders = 48; // Don't send another reminder for 48 hours after last one
-    
-    console.log(`[ENGAGEMENT] Checking for users who need engagement reminders...`);
-    
-    // Find users who:
-    // 1. Have push notification token
-    // 2. Have engagement reminders enabled
-    // 3. Haven't used the app in the last X hours
-    // 4. Haven't received a reminder in the last Y hours
-    const cutoffDate = new Date(now.getTime() - hoursSinceLastUsage * 60 * 60 * 1000);
-    const reminderCutoffDate = new Date(now.getTime() - minHoursBetweenReminders * 60 * 60 * 1000);
-    
-    const users = await User.find({
-      pushNotificationToken: { $exists: true, $ne: null },
-      'notificationPreferences.engagementReminders': { $ne: false },
-      $or: [
-        { lastUsageDate: { $lt: cutoffDate } },
-        { lastUsageDate: { $exists: false } }
-      ],
-      $and: [
-        {
-          $or: [
-            { 'notificationPreferences.lastReminderSent': { $lt: reminderCutoffDate } },
-            { 'notificationPreferences.lastReminderSent': { $exists: false } }
-          ]
-        }
-      ]
-    });
-    
-    console.log(`[ENGAGEMENT] Found ${users.length} users eligible for engagement reminders`);
-    
-    let sentCount = 0;
-    for (const user of users) {
-      try {
-        // Check if user really hasn't used the app recently
-        const lastUsage = user.lastUsageDate ? new Date(user.lastUsageDate) : null;
-        const hoursSinceUsage = lastUsage 
-          ? (now.getTime() - lastUsage.getTime()) / (1000 * 60 * 60)
-          : Infinity;
-        
-        if (hoursSinceUsage < hoursSinceLastUsage) {
-          continue; // User has used app recently, skip
-        }
-        
-        // Check last reminder time
-        const lastReminder = user.notificationPreferences?.lastReminderSent 
-          ? new Date(user.notificationPreferences.lastReminderSent)
-          : null;
-        const hoursSinceReminder = lastReminder
-          ? (now.getTime() - lastReminder.getTime()) / (1000 * 60 * 60)
-          : Infinity;
-        
-        if (hoursSinceReminder < minHoursBetweenReminders) {
-          continue; // Sent reminder too recently, skip
-        }
-        
-        // Send reminder
-        const success = await sendEngagementReminder(user.pushNotificationToken);
-        
-        if (success) {
-          // Update last reminder sent time
-          if (!user.notificationPreferences) {
-            user.notificationPreferences = {};
-          }
-          user.notificationPreferences.lastReminderSent = now;
-          user.markModified('notificationPreferences');
-          await user.save();
-          
-          sentCount++;
-          console.log(`[ENGAGEMENT] Sent reminder to user ${user.email} (last usage: ${hoursSinceUsage.toFixed(1)}h ago)`);
-        }
-      } catch (error) {
-        console.error(`[ENGAGEMENT] Error sending reminder to user ${user.email}:`, error);
-      }
+// Schedule checks at :00, :10, :20, :30, :40, and :50 minutes past each hour
+function scheduleNextCheck() {
+  const now = new Date();
+  const currentMinute = now.getMinutes();
+  const currentSecond = now.getSeconds();
+  
+  // Target minutes: 0, 10, 20, 30, 40, 50
+  const targetMinutes = [0, 10, 20, 30, 40, 50];
+  
+  // Find next target minute
+  let nextMinute = null;
+  for (const target of targetMinutes) {
+    if (target > currentMinute || (target === currentMinute && currentSecond === 0)) {
+      nextMinute = target;
+      break;
     }
-    
-    console.log(`[ENGAGEMENT] Sent ${sentCount} engagement reminders`);
-  } catch (error) {
-    console.error('[ENGAGEMENT] Error checking engagement reminders:', error);
   }
+  
+  // If no target found in this hour, use the first target of next hour
+  if (nextMinute === null) {
+    nextMinute = targetMinutes[0];
+  }
+  
+  // Calculate milliseconds until next check
+  let msUntilNext;
+  if (nextMinute > currentMinute) {
+    // Next check is in the same hour
+    const minutesUntilNext = nextMinute - currentMinute;
+    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
+    msUntilNext = secondsUntilNext * 1000;
+  } else if (nextMinute === currentMinute && currentSecond === 0) {
+    // We're exactly at a target minute, run immediately
+    msUntilNext = 0;
+  } else {
+    // Next check is in the next hour
+    const minutesUntilNext = 60 - currentMinute + nextMinute;
+    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
+    msUntilNext = secondsUntilNext * 1000;
+  }
+  
+  console.log(`[SCHEDULER] Next check scheduled in ${Math.floor(msUntilNext / 1000 / 60)} minutes ${Math.floor((msUntilNext / 1000) % 60)} seconds (at :${String(nextMinute).padStart(2, '0')})`);
+  
+  setTimeout(() => {
+    checkScheduledSummaries();
+    // Schedule the next check after this one completes
+    scheduleNextCheck();
+  }, msUntilNext);
 }
 
-// Schedule checks every 10 minutes
-// Use global to persist across module reloads
-if (!global.schedulerInterval) {
-  global.schedulerInterval = null;
-}
-if (typeof global.isSchedulerRunning === 'undefined') {
-  global.isSchedulerRunning = false;
-}
-
-function startScheduler() {
-  // Prevent multiple schedulers from running
-  if (global.isSchedulerRunning) {
-    console.log('[SCHEDULER] Scheduler already running, skipping start');
-    return;
-  }
-  
-  // Always clear any existing interval first (handles module reloads)
-  if (global.schedulerInterval) {
-    console.log('[SCHEDULER] Clearing existing scheduler interval');
-    clearInterval(global.schedulerInterval);
-    global.schedulerInterval = null;
-  }
-  
-  // Set flag before creating interval
-  global.isSchedulerRunning = true;
-  
-  // Run initial check immediately (but don't await - let it run in background)
-  checkScheduledSummaries().catch(error => {
-    console.error('[SCHEDULER] Error in initial check:', error);
-  });
-  
-  // Then check every 10 minutes (600000 ms = 10 minutes)
-  let INTERVAL_MS = 600000; // 10 minutes = 600,000 milliseconds
-  // Safety check: ensure interval is at least 1 minute (60000ms)
-  if (INTERVAL_MS < 60000) {
-    console.error(`[SCHEDULER] ERROR: Interval too short (${INTERVAL_MS}ms). Using minimum of 60000ms (1 minute)`);
-    INTERVAL_MS = 60000;
-  }
-  global.schedulerInterval = setInterval(async () => {
-    try {
-      await checkScheduledSummaries();
-      // Check engagement reminders every hour (every 6th check, since we check every 10 minutes)
-      const checkCount = global.engagementCheckCount || 0;
-      global.engagementCheckCount = (checkCount + 1) % 6;
-      if (global.engagementCheckCount === 0) {
-        checkEngagementReminders().catch(error => {
-          console.error('[ENGAGEMENT] Error in engagement reminder check:', error);
-        });
-      }
-    } catch (error) {
-      console.error('[SCHEDULER] Error in scheduled check:', error);
-    }
-  }, INTERVAL_MS);
-  
-  console.log(`[SCHEDULER] Scheduled summary checker enabled - checking every ${INTERVAL_MS / 1000 / 60} minutes (${INTERVAL_MS}ms)`);
-  console.log('[SCHEDULER] Running initial check now, then every 10 minutes thereafter');
-  console.log(`[SCHEDULER] Interval ID: ${global.schedulerInterval}`);
-}
-
-// Only start scheduler if not already running
-if (!global.isSchedulerRunning) {
-  startScheduler();
-} else {
-  console.log('[SCHEDULER] Scheduler already initialized, skipping');
-}
+// Start the scheduling
+scheduleNextCheck();
 
 // --- Trending Topics Updater ---
 // Update trending topics every hour
 let trendingTopicsCache = [];
 let trendingTopicsWithSources = {}; // Store topics with their source articles
 let lastTrendingUpdate = null;
+
+// Persistent file for trending topics cache
+const TRENDING_TOPICS_FILE = path.join(__dirname, "./server_data/trending_topics_cache.json");
+
+// Ensure server_data directory exists
+const serverDataDir = path.join(__dirname, "./server_data");
+if (!fs.existsSync(serverDataDir)) {
+  fs.mkdirSync(serverDataDir, { recursive: true });
+}
+
+// Load trending topics from file on startup
+function loadTrendingTopicsFromFile() {
+  try {
+    if (fs.existsSync(TRENDING_TOPICS_FILE)) {
+      const data = fs.readFileSync(TRENDING_TOPICS_FILE, 'utf8');
+      const parsed = JSON.parse(data);
+      if (parsed && Array.isArray(parsed.topics) && parsed.topics.length > 0) {
+        trendingTopicsCache = parsed.topics;
+        if (parsed.lastUpdated) {
+          lastTrendingUpdate = new Date(parsed.lastUpdated);
+        }
+        console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics from cache file`);
+      }
+    }
+  } catch (error) {
+    console.error('[TRENDING] Error loading trending topics from file:', error);
+  }
+}
+
+// Save trending topics to file
+function saveTrendingTopicsToFile() {
+  try {
+    const data = {
+      topics: trendingTopicsCache,
+      lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null
+    };
+    fs.writeFileSync(TRENDING_TOPICS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    console.log(`[TRENDING] Saved ${trendingTopicsCache.length} trending topics to cache file`);
+  } catch (error) {
+    console.error('[TRENDING] Error saving trending topics to file:', error);
+  }
+}
+
+// Load trending topics on startup
+loadTrendingTopicsFromFile();
 
 // Extract trending topics using ChatGPT analysis of news articles
 async function extractTrendingTopicsWithChatGPT(articles) {
@@ -2772,6 +2541,8 @@ async function updateTrendingTopics() {
       trendingTopicsWithSources = result.topicsWithSources;
       lastTrendingUpdate = new Date();
       console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${result.topics.join(', ')}`);
+      // Save to file for persistence
+      saveTrendingTopicsToFile();
     } else {
       console.log('[TRENDING] ChatGPT analysis failed, using fallback approach');
       await updateTrendingTopicsFallback();
@@ -2807,6 +2578,8 @@ async function updateTrendingTopicsFallback() {
     lastTrendingUpdate = new Date();
     
     console.log(`[TRENDING] Updated trending topics via fallback (${randomCategory}): ${trendingTopics.join(', ')}`);
+    // Save to file for persistence
+    saveTrendingTopicsToFile();
   } catch (error) {
     console.error('[TRENDING] Fallback method failed:', error);
   }
