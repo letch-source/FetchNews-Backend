@@ -131,20 +131,40 @@ struct TopicOnboardingView: View {
                 await vm.addCustomTopic(topic)
             }
             
-            // IMPORTANT: Also save to selectedTopics so onboarding doesn't show again
-            // This will trigger saveSettings() which saves to backend preferences
+            // IMPORTANT: Save selectedTopics immediately (not debounced) so onboarding doesn't show again
+            // Set selectedTopics first
             await MainActor.run {
                 vm.selectedTopics = selectedTopics
             }
             
-            // Wait a moment for the preferences to save
-            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            // Save preferences immediately (bypass debounce) to ensure it's saved before we check
+            do {
+                let preferences = UserPreferences(
+                    selectedVoice: vm.selectedVoice,
+                    playbackRate: vm.playbackRate,
+                    upliftingNewsOnly: vm.upliftingNewsOnly,
+                    length: String(vm.length.rawValue),
+                    lastFetchedTopics: Array(vm.lastFetchedTopics),
+                    selectedTopics: Array(selectedTopics), // Save the selected topics
+                    selectedNewsSources: Array(vm.selectedNewsSources),
+                    scheduledSummaries: []
+                )
+                _ = try await ApiClient.updateUserPreferences(preferences)
+                print("✅ Saved selectedTopics to backend: \(selectedTopics.count) topics - \(selectedTopics.joined(separator: ", "))")
+            } catch {
+                print("❌ Failed to save selectedTopics: \(error)")
+            }
             
             // Reload custom topics to ensure sync
             await vm.loadCustomTopics()
             
             // Refresh user data to sync selectedTopics to AuthVM's currentUser
             await authVM.refreshUser()
+            
+            // Verify the user has selectedTopics before dismissing
+            if let currentUser = authVM.currentUser {
+                print("📋 After refresh - user selectedTopics count: \(currentUser.selectedTopics.count)")
+            }
             
             // Also hide onboarding flag in AuthVM
             await MainActor.run {
