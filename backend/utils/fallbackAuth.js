@@ -69,6 +69,23 @@ function deserializeUser(userData) {
       timestamp: entry.timestamp ? new Date(entry.timestamp) : new Date()
     }));
   }
+  // Ensure selectedTopics is always an array (for users created before this field existed)
+  if (!user.selectedTopics || !Array.isArray(user.selectedTopics)) {
+    user.selectedTopics = [];
+  }
+  // Ensure other array fields are arrays
+  if (!user.customTopics || !Array.isArray(user.customTopics)) {
+    user.customTopics = [];
+  }
+  if (!user.lastFetchedTopics || !Array.isArray(user.lastFetchedTopics)) {
+    user.lastFetchedTopics = [];
+  }
+  if (!user.selectedNewsSources || !Array.isArray(user.selectedNewsSources)) {
+    user.selectedNewsSources = [];
+  }
+  if (!user.scheduledSummaries || !Array.isArray(user.scheduledSummaries)) {
+    user.scheduledSummaries = [];
+  }
   return user;
 }
 
@@ -82,6 +99,7 @@ function loadUsers() {
       usersArray.forEach(userData => {
         const user = deserializeUser(userData);
         fallbackUsers.set(user.email, user);
+        console.log(`[FALLBACK AUTH] Loaded user ${user.email} - selectedTopics: ${JSON.stringify(user.selectedTopics || [])} (${(user.selectedTopics || []).length} topics)`);
       });
       console.log(`[FALLBACK AUTH] Loaded ${fallbackUsers.size} users from ${USERS_FILE}`);
     } catch (error) {
@@ -138,6 +156,7 @@ const fallbackAuth = {
     // Find user by googleId in fallback store
     for (const user of fallbackUsers.values()) {
       if (user.googleId === googleId) {
+        console.log(`[FALLBACK AUTH] Found user ${user.email} by Google ID - selectedTopics: ${JSON.stringify(user.selectedTopics || [])} (${(user.selectedTopics || []).length} topics)`);
         return user;
       }
     }
@@ -157,6 +176,7 @@ const fallbackAuth = {
     // Find user by id, but only if they have googleId
     for (const user of fallbackUsers.values()) {
       if (user._id === id && user.googleId) {
+        console.log(`[FALLBACK AUTH] Found user ${user.email} by ID - selectedTopics: ${JSON.stringify(user.selectedTopics || [])} (${(user.selectedTopics || []).length} topics)`);
         return user;
       }
     }

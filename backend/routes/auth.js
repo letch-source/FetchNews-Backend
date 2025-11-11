@@ -174,7 +174,11 @@ router.post('/google', async (req, res) => {
         selectedNewsSources: user.selectedNewsSources || [],
         scheduledSummaries: user.scheduledSummaries || []
       };
+      console.log(`[AUTH /google] Fallback mode - User ${user.email} selectedTopics from user object: ${JSON.stringify(user.selectedTopics || [])}`);
+      console.log(`[AUTH /google] Fallback mode - User ${user.email} selectedTopics from preferences: ${JSON.stringify(preferences.selectedTopics || [])}`);
     }
+
+    console.log(`[AUTH /google] Returning selectedTopics for ${user.email}: ${JSON.stringify(preferences.selectedTopics || [])}`);
 
     res.json({
       message: 'Authentication successful',
@@ -246,7 +250,11 @@ router.get('/me', authenticateToken, async (req, res) => {
         selectedNewsSources: user.selectedNewsSources || [],
         scheduledSummaries: user.scheduledSummaries || []
       };
+      console.log(`[AUTH /me] Fallback mode - User ${user.email} selectedTopics from user object: ${JSON.stringify(user.selectedTopics || [])}`);
+      console.log(`[AUTH /me] Fallback mode - User ${user.email} selectedTopics from preferences: ${JSON.stringify(preferences.selectedTopics || [])}`);
     }
+    
+    console.log(`[AUTH /me] Returning selectedTopics for ${user.email}: ${JSON.stringify(preferences.selectedTopics || [])}`);
     
     res.json({
       user: {
