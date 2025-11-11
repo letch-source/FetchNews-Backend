@@ -22,6 +22,7 @@ const adminRoutes = require("./routes/adminActions");
 const preferencesRoutes = require("./routes/preferences");
 const newsSourcesRoutes = require("./routes/newsSources");
 const trendingAdminRoutes = require("./routes/trendingAdmin");
+const recommendedAdminRoutes = require("./routes/recommendedAdmin");
 const fallbackAuth = require("./utils/fallbackAuth");
 const User = require("./models/User");
 
@@ -227,6 +228,9 @@ app.use("/api/admin", adminRoutes);
 
 // Admin trending topics management
 app.use("/api/admin/trending-topics", trendingAdminRoutes);
+
+// Admin recommended topics management
+app.use("/api/admin/recommended-topics", recommendedAdminRoutes);
 
 // Preferences routes
 app.use("/api/preferences", preferencesRoutes);
@@ -2365,44 +2369,62 @@ async function checkScheduledSummaries() {
 }
 
 // Schedule checks every 10 minutes
-let schedulerInterval = null;
-let isSchedulerRunning = false;
+// Use global to persist across module reloads
+if (!global.schedulerInterval) {
+  global.schedulerInterval = null;
+}
+if (typeof global.isSchedulerRunning === 'undefined') {
+  global.isSchedulerRunning = false;
+}
 
 function startScheduler() {
   // Prevent multiple schedulers from running
-  if (isSchedulerRunning) {
+  if (global.isSchedulerRunning) {
     console.log('[SCHEDULER] Scheduler already running, skipping start');
     return;
   }
   
-  // Clear any existing interval
-  if (schedulerInterval) {
-    clearInterval(schedulerInterval);
-    schedulerInterval = null;
+  // Always clear any existing interval first (handles module reloads)
+  if (global.schedulerInterval) {
+    console.log('[SCHEDULER] Clearing existing scheduler interval');
+    clearInterval(global.schedulerInterval);
+    global.schedulerInterval = null;
   }
   
-  isSchedulerRunning = true;
+  // Set flag before creating interval
+  global.isSchedulerRunning = true;
   
-  // Run initial check immediately
+  // Run initial check immediately (but don't await - let it run in background)
   checkScheduledSummaries().catch(error => {
     console.error('[SCHEDULER] Error in initial check:', error);
   });
   
-  // Then check every 10 minutes (600000 ms)
-  schedulerInterval = setInterval(async () => {
+  // Then check every 10 minutes (600000 ms = 10 minutes)
+  let INTERVAL_MS = 600000; // 10 minutes = 600,000 milliseconds
+  // Safety check: ensure interval is at least 1 minute (60000ms)
+  if (INTERVAL_MS < 60000) {
+    console.error(`[SCHEDULER] ERROR: Interval too short (${INTERVAL_MS}ms). Using minimum of 60000ms (1 minute)`);
+    INTERVAL_MS = 60000;
+  }
+  global.schedulerInterval = setInterval(async () => {
     try {
       await checkScheduledSummaries();
     } catch (error) {
       console.error('[SCHEDULER] Error in scheduled check:', error);
     }
-  }, 600000); // 10 minutes = 600,000 milliseconds
+  }, INTERVAL_MS);
   
-  console.log('[SCHEDULER] Scheduled summary checker enabled - checking every 10 minutes');
+  console.log(`[SCHEDULER] Scheduled summary checker enabled - checking every ${INTERVAL_MS / 1000 / 60} minutes (${INTERVAL_MS}ms)`);
   console.log('[SCHEDULER] Running initial check now, then every 10 minutes thereafter');
+  console.log(`[SCHEDULER] Interval ID: ${global.schedulerInterval}`);
 }
 
-// Start the scheduling
-startScheduler();
+// Only start scheduler if not already running
+if (!global.isSchedulerRunning) {
+  startScheduler();
+} else {
+  console.log('[SCHEDULER] Scheduler already initialized, skipping');
+}
 
 // --- Trending Topics Updater ---
 // Update trending topics every hour
