@@ -187,7 +187,7 @@ router.get('/usage', authenticateToken, async (req, res) => {
     let usageCheck;
     
     if (isDatabaseAvailable()) {
-      usageCheck = await user.canFetchNews();
+      usageCheck = user.canFetchNews();
     } else {
       usageCheck = fallbackAuth.canFetchNews(user);
     }
