@@ -1441,9 +1441,13 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     if (req.user) {
       let usageCheck;
       if (mongoose.connection.readyState === 1) {
-        usageCheck = req.user.canFetchNews();
+        usageCheck = await req.user.canFetchNews();
+        // Reload user to ensure we have the latest dailyUsageCount after potential reset
+        req.user = await User.findById(req.user._id);
       } else {
         usageCheck = fallbackAuth.canFetchNews(req.user);
+        // Save the user if it was reset
+        await fallbackAuth.saveUser(req.user);
       }
       
       if (!usageCheck.allowed) {
@@ -1753,9 +1757,13 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
     if (req.user) {
       let usageCheck;
       if (mongoose.connection.readyState === 1) {
-        usageCheck = req.user.canFetchNews();
+        usageCheck = await req.user.canFetchNews();
+        // Reload user to ensure we have the latest dailyUsageCount after potential reset
+        req.user = await User.findById(req.user._id);
       } else {
         usageCheck = fallbackAuth.canFetchNews(req.user);
+        // Save the user if it was reset
+        await fallbackAuth.saveUser(req.user);
       }
       
       if (!usageCheck.allowed) {

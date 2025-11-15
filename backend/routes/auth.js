@@ -169,8 +169,8 @@ router.get('/me', authenticateToken, async (req, res) => {
     // Check and reset dailyUsageCount if needed (resets at midnight PST)
     let dailyUsageCount = 0;
     if (isDatabaseAvailable()) {
-      // Call canFetchNews to reset count if it's a new day
-      user.canFetchNews();
+      // Call canFetchNews to reset count if it's a new day (now async)
+      await user.canFetchNews();
       // Reload user to get updated dailyUsageCount (in case it was reset)
       await user.save();
       dailyUsageCount = user.dailyUsageCount || 0;
@@ -236,7 +236,7 @@ router.get('/usage', authenticateToken, async (req, res) => {
     let usageCheck;
     
     if (isDatabaseAvailable()) {
-      usageCheck = user.canFetchNews();
+      usageCheck = await user.canFetchNews();
     } else {
       usageCheck = fallbackAuth.canFetchNews(user);
     }
