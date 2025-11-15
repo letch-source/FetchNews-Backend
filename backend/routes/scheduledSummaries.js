@@ -347,8 +347,8 @@ async function executeScheduledSummary(user, summary) {
     const items = [];
     const combinedPieces = [];
     
-    // Process each topic
-    for (const topic of allTopics) {
+    // Helper function to process a single topic (extracted for parallelization)
+    async function processTopic(topic) {
       try {
         const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
         
@@ -381,10 +381,6 @@ async function executeScheduledSummary(user, summary) {
         // Generate summary
         const summaryText = await summarizeArticles(topic, geoData, relevant, wordCount, goodNewsOnly, user);
         
-        if (summaryText) {
-          combinedPieces.push(summaryText);
-        }
-        
         // Create source items
         const sourceItems = relevant.map((a, idx) => ({
           id: `${topic}-${idx}-${Date.now()}`,
@@ -395,10 +391,28 @@ async function executeScheduledSummary(user, summary) {
           topic,
         }));
         
-        items.push(...sourceItems);
+        return {
+          summary: summaryText,
+          sourceItems
+        };
       } catch (innerErr) {
         console.error(`[SCHEDULER] Error processing topic ${topic} for user ${user.email}:`, innerErr);
+        return {
+          summary: null,
+          sourceItems: []
+        };
       }
+    }
+    
+    // Process all topics in parallel for better performance
+    const topicResults = await Promise.all(allTopics.map(topic => processTopic(topic)));
+    
+    // Combine results from parallel processing
+    for (const result of topicResults) {
+      if (result.summary) {
+        combinedPieces.push(result.summary);
+      }
+      items.push(...result.sourceItems);
     }
     
     // Combine all topic summaries

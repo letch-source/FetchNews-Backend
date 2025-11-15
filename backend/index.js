@@ -1454,8 +1454,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         const limit = usageCheck.limit || (req.user?.isPremium ? 20 : 3);
         const isPremium = req.user?.isPremium || false;
         const message = isPremium
-          ? `You've reached your daily limit of ${limit} Fetches.`
-          : `You've reached your daily limit of ${limit} Fetches. Upgrade to Premium for ${20} Fetches per day.`;
+          ? `You've used all ${limit} of your daily Fetches. Your limit will reset tomorrow.`
+          : `You've used all ${limit} of your daily Fetches. Your limit will reset tomorrow, or upgrade to Premium for unlimited access.`;
         
         return res.status(429).json({
           error: "Daily limit reached",
@@ -1501,7 +1501,6 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     const combinedPieces = [];
     const globalCandidates = [];
 
-
     // Helper to format topics like "A and B" or "A, B, and C"
     function formatTopicList(list, geoData) {
       const names = (list || []).map((t) => {
@@ -1516,7 +1515,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
     }
 
-    for (const topic of topics) {
+    // Helper function to process a single topic (extracted for parallelization)
+    async function processTopic(topic) {
       try {
         const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
         
@@ -1575,9 +1575,10 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
 
         // Optimized pool of unfiltered candidates for global backfill
+        const topicCandidates = [];
         for (let idx = 0; idx < articles.length; idx++) {
           const a = articles[idx];
-          globalCandidates.push({
+          topicCandidates.push({
             id: `${topic}-cand-${idx}-${Date.now()}`,
             title: a.title || "",
             summary: (a.description || a.title || "")
@@ -1604,9 +1605,6 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
 
         const summary = await summarizeArticles(topic, geoData, relevant, wordCount, goodNewsOnly, req.user);
 
-        // For single topic, use the summary as-is (ChatGPT already includes the intro)
-        if (summary) combinedPieces.push(summary);
-
         const sourceItems = relevant.map((a, idx) => ({
           id: `${topic}-${idx}-${Date.now()}`,
           title: a.title || "",
@@ -1619,18 +1617,38 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
           topic,
         }));
 
-        items.push(...sourceItems);
+        return {
+          summary,
+          sourceItems,
+          candidates: topicCandidates
+        };
       } catch (innerErr) {
         console.error("summarize topic failed", topic, innerErr);
-        items.push({
-          id: `${topic}-error-${Date.now()}`,
-          title: `Issue fetching ${topic}`,
-          summary: `Failed to fetch news for "${topic}".`,
-          source: "",
-          url: "",
-          topic,
-        });
+        return {
+          summary: null,
+          sourceItems: [{
+            id: `${topic}-error-${Date.now()}`,
+            title: `Issue fetching ${topic}`,
+            summary: `Failed to fetch news for "${topic}".`,
+            source: "",
+            url: "",
+            topic,
+          }],
+          candidates: []
+        };
       }
+    }
+
+    // Process all topics in parallel for better performance
+    const topicResults = await Promise.all(topics.map(topic => processTopic(topic)));
+    
+    // Combine results from parallel processing
+    for (const result of topicResults) {
+      if (result.summary) {
+        combinedPieces.push(result.summary);
+      }
+      items.push(...result.sourceItems);
+      globalCandidates.push(...result.candidates);
     }
 
     // Ensure at least 3 sources overall by backfilling from candidates
@@ -1783,8 +1801,8 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
         const limit = usageCheck.limit || (req.user?.isPremium ? 20 : 3);
         const isPremium = req.user?.isPremium || false;
         const message = isPremium
-          ? `You've reached your daily limit of ${limit} Fetches.`
-          : `You've reached your daily limit of ${limit} Fetches. Upgrade to Premium for ${20} Fetches per day.`;
+          ? `You've used all ${limit} of your daily Fetches. Your limit will reset tomorrow.`
+          : `You've used all ${limit} of your daily Fetches. Your limit will reset tomorrow, or upgrade to Premium for unlimited access.`;
         
         return res.status(429).json({
           error: "Daily limit reached",
@@ -2026,8 +2044,8 @@ app.post("/api/tts", async (req, res) => {
     const cacheKey = cache.getTTSKey(finalText, voice, speed);
     const cached = await cache.get(cacheKey);
     
-    // Temporarily disable cache for voice testing
-    const disableCache = true; // Set to false to re-enable caching
+    // Cache is enabled for better performance
+    const disableCache = false;
     
     if (cached && !disableCache) {
       console.log(`TTS cache hit for ${finalText.substring(0, 50)}... with voice: ${voice}`);
@@ -2059,59 +2077,62 @@ app.post("/api/tts", async (req, res) => {
     
     console.log(`TTS Request - Original voice: "${voice}", Normalized: "${normalizedVoice}", Selected: "${selectedVoice}"`);
 
-    let speech;
-    let lastErr;
-    
-    // Try the requested voice with different models
+    // Try the requested voice with different models in parallel for faster response
     const attempts = [
       { model: "tts-1", voice: selectedVoice },
       { model: "tts-1-hd", voice: selectedVoice },
-      { model: "gpt-4o-mini-tts", voice: selectedVoice },
     ];
     
-    // Only fall back to alloy if the requested voice completely fails
-    const fallbackAttempts = [
-      { model: "tts-1", voice: "alloy" },
-      { model: "tts-1-hd", voice: "alloy" },
-    ];
+    // Try all models in parallel and use the first successful one
+    let speech = null;
+    let lastErr = null;
     
-    // Try requested voice first
-    for (const { model, voice: attemptVoice } of attempts) {
+    const attemptPromises = attempts.map(async ({ model, voice: attemptVoice }) => {
       try {
         console.log(`TTS Attempt - Model: ${model}, Voice: ${attemptVoice}`);
-        speech = await tryModel(model, attemptVoice);
-        if (speech) {
-          console.log(`TTS Success - Model: ${model}, Voice: ${attemptVoice}`);
-          break;
-        }
+        const result = await tryModel(model, attemptVoice);
+        return { success: true, model, voice: attemptVoice, result };
       } catch (e) {
-        lastErr = e;
-        try {
-          const msg = e?.message || String(e);
-          console.warn(`/api/tts attempt failed (model=${model}, voice=${attemptVoice}):`, msg);
-          if (e?.response) {
-            const body = await e.response.text().catch(() => "");
-            console.warn("OpenAI response:", body);
-          }
-        } catch {}
+        const msg = e?.message || String(e);
+        console.warn(`/api/tts attempt failed (model=${model}, voice=${attemptVoice}):`, msg);
+        return { success: false, model, voice: attemptVoice, error: e };
       }
-    }
+    });
     
-    // If requested voice failed, try fallback
-    if (!speech) {
+    // Wait for all attempts and find the first successful one
+    const results = await Promise.all(attemptPromises);
+    const successful = results.find(r => r.success);
+    
+    if (successful) {
+      speech = successful.result;
+      console.log(`TTS Success - Model: ${successful.model}, Voice: ${successful.voice}`);
+    } else {
+      // If requested voice failed, try fallback models in parallel
       console.log(`TTS Fallback - Requested voice "${selectedVoice}" failed, trying alloy`);
-      for (const { model, voice: attemptVoice } of fallbackAttempts) {
+      const fallbackAttempts = [
+        { model: "tts-1", voice: "alloy" },
+        { model: "tts-1-hd", voice: "alloy" },
+      ];
+      
+      const fallbackPromises = fallbackAttempts.map(async ({ model, voice: attemptVoice }) => {
         try {
           console.log(`TTS Fallback Attempt - Model: ${model}, Voice: ${attemptVoice}`);
-          speech = await tryModel(model, attemptVoice);
-          if (speech) {
-            console.log(`TTS Fallback Success - Model: ${model}, Voice: ${attemptVoice}`);
-            break;
-          }
+          const result = await tryModel(model, attemptVoice);
+          return { success: true, model, voice: attemptVoice, result };
         } catch (e) {
-          lastErr = e;
           console.warn(`/api/tts fallback failed (model=${model}, voice=${attemptVoice}):`, e?.message || String(e));
+          return { success: false, model, voice: attemptVoice, error: e };
         }
+      });
+      
+      const fallbackResults = await Promise.all(fallbackPromises);
+      const fallbackSuccessful = fallbackResults.find(r => r.success);
+      
+      if (fallbackSuccessful) {
+        speech = fallbackSuccessful.result;
+        console.log(`TTS Fallback Success - Model: ${fallbackSuccessful.model}, Voice: ${fallbackSuccessful.voice}`);
+      } else {
+        lastErr = fallbackResults[0]?.error || results[0]?.error;
       }
     }
 
