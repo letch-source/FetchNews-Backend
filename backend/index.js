@@ -1704,10 +1704,23 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
 
     // Increment user usage for successful request (if authenticated)
     if (req.user) {
-      if (mongoose.connection.readyState === 1) {
-        await req.user.incrementUsage();
-      } else {
-        await fallbackAuth.incrementUsage(req.user);
+      try {
+        if (mongoose.connection.readyState === 1) {
+          // Reload user to ensure we have the latest data before incrementing
+          const freshUser = await User.findById(req.user._id || req.user.id);
+          if (freshUser) {
+            await freshUser.incrementUsage();
+            console.log(`[SUMMARIZE] Incremented usage for user ${freshUser.email}, new count: ${freshUser.dailyUsageCount}`);
+          } else {
+            console.error(`[SUMMARIZE] User not found when trying to increment usage: ${req.user._id || req.user.id}`);
+          }
+        } else {
+          await fallbackAuth.incrementUsage(req.user);
+          console.log(`[SUMMARIZE] Incremented usage (fallback) for user ${req.user.email}, new count: ${req.user.dailyUsageCount}`);
+        }
+      } catch (incrementError) {
+        console.error(`[SUMMARIZE] Error incrementing usage:`, incrementError);
+        // Don't fail the request if increment fails, but log it
       }
     }
 
@@ -1941,10 +1954,23 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
 
     // Increment user usage for successful request (if authenticated)
     if (req.user) {
-      if (mongoose.connection.readyState === 1) {
-        await req.user.incrementUsage();
-      } else {
-        await fallbackAuth.incrementUsage(req.user);
+      try {
+        if (mongoose.connection.readyState === 1) {
+          // Reload user to ensure we have the latest data before incrementing
+          const freshUser = await User.findById(req.user._id || req.user.id);
+          if (freshUser) {
+            await freshUser.incrementUsage();
+            console.log(`[BATCH_SUMMARIZE] Incremented usage for user ${freshUser.email}, new count: ${freshUser.dailyUsageCount}`);
+          } else {
+            console.error(`[BATCH_SUMMARIZE] User not found when trying to increment usage: ${req.user._id || req.user.id}`);
+          }
+        } else {
+          await fallbackAuth.incrementUsage(req.user);
+          console.log(`[BATCH_SUMMARIZE] Incremented usage (fallback) for user ${req.user.email}, new count: ${req.user.dailyUsageCount}`);
+        }
+      } catch (incrementError) {
+        console.error(`[BATCH_SUMMARIZE] Error incrementing usage:`, incrementError);
+        // Don't fail the request if increment fails, but log it
       }
     }
 
