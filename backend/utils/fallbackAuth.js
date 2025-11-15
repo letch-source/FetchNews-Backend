@@ -3,11 +3,109 @@
 
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-insecure-secret';
 
-// Simple in-memory user store (for development only)
+// File path for persistent user storage
+const USERS_FILE = path.join(__dirname, '../server_data', 'fallback_users.json');
+
+// Ensure server_data directory exists
+const serverDataDir = path.dirname(USERS_FILE);
+if (!fs.existsSync(serverDataDir)) {
+  fs.mkdirSync(serverDataDir, { recursive: true });
+}
+
+// Simple in-memory user store (loaded from disk on startup)
 const fallbackUsers = new Map();
+
+// Helper function to serialize dates for JSON
+function serializeUser(user) {
+  const serialized = { ...user };
+  // Convert Date objects to ISO strings
+  if (serialized.createdAt instanceof Date) {
+    serialized.createdAt = serialized.createdAt.toISOString();
+  }
+  if (serialized.updatedAt instanceof Date) {
+    serialized.updatedAt = serialized.updatedAt.toISOString();
+  }
+  if (serialized.lastUsageDate instanceof Date) {
+    serialized.lastUsageDate = serialized.lastUsageDate.toISOString();
+  }
+  if (serialized.subscriptionExpiresAt instanceof Date) {
+    serialized.subscriptionExpiresAt = serialized.subscriptionExpiresAt.toISOString();
+  }
+  // Handle summaryHistory timestamps
+  if (serialized.summaryHistory && Array.isArray(serialized.summaryHistory)) {
+    serialized.summaryHistory = serialized.summaryHistory.map(entry => ({
+      ...entry,
+      timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp
+    }));
+  }
+  return serialized;
+}
+
+// Helper function to deserialize dates from JSON
+function deserializeUser(userData) {
+  const user = { ...userData };
+  // Convert ISO strings back to Date objects
+  if (user.createdAt) {
+    user.createdAt = new Date(user.createdAt);
+  }
+  if (user.updatedAt) {
+    user.updatedAt = new Date(user.updatedAt);
+  }
+  if (user.lastUsageDate) {
+    user.lastUsageDate = new Date(user.lastUsageDate);
+  }
+  if (user.subscriptionExpiresAt) {
+    user.subscriptionExpiresAt = new Date(user.subscriptionExpiresAt);
+  }
+  // Handle summaryHistory timestamps
+  if (user.summaryHistory && Array.isArray(user.summaryHistory)) {
+    user.summaryHistory = user.summaryHistory.map(entry => ({
+      ...entry,
+      timestamp: entry.timestamp ? new Date(entry.timestamp) : new Date()
+    }));
+  }
+  return user;
+}
+
+// Load users from disk on startup
+function loadUsers() {
+  if (fs.existsSync(USERS_FILE)) {
+    try {
+      const data = fs.readFileSync(USERS_FILE, 'utf8');
+      const usersArray = JSON.parse(data);
+      fallbackUsers.clear();
+      usersArray.forEach(userData => {
+        const user = deserializeUser(userData);
+        fallbackUsers.set(user.email, user);
+      });
+      console.log(`[FALLBACK AUTH] Loaded ${fallbackUsers.size} users from ${USERS_FILE}`);
+    } catch (error) {
+      console.error(`[FALLBACK AUTH] Failed to load users from ${USERS_FILE}:`, error);
+      fallbackUsers.clear();
+    }
+  } else {
+    console.log(`[FALLBACK AUTH] No existing users file found at ${USERS_FILE}, starting with empty store`);
+  }
+}
+
+// Save users to disk
+function saveUsers() {
+  try {
+    const usersArray = Array.from(fallbackUsers.values()).map(user => serializeUser(user));
+    fs.writeFileSync(USERS_FILE, JSON.stringify(usersArray, null, 2));
+    console.log(`[FALLBACK AUTH] Saved ${fallbackUsers.size} users to ${USERS_FILE}`);
+  } catch (error) {
+    console.error(`[FALLBACK AUTH] Failed to save users to ${USERS_FILE}:`, error);
+  }
+}
+
+// Load users on module initialization
+loadUsers();
 
 // Create a fallback user for testing
 const createFallbackUser = async () => {
@@ -91,6 +189,7 @@ const fallbackAuth = {
     };
     
     fallbackUsers.set(email, user);
+    saveUsers(); // Persist to disk
     return user;
   },
   
@@ -108,6 +207,7 @@ const fallbackAuth = {
     user.subscriptionId = subscriptionId;
     user.subscriptionExpiresAt = expiresAt;
     user.updatedAt = new Date();
+    saveUsers(); // Persist to disk
     return user;
   },
 
@@ -115,12 +215,23 @@ const fallbackAuth = {
   async addCustomTopic(user, topic) {
     if (!user.customTopics.includes(topic)) {
       user.customTopics.push(topic);
+      user.updatedAt = new Date();
+      saveUsers(); // Persist to disk
     }
     return user.customTopics;
   },
 
   async removeCustomTopic(user, topic) {
     user.customTopics = user.customTopics.filter(t => t !== topic);
+    user.updatedAt = new Date();
+    saveUsers(); // Persist to disk
+    return user.customTopics;
+  },
+
+  async updateCustomTopics(user, customTopics) {
+    user.customTopics = customTopics;
+    user.updatedAt = new Date();
+    saveUsers(); // Persist to disk
     return user.customTopics;
   },
 
@@ -149,6 +260,8 @@ const fallbackAuth = {
       user.summaryHistory = user.summaryHistory.slice(0, 50);
     }
     
+    user.updatedAt = new Date();
+    saveUsers(); // Persist to disk
     return user.summaryHistory;
   },
 
@@ -158,6 +271,8 @@ const fallbackAuth = {
 
   async clearSummaryHistory(user) {
     user.summaryHistory = [];
+    user.updatedAt = new Date();
+    saveUsers(); // Persist to disk
     return user.summaryHistory;
   },
   
@@ -208,6 +323,18 @@ const fallbackAuth = {
   async incrementUsage(user) {
     user.dailyUsageCount += 1;
     user.lastUsageDate = new Date();
+    user.updatedAt = new Date();
+    saveUsers(); // Persist to disk
+    return user;
+  },
+  
+  async saveUser(user) {
+    // Ensure the user is in the Map
+    if (!fallbackUsers.has(user.email)) {
+      fallbackUsers.set(user.email, user);
+    }
+    user.updatedAt = new Date();
+    saveUsers(); // Persist to disk
     return user;
   },
   
@@ -260,6 +387,8 @@ const fallbackAuth = {
       user.preferences.length = preferences.length;
     }
     
+    user.updatedAt = new Date();
+    saveUsers(); // Persist to disk
     return this.getPreferences(user);
   }
 };

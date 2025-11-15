@@ -93,6 +93,22 @@ router.post('/google', async (req, res) => {
     // Generate JWT token
     const token = generateToken(user._id);
 
+    // Check and reset dailyUsageCount if needed (resets at midnight PST)
+    let dailyUsageCount = 0;
+    if (isDatabaseAvailable()) {
+      // Call canFetchNews to reset count if it's a new day
+      user.canFetchNews();
+      // Reload user to get updated dailyUsageCount (in case it was reset)
+      await user.save();
+      dailyUsageCount = user.dailyUsageCount || 0;
+    } else {
+      // Use fallback auth's canFetchNews to reset count if needed
+      fallbackAuth.canFetchNews(user);
+      // Save the updated user (fallbackAuth modifies in place)
+      await fallbackAuth.saveUser(user);
+      dailyUsageCount = user.dailyUsageCount || 0;
+    }
+
     // Get user preferences
     let preferences = {};
     if (isDatabaseAvailable()) {
@@ -125,7 +141,7 @@ router.post('/google', async (req, res) => {
         email: user.email,
         emailVerified: user.emailVerified || email_verified || false,
         isPremium: user.isPremium || false,
-        dailyUsageCount: user.dailyUsageCount || 0,
+        dailyUsageCount: dailyUsageCount,
         subscriptionId: user.subscriptionId || null,
         subscriptionExpiresAt: user.subscriptionExpiresAt || null,
         customTopics: user.customTopics || [],
@@ -165,6 +181,22 @@ router.get('/me', authenticateToken, async (req, res) => {
   try {
     const user = req.user;
     
+    // Check and reset dailyUsageCount if needed (resets at midnight PST)
+    let dailyUsageCount = 0;
+    if (isDatabaseAvailable()) {
+      // Call canFetchNews to reset count if it's a new day
+      user.canFetchNews();
+      // Reload user to get updated dailyUsageCount (in case it was reset)
+      await user.save();
+      dailyUsageCount = user.dailyUsageCount || 0;
+    } else {
+      // Use fallback auth's canFetchNews to reset count if needed
+      fallbackAuth.canFetchNews(user);
+      // Save the updated user (fallbackAuth modifies in place)
+      await fallbackAuth.saveUser(user);
+      dailyUsageCount = user.dailyUsageCount || 0;
+    }
+    
     // Get user preferences
     let preferences = {};
     if (isDatabaseAvailable()) {
@@ -195,7 +227,7 @@ router.get('/me', authenticateToken, async (req, res) => {
         email: user.email,
         emailVerified: user.emailVerified || false,
         isPremium: user.isPremium,
-        dailyUsageCount: user.dailyUsageCount,
+        dailyUsageCount: dailyUsageCount,
         subscriptionId: user.subscriptionId,
         subscriptionExpiresAt: user.subscriptionExpiresAt,
         customTopics: user.customTopics || [],
