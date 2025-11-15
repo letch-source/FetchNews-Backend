@@ -2094,8 +2094,17 @@ app.post("/api/tts", async (req, res) => {
 });
 
 // --- Scheduled Fetch Checker ---
+// Check if scheduler is disabled via environment variable
+const SCHEDULER_ENABLED = process.env.SCHEDULER_ENABLED !== 'false'; // Default to enabled unless explicitly disabled
+
 // Function to check for scheduled summaries
 async function checkScheduledSummaries() {
+  // Early return if scheduler is disabled
+  if (!SCHEDULER_ENABLED) {
+    console.log(`[SCHEDULER] Scheduler is DISABLED (SCHEDULER_ENABLED=false). Skipping check.`);
+    return;
+  }
+  
   try {
     const now = new Date();
     const currentHour = now.getHours();
@@ -2119,7 +2128,7 @@ async function checkScheduledSummaries() {
     
     let executedCount = 0;
     let checkedCount = 0;
-    const usersToSave = []; // Batch user saves
+    const usersToSave = []; // Batch user saves (only for cleanup operations, not execution locks)
     
     for (const user of users) {
       let scheduledSummaries = user.scheduledSummaries || [];
@@ -2178,16 +2187,17 @@ async function checkScheduledSummaries() {
         const scheduledTimeMinutes = scheduledHour * 60 + scheduledMinute;
         const userTimeMinutes = userHour * 60 + userMinute;
         
-        // Check if current time matches the scheduled time (within 1 minute window)
-        // Since we check at :00, :10, :20, :30, :40, :50, we should catch scheduled times at those exact minutes
+        // Execute if we're within 5 minutes of the scheduled time (accounts for scheduler check intervals)
+        // Since we check at :00, :10, :20, :30, :40, :50, we need a small window to catch scheduled times
+        // But we'll use lastRun to ensure it only executes once per day
         const timeDifference = Math.abs(userTimeMinutes - scheduledTimeMinutes);
-        const shouldExecute = timeDifference <= 1; // Allow 1 minute window for slight delays
+        const isWithinTimeWindow = timeDifference <= 5; // Allow 5 minute window for scheduler check intervals
         
-        // Also check if summary hasn't already run today in user's timezone (prevent duplicate executions)
+        // Check if summary has already run today in user's timezone (prevent duplicate executions)
         const lastRun = summary.lastRun ? new Date(summary.lastRun) : null;
         let alreadyRanToday = false;
         if (lastRun) {
-          // Reuse formatter for date comparison (same timezone)
+          // Use a robust date comparison that accounts for timezone
           const dateFormatter = new Intl.DateTimeFormat('en-US', {
             timeZone: userTimezone,
             year: 'numeric',
@@ -2198,40 +2208,103 @@ async function checkScheduledSummaries() {
           const lastRunDateStr = dateFormatter.format(lastRun);
           const nowDateStr = dateFormatter.format(now);
           alreadyRanToday = lastRunDateStr === nowDateStr;
+          
+          // Additional check: if lastRun was less than 23 hours ago, don't execute again
+          // This prevents edge cases around timezone boundaries
+          const hoursSinceLastRun = (now.getTime() - lastRun.getTime()) / (1000 * 60 * 60);
+          if (hoursSinceLastRun < 23) {
+            alreadyRanToday = true;
+          }
         }
         
-        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (user time=${userTime}, server time=${currentTime}), user timezone=${userTimezone}, user day=${userDay}, timeDiff=${timeDifference}min, shouldExecute=${shouldExecute && !alreadyRanToday}`);
+        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (user time=${userTime}, server time=${currentTime}), user timezone=${userTimezone}, user day=${userDay}, timeDiff=${timeDifference}min, withinWindow=${isWithinTimeWindow}, alreadyRanToday=${alreadyRanToday}`);
         
-        if (shouldExecute && !alreadyRanToday) {
+        if (isWithinTimeWindow && !alreadyRanToday) {
+          // CRITICAL: Reload user from database to get latest lastRun value and prevent concurrent executions
+          let freshUser;
+          try {
+            freshUser = await User.findById(user._id);
+            if (!freshUser) {
+              console.error(`[SCHEDULER] User ${user.email} not found in database`);
+              continue;
+            }
+          } catch (dbError) {
+            console.error(`[SCHEDULER] Error reloading user ${user.email}:`, dbError);
+            continue;
+          }
+          
+          // Check again with fresh data to prevent race conditions
+          const freshSummary = freshUser.scheduledSummaries?.find(s => s.id === summary.id);
+          if (!freshSummary) {
+            console.log(`[SCHEDULER] Summary "${summary.name}" not found for user ${user.email} after reload`);
+            continue;
+          }
+          
+          // Double-check lastRun with fresh data
+          const freshLastRun = freshSummary.lastRun ? new Date(freshSummary.lastRun) : null;
+          let freshAlreadyRanToday = false;
+          if (freshLastRun) {
+            const dateFormatter = new Intl.DateTimeFormat('en-US', {
+              timeZone: userTimezone,
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit'
+            });
+            const freshLastRunDateStr = dateFormatter.format(freshLastRun);
+            const nowDateStr = dateFormatter.format(now);
+            freshAlreadyRanToday = freshLastRunDateStr === nowDateStr;
+            
+            const hoursSinceLastRun = (now.getTime() - freshLastRun.getTime()) / (1000 * 60 * 60);
+            if (hoursSinceLastRun < 23) {
+              freshAlreadyRanToday = true;
+            }
+          }
+          
+          if (freshAlreadyRanToday) {
+            console.log(`[SCHEDULER] Summary "${summary.name}" already ran today for user ${user.email} (checked with fresh data)`);
+            continue;
+          }
+          
+          // Update lastRun IMMEDIATELY before execution to prevent concurrent runs
+          const summaryIndex = freshUser.scheduledSummaries.findIndex(s => s.id === summary.id);
+          if (summaryIndex !== -1) {
+            freshUser.scheduledSummaries[summaryIndex].lastRun = new Date().toISOString();
+            freshUser.markModified('scheduledSummaries');
+            
+            // Save immediately to lock the execution
+            try {
+              await freshUser.save();
+              console.log(`[SCHEDULER] Locked execution for "${summary.name}" - updated lastRun before execution`);
+            } catch (saveError) {
+              console.error(`[SCHEDULER] Failed to lock execution for "${summary.name}":`, saveError);
+              // If save fails, skip execution to prevent duplicates
+              continue;
+            }
+          }
+          
           console.log(`[SCHEDULER] Executing scheduled fetch "${summary.name}" for user ${user.email} on ${currentDay}`);
           
           try {
             // Import and call the execution function directly
             const { executeScheduledSummary } = require('./routes/scheduledSummaries');
-            await executeScheduledSummary(user, summary);
+            await executeScheduledSummary(freshUser, freshSummary);
             console.log(`[SCHEDULER] Successfully executed scheduled fetch "${summary.name}" for user ${user.email}`);
-            
-            // Update lastRun timestamp
-            const summaryIndex = scheduledSummaries.findIndex(s => s.id === summary.id);
-            if (summaryIndex !== -1) {
-              scheduledSummaries[summaryIndex].lastRun = new Date().toISOString();
-              user.scheduledSummaries = scheduledSummaries;
-              needsSave = true;
-              executedCount++;
-            }
+            executedCount++;
           } catch (error) {
             console.error(`[SCHEDULER] Failed to execute scheduled fetch "${summary.name}" for user ${user.email}:`, error);
+            // Note: lastRun was already updated, so this won't retry until tomorrow
           }
         }
       }
       
-      // Batch save user if needed
+      // Batch save user if needed (only for cleanup operations, not execution locks)
+      // Note: Execution locks are saved immediately before execution to prevent race conditions
       if (needsSave) {
         usersToSave.push(user);
       }
     }
     
-    // Batch save all modified users
+    // Batch save all modified users (only for cleanup operations)
     if (usersToSave.length > 0) {
       await Promise.all(usersToSave.map(user => user.save().catch(err => 
         console.error(`[SCHEDULER] Error saving user ${user.email}:`, err)
@@ -2302,8 +2375,14 @@ function scheduleNextCheck() {
   }, msUntilNext);
 }
 
-// Start the scheduling
-scheduleNextCheck();
+// Start the scheduling only if enabled
+if (SCHEDULER_ENABLED) {
+  console.log(`[SCHEDULER] Scheduled summary checker ENABLED - checking every 10 minutes`);
+  scheduleNextCheck();
+} else {
+  console.log(`[SCHEDULER] ⚠️  Scheduled summary checker DISABLED (SCHEDULER_ENABLED=false)`);
+  console.log(`[SCHEDULER] Automatic news fetching is disabled. Set SCHEDULER_ENABLED=true to enable.`);
+}
 
 // --- Trending Topics Updater ---
 // Update trending topics every hour
@@ -2631,9 +2710,13 @@ function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Backend server running on port ${PORT}`);
     const now = new Date();
-    const firstCheckIn = new Date(now.getTime() + (10 * 60 * 1000));
-    console.log(`[SCHEDULER] Scheduled summary checker enabled - checking every 10 minutes`);
-    console.log(`[SCHEDULER] Running initial check now, then every 10 minutes thereafter`);
+    if (SCHEDULER_ENABLED) {
+      const firstCheckIn = new Date(now.getTime() + (10 * 60 * 1000));
+      console.log(`[SCHEDULER] Scheduled summary checker enabled - checking every 10 minutes`);
+      console.log(`[SCHEDULER] Running initial check now, then every 10 minutes thereafter`);
+    } else {
+      console.log(`[SCHEDULER] ⚠️  Scheduled summary checker DISABLED - no automatic fetching`);
+    }
     if (!process.env.JWT_SECRET) {
       console.warn(
         "[WARN] JWT_SECRET is not set. Using an insecure fallback for development."
