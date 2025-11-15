@@ -356,6 +356,16 @@ const fallbackAuth = {
     return user;
   },
   
+  async saveUser(user) {
+    // Ensure the user is in the Map
+    if (!fallbackUsers.has(user.email)) {
+      fallbackUsers.set(user.email, user);
+    }
+    user.updatedAt = new Date();
+    saveUsers(); // Persist to disk
+    return user;
+  },
+  
   getPreferences(user) {
     return {
       selectedVoice: user.selectedVoice || 'alloy',
