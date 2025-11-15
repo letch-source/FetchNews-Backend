@@ -1447,11 +1447,17 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       }
       
       if (!usageCheck.allowed) {
+        const limit = usageCheck.limit || (req.user?.isPremium ? 20 : 3);
+        const isPremium = req.user?.isPremium || false;
+        const message = isPremium
+          ? `You've reached your daily limit of ${limit} summaries.`
+          : `You've reached your daily limit of ${limit} summaries. Upgrade to Premium for ${20} summaries per day.`;
+        
         return res.status(429).json({
           error: "Daily limit reached",
-          message: "You've reached your daily limit of 10 summaries. Upgrade to Premium for unlimited access.",
+          message: message,
           dailyCount: usageCheck.dailyCount,
-          limit: 1
+          limit: limit
         });
       }
     }
@@ -1753,11 +1759,17 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
       }
       
       if (!usageCheck.allowed) {
+        const limit = usageCheck.limit || (req.user?.isPremium ? 20 : 3);
+        const isPremium = req.user?.isPremium || false;
+        const message = isPremium
+          ? `You've reached your daily limit of ${limit} summaries.`
+          : `You've reached your daily limit of ${limit} summaries. Upgrade to Premium for ${20} summaries per day.`;
+        
         return res.status(429).json({
           error: "Daily limit reached",
-          message: "You've reached your daily limit of 10 summaries. Upgrade to Premium for unlimited access.",
+          message: message,
           dailyCount: usageCheck.dailyCount,
-          limit: 1
+          limit: limit
         });
       }
     }
@@ -2103,6 +2115,10 @@ app.post("/api/tts", async (req, res) => {
 // Check if scheduler is disabled via environment variable
 const SCHEDULER_ENABLED = process.env.SCHEDULER_ENABLED !== 'false'; // Default to enabled unless explicitly disabled
 
+// Lock to prevent concurrent scheduler executions
+let schedulerRunning = false;
+let schedulerTimeout = null;
+
 // Function to check for scheduled summaries
 async function checkScheduledSummaries() {
   // Early return if scheduler is disabled
@@ -2110,6 +2126,14 @@ async function checkScheduledSummaries() {
     console.log(`[SCHEDULER] Scheduler is DISABLED (SCHEDULER_ENABLED=false). Skipping check.`);
     return;
   }
+  
+  // Prevent concurrent executions
+  if (schedulerRunning) {
+    console.log(`[SCHEDULER] Scheduler already running, skipping concurrent execution`);
+    return;
+  }
+  
+  schedulerRunning = true;
   
   try {
     const now = new Date();
@@ -2329,22 +2353,31 @@ async function checkScheduledSummaries() {
     console.error('[SCHEDULER] Error checking scheduled summaries:', error);
     console.log(`[SCHEDULER] Next check in 10 minutes`);
     console.log(`[SCHEDULER] ============================================`);
+  } finally {
+    schedulerRunning = false;
   }
 }
 
 // Schedule checks at :00, :10, :20, :30, :40, and :50 minutes past each hour
 function scheduleNextCheck() {
+  // Clear any existing timeout to prevent duplicates
+  if (schedulerTimeout) {
+    clearTimeout(schedulerTimeout);
+    schedulerTimeout = null;
+  }
+  
   const now = new Date();
   const currentMinute = now.getMinutes();
   const currentSecond = now.getSeconds();
+  const currentMillisecond = now.getMilliseconds();
   
   // Target minutes: 0, 10, 20, 30, 40, 50
   const targetMinutes = [0, 10, 20, 30, 40, 50];
   
-  // Find next target minute
+  // Find next target minute (always schedule for the NEXT target, never immediate)
   let nextMinute = null;
   for (const target of targetMinutes) {
-    if (target > currentMinute || (target === currentMinute && currentSecond === 0)) {
+    if (target > currentMinute) {
       nextMinute = target;
       break;
     }
@@ -2361,23 +2394,31 @@ function scheduleNextCheck() {
     // Next check is in the same hour
     const minutesUntilNext = nextMinute - currentMinute;
     const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
-    msUntilNext = secondsUntilNext * 1000;
-  } else if (nextMinute === currentMinute && currentSecond === 0) {
-    // We're exactly at a target minute, run immediately
-    msUntilNext = 0;
+    msUntilNext = secondsUntilNext * 1000 - currentMillisecond;
   } else {
     // Next check is in the next hour
     const minutesUntilNext = 60 - currentMinute + nextMinute;
     const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
-    msUntilNext = secondsUntilNext * 1000;
+    msUntilNext = secondsUntilNext * 1000 - currentMillisecond;
+  }
+  
+  // Ensure minimum delay of at least 1 second to prevent immediate re-execution
+  if (msUntilNext < 1000) {
+    msUntilNext = 60000; // If we're at or past the target, wait for next interval (1 minute minimum)
   }
   
   console.log(`[SCHEDULER] Next check scheduled in ${Math.floor(msUntilNext / 1000 / 60)} minutes ${Math.floor((msUntilNext / 1000) % 60)} seconds (at :${String(nextMinute).padStart(2, '0')})`);
   
-  setTimeout(() => {
-    checkScheduledSummaries();
-    // Schedule the next check after this one completes
-    scheduleNextCheck();
+  schedulerTimeout = setTimeout(() => {
+    schedulerTimeout = null;
+    checkScheduledSummaries().then(() => {
+      // Schedule the next check after this one completes
+      scheduleNextCheck();
+    }).catch((error) => {
+      console.error('[SCHEDULER] Error in checkScheduledSummaries, will retry:', error);
+      // Still schedule next check even on error
+      scheduleNextCheck();
+    });
   }, msUntilNext);
 }
 
