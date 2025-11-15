@@ -9,9 +9,14 @@ const userSchema = new mongoose.Schema({
     lowercase: true,
     trim: true
   },
+  googleId: {
+    type: String,
+    sparse: true,
+    unique: true
+  },
   password: {
     type: String,
-    required: true,
+    required: false,
     minlength: 6
   },
   isPremium: {
@@ -121,9 +126,9 @@ const userSchema = new mongoose.Schema({
   }
 });
 
-// Hash password before saving
+// Hash password before saving (only if password is provided)
 userSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
+  if (!this.isModified('password') || !this.password) return next();
   
   try {
     const salt = await bcrypt.genSalt(10);
@@ -136,6 +141,9 @@ userSchema.pre('save', async function(next) {
 
 // Compare password method
 userSchema.methods.comparePassword = async function(candidatePassword) {
+  if (!this.password) {
+    return false; // Google-authenticated users don't have passwords
+  }
   return bcrypt.compare(candidatePassword, this.password);
 };
 
