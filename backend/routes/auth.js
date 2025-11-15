@@ -14,7 +14,9 @@ const {
 const router = express.Router();
 
 // Initialize Google OAuth client
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+// Use web client ID if available, otherwise use iOS client ID
+const clientId = process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_IOS_CLIENT_ID;
+const client = new OAuth2Client(clientId);
 
 // Check if database is available
 const isDatabaseAvailable = () => {
@@ -31,15 +33,64 @@ router.post('/google', async (req, res) => {
     }
 
     // Verify the ID token with Google
-    let ticket;
-    try {
-      ticket = await client.verifyIdToken({
-        idToken: idToken,
-        audience: process.env.GOOGLE_CLIENT_ID
+    // Support both iOS and Web client IDs (they should be from the same OAuth project)
+    const webClientId = process.env.GOOGLE_CLIENT_ID;
+    const iosClientId = process.env.GOOGLE_IOS_CLIENT_ID;
+    
+    if (!webClientId && !iosClientId) {
+      console.error('Google OAuth configuration error: GOOGLE_CLIENT_ID or GOOGLE_IOS_CLIENT_ID must be set');
+      return res.status(500).json({ error: 'Server configuration error: Google OAuth not configured' });
+    }
+    
+    // Log which client IDs are available (for debugging, without exposing full values)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Google OAuth client IDs configured:', {
+        webClientId: webClientId ? `${webClientId.substring(0, 20)}...` : 'not set',
+        iosClientId: iosClientId ? `${iosClientId.substring(0, 20)}...` : 'not set'
       });
-    } catch (error) {
-      console.error('Google token verification error:', error);
-      return res.status(401).json({ error: 'Invalid Google token' });
+    }
+
+    let ticket;
+    let lastError;
+    
+    // Try web client ID first (recommended for server-side verification)
+    if (webClientId) {
+      try {
+        ticket = await client.verifyIdToken({
+          idToken: idToken,
+          audience: webClientId
+        });
+      } catch (error) {
+        lastError = error;
+        console.log('Token verification with web client ID failed, trying iOS client ID...');
+      }
+    }
+    
+    // If web client ID failed and iOS client ID is available, try that
+    if (!ticket && iosClientId) {
+      try {
+        ticket = await client.verifyIdToken({
+          idToken: idToken,
+          audience: iosClientId
+        });
+      } catch (error) {
+        lastError = error;
+        console.error('Google token verification error:', error);
+        console.error('Error details:', {
+          message: error.message,
+          code: error.code,
+          name: error.name
+        });
+      }
+    }
+    
+    if (!ticket) {
+      console.error('Google token verification failed with all client IDs');
+      console.error('Last error:', lastError);
+      return res.status(401).json({ 
+        error: 'Invalid Google token',
+        details: process.env.NODE_ENV === 'development' ? lastError?.message : undefined
+      });
     }
 
     const payload = ticket.getPayload();
