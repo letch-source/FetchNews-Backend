@@ -1721,11 +1721,17 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
   } catch (e) {
     console.error("Summarize endpoint error:", e);
     console.error("Error stack:", e.stack);
-    res.status(500).json({ 
-      error: "summarize failed", 
-      details: e.message,
-      type: e.constructor.name
-    });
+    
+    // Ensure response hasn't been sent yet
+    if (!res.headersSent) {
+      res.status(500).json({ 
+        error: "summarize failed", 
+        details: e.message,
+        type: e.constructor.name
+      });
+    } else {
+      console.error("Response already sent, cannot send error response");
+    }
   }
 });
 
@@ -2189,7 +2195,7 @@ async function checkScheduledSummaries() {
         
         // Execute if we're within 5 minutes of the scheduled time (accounts for scheduler check intervals)
         // Since we check at :00, :10, :20, :30, :40, :50, we need a small window to catch scheduled times
-        // But we'll use lastRun to ensure it only executes once per day
+        // The lastRun check ensures it only executes once per day, even if scheduler checks multiple times
         const timeDifference = Math.abs(userTimeMinutes - scheduledTimeMinutes);
         const isWithinTimeWindow = timeDifference <= 5; // Allow 5 minute window for scheduler check intervals
         
