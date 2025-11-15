@@ -1450,8 +1450,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         const limit = usageCheck.limit || (req.user?.isPremium ? 20 : 3);
         const isPremium = req.user?.isPremium || false;
         const message = isPremium
-          ? `You've reached your daily limit of ${limit} summaries.`
-          : `You've reached your daily limit of ${limit} summaries. Upgrade to Premium for ${20} summaries per day.`;
+          ? `You've reached your daily limit of ${limit} Fetches.`
+          : `You've reached your daily limit of ${limit} Fetches. Upgrade to Premium for ${20} Fetches per day.`;
         
         return res.status(429).json({
           error: "Daily limit reached",
@@ -1762,8 +1762,8 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
         const limit = usageCheck.limit || (req.user?.isPremium ? 20 : 3);
         const isPremium = req.user?.isPremium || false;
         const message = isPremium
-          ? `You've reached your daily limit of ${limit} summaries.`
-          : `You've reached your daily limit of ${limit} summaries. Upgrade to Premium for ${20} summaries per day.`;
+          ? `You've reached your daily limit of ${limit} Fetches.`
+          : `You've reached your daily limit of ${limit} Fetches. Upgrade to Premium for ${20} Fetches per day.`;
         
         return res.status(429).json({
           error: "Daily limit reached",

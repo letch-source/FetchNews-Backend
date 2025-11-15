@@ -196,7 +196,7 @@ struct AccountView: View {
                                                 .fontWeight(.medium)
                                                 .foregroundColor(.primary)
                                             Spacer()
-                                            Text("\(user.dailyUsageCount)/10 Fetches")
+                                            Text("\(user.dailyUsageCount)/3 Fetches")
                                                 .font(.subheadline)
                                                 .foregroundColor(.secondary)
                                         }

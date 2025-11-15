@@ -244,8 +244,8 @@ router.get('/usage', authenticateToken, async (req, res) => {
     res.json({
       userId: user._id,
       isPremium: user.isPremium,
-      dailyCount: user.dailyUsageCount,
-      dailyLimit: 1,
+      dailyCount: usageCheck.dailyCount || user.dailyUsageCount || 0,
+      dailyLimit: usageCheck.limit || (user.isPremium ? 20 : 3),
       canFetch: usageCheck.allowed,
       reason: usageCheck.reason
     });
