@@ -2431,6 +2431,163 @@ if (SCHEDULER_ENABLED) {
   console.log(`[SCHEDULER] Automatic news fetching is disabled. Set SCHEDULER_ENABLED=true to enable.`);
 }
 
+// --- Daily Usage Reset Scheduler ---
+// Reset all users' dailyUsageCount at midnight PST
+let dailyResetRunning = false;
+let dailyResetTimeout = null;
+let lastResetDate = null;
+
+// Helper function to get date string in PST timezone
+function getDateStringInPST(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.formatToParts(date);
+  const year = parts.find(p => p.type === 'year').value;
+  const month = parts.find(p => p.type === 'month').value;
+  const day = parts.find(p => p.type === 'day').value;
+  
+  const pstDate = new Date(`${year}-${month}-${day}T00:00:00`);
+  return pstDate.toDateString();
+}
+
+// Function to reset all users' daily usage counts
+async function resetAllUsersDailyCount() {
+  // Prevent concurrent executions
+  if (dailyResetRunning) {
+    console.log(`[DAILY_RESET] Reset already running, skipping concurrent execution`);
+    return;
+  }
+  
+  dailyResetRunning = true;
+  
+  try {
+    const now = new Date();
+    const todayPST = getDateStringInPST(now);
+    
+    // Check if we've already reset today
+    if (lastResetDate === todayPST) {
+      console.log(`[DAILY_RESET] Already reset today (${todayPST}), skipping`);
+      dailyResetRunning = false;
+      return;
+    }
+    
+    // Get current time in PST
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+    const pstTimeParts = formatter.formatToParts(now);
+    const pstHour = parseInt(pstTimeParts.find(p => p.type === 'hour').value);
+    const pstMinute = parseInt(pstTimeParts.find(p => p.type === 'minute').value);
+    
+    // Only reset at or just after midnight PST (between 00:00 and 00:05)
+    if (pstHour === 0 && pstMinute <= 5) {
+      console.log(`[DAILY_RESET] ============================================`);
+      console.log(`[DAILY_RESET] RESETTING ALL USERS' DAILY USAGE COUNTS`);
+      console.log(`[DAILY_RESET] Current PST time: ${pstHour}:${String(pstMinute).padStart(2, '0')}`);
+      console.log(`[DAILY_RESET] PST date: ${todayPST}`);
+      
+      // Find all users
+      const users = await User.find({});
+      console.log(`[DAILY_RESET] Found ${users.length} users to reset`);
+      
+      let resetCount = 0;
+      let errorCount = 0;
+      
+      // Reset all users' dailyUsageCount to 0 and update lastUsageDate
+      for (const user of users) {
+        try {
+          // Always reset at midnight PST - set dailyUsageCount to 0 and update lastUsageDate
+          // This ensures all users are synchronized to the new day
+          const needsReset = user.dailyUsageCount > 0 || 
+                            !user.lastUsageDate || 
+                            getDateStringInPST(new Date(user.lastUsageDate)) !== todayPST;
+          
+          if (needsReset) {
+            user.dailyUsageCount = 0;
+            user.lastUsageDate = now;
+            await user.save();
+            resetCount++;
+          }
+        } catch (err) {
+          console.error(`[DAILY_RESET] Error resetting user ${user.email}:`, err);
+          errorCount++;
+        }
+      }
+      
+      lastResetDate = todayPST;
+      
+      console.log(`[DAILY_RESET] Reset completed: ${resetCount} users reset, ${errorCount} errors`);
+      console.log(`[DAILY_RESET] ============================================`);
+    } else {
+      // Not midnight yet, skip
+      console.log(`[DAILY_RESET] Not midnight PST yet (current: ${pstHour}:${String(pstMinute).padStart(2, '0')}), skipping reset`);
+    }
+  } catch (error) {
+    console.error('[DAILY_RESET] Error resetting daily usage counts:', error);
+  } finally {
+    dailyResetRunning = false;
+  }
+}
+
+// Function to schedule the next daily reset check
+function scheduleDailyResetCheck() {
+  // Clear any existing timeout
+  if (dailyResetTimeout) {
+    clearTimeout(dailyResetTimeout);
+    dailyResetTimeout = null;
+  }
+  
+  const now = new Date();
+  
+  // Get current time in PST
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  const pstTimeParts = formatter.formatToParts(now);
+  const pstHour = parseInt(pstTimeParts.find(p => p.type === 'hour').value);
+  const pstMinute = parseInt(pstTimeParts.find(p => p.type === 'minute').value);
+  const pstSecond = parseInt(pstTimeParts.find(p => p.type === 'second').value);
+  
+  let msUntilNextCheck;
+  
+  // If we're in the midnight window (23:55 - 00:05), check every minute
+  if ((pstHour === 23 && pstMinute >= 55) || (pstHour === 0 && pstMinute <= 5)) {
+    // Check every minute during the reset window
+    msUntilNextCheck = 60 * 1000; // 1 minute
+  } else {
+    // Otherwise, check every hour (but we'll recalculate when we get closer to midnight)
+    msUntilNextCheck = 60 * 60 * 1000; // 1 hour
+  }
+  
+  dailyResetTimeout = setTimeout(() => {
+    dailyResetTimeout = null;
+    resetAllUsersDailyCount().then(() => {
+      // Schedule the next check
+      scheduleDailyResetCheck();
+    }).catch((error) => {
+      console.error('[DAILY_RESET] Error in resetAllUsersDailyCount, will retry:', error);
+      // Still schedule next check even on error
+      scheduleDailyResetCheck();
+    });
+  }, msUntilNextCheck);
+}
+
+// Start the daily reset scheduler
+console.log(`[DAILY_RESET] Daily usage reset scheduler ENABLED - will reset all users at midnight PST`);
+scheduleDailyResetCheck();
+
 // --- Trending Topics Updater ---
 // Update trending topics every hour
 let trendingTopicsCache = [];
