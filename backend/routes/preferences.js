@@ -30,9 +30,14 @@ router.put('/', authenticateToken, async (req, res) => {
     const user = req.user;
     const preferences = req.body;
     
+    console.log(`[PREFERENCES] Updating preferences for user ${user.email}`);
+    console.log(`[PREFERENCES] selectedTopics received: ${JSON.stringify(preferences.selectedTopics)}`);
+    console.log(`[PREFERENCES] selectedTopics count: ${preferences.selectedTopics?.length || 0}`);
+    
     let updatedPreferences;
     if (mongoose.connection.readyState === 1) {
       updatedPreferences = await user.updatePreferences(preferences);
+      console.log(`[PREFERENCES] After update - selectedTopics count: ${updatedPreferences.selectedTopics?.length || 0}`);
     } else {
       updatedPreferences = await fallbackAuth.updatePreferences(user, preferences);
     }

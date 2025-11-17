@@ -9,15 +9,15 @@ const userSchema = new mongoose.Schema({
     lowercase: true,
     trim: true
   },
+  googleId: {
+    type: String,
+    sparse: true,
+    unique: true
+  },
   password: {
     type: String,
     required: false,
     minlength: 6
-  },
-  googleId: {
-    type: String,
-    required: true,
-    unique: true
   },
   isPremium: {
     type: Boolean,
@@ -130,15 +130,8 @@ const userSchema = new mongoose.Schema({
   }
 });
 
-// Validate that googleId is present before saving
+// Hash password before saving (only if password is provided)
 userSchema.pre('save', async function(next) {
-  // Ensure googleId is always present (Google-only authentication)
-  if (!this.googleId) {
-    return next(new Error('Google ID is required. Only Google-authenticated accounts are allowed.'));
-  }
-  
-  // Hash password before saving (only if password exists and is modified)
-  // Note: Password is deprecated but kept for backwards compatibility
   if (!this.isModified('password') || !this.password) return next();
   
   try {
@@ -152,6 +145,9 @@ userSchema.pre('save', async function(next) {
 
 // Compare password method
 userSchema.methods.comparePassword = async function(candidatePassword) {
+  if (!this.password) {
+    return false; // Google-authenticated users don't have passwords
+  }
   return bcrypt.compare(candidatePassword, this.password);
 };
 
@@ -176,7 +172,7 @@ function getDateStringInPST(date = new Date()) {
 }
 
 // Check if user can fetch news
-userSchema.methods.canFetchNews = function() {
+userSchema.methods.canFetchNews = async function() {
   // Get today's date string in PST timezone (resets at midnight PST)
   const now = new Date();
   const today = getDateStringInPST(now);
@@ -187,8 +183,8 @@ userSchema.methods.canFetchNews = function() {
   if (lastUsageDate !== today) {
     this.dailyUsageCount = 0;
     this.lastUsageDate = now;
-    // Don't await here - let incrementUsage handle the save
-    this.save().catch(err => console.error('[USER] Error resetting daily count:', err));
+    // Await the save to ensure the reset is persisted before checking
+    await this.save();
   }
   
   // Define limits

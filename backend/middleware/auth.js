@@ -37,8 +37,13 @@ const authenticateToken = async (req, res, next) => {
       return res.status(401).json({ error: 'Invalid token' });
     }
 
-    // Only allow Google-authenticated users
-    if (!user.googleId) {
+    // For admin routes, allow both Google and email/password accounts
+    // Check if this is an admin route (use originalUrl to handle mounted routes)
+    const isAdminRoute = (req.originalUrl && req.originalUrl.startsWith('/api/admin')) ||
+                         (req.path && req.path.startsWith('/api/admin'));
+    
+    // Only require Google authentication for non-admin routes
+    if (!isAdminRoute && !user.googleId) {
       return res.status(403).json({ error: 'Account must be linked to Google. Please sign in with Google.' });
     }
 

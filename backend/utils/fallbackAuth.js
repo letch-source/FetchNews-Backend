@@ -15,7 +15,10 @@ const USERS_FILE = path.join(__dirname, '../server_data', 'fallback_users.json')
 const serverDataDir = path.dirname(USERS_FILE);
 if (!fs.existsSync(serverDataDir)) {
   fs.mkdirSync(serverDataDir, { recursive: true });
+  console.log(`[FALLBACK AUTH] Created server_data directory at ${serverDataDir}`);
 }
+console.log(`[FALLBACK AUTH] Using users file: ${USERS_FILE}`);
+console.log(`[FALLBACK AUTH] File exists: ${fs.existsSync(USERS_FILE)}`);
 
 // Simple in-memory user store (loaded from disk on startup)
 const fallbackUsers = new Map();
@@ -69,6 +72,23 @@ function deserializeUser(userData) {
       timestamp: entry.timestamp ? new Date(entry.timestamp) : new Date()
     }));
   }
+  // Ensure selectedTopics is always an array (for users created before this field existed)
+  if (!user.selectedTopics || !Array.isArray(user.selectedTopics)) {
+    user.selectedTopics = [];
+  }
+  // Ensure other array fields are arrays
+  if (!user.customTopics || !Array.isArray(user.customTopics)) {
+    user.customTopics = [];
+  }
+  if (!user.lastFetchedTopics || !Array.isArray(user.lastFetchedTopics)) {
+    user.lastFetchedTopics = [];
+  }
+  if (!user.selectedNewsSources || !Array.isArray(user.selectedNewsSources)) {
+    user.selectedNewsSources = [];
+  }
+  if (!user.scheduledSummaries || !Array.isArray(user.scheduledSummaries)) {
+    user.scheduledSummaries = [];
+  }
   return user;
 }
 
@@ -82,6 +102,7 @@ function loadUsers() {
       usersArray.forEach(userData => {
         const user = deserializeUser(userData);
         fallbackUsers.set(user.email, user);
+        console.log(`[FALLBACK AUTH] Loaded user ${user.email} - selectedTopics: ${JSON.stringify(user.selectedTopics || [])} (${(user.selectedTopics || []).length} topics)`);
       });
       console.log(`[FALLBACK AUTH] Loaded ${fallbackUsers.size} users from ${USERS_FILE}`);
     } catch (error) {
@@ -99,6 +120,11 @@ function saveUsers() {
     const usersArray = Array.from(fallbackUsers.values()).map(user => serializeUser(user));
     fs.writeFileSync(USERS_FILE, JSON.stringify(usersArray, null, 2));
     console.log(`[FALLBACK AUTH] Saved ${fallbackUsers.size} users to ${USERS_FILE}`);
+    // Log selectedTopics for each user being saved
+    usersArray.forEach(userData => {
+      const selectedTopics = userData.selectedTopics || [];
+      console.log(`[FALLBACK AUTH] Saved user ${userData.email} - selectedTopics: ${JSON.stringify(selectedTopics)} (${selectedTopics.length} topics)`);
+    });
   } catch (error) {
     console.error(`[FALLBACK AUTH] Failed to save users to ${USERS_FILE}:`, error);
   }
@@ -138,6 +164,7 @@ const fallbackAuth = {
     // Find user by googleId in fallback store
     for (const user of fallbackUsers.values()) {
       if (user.googleId === googleId) {
+        console.log(`[FALLBACK AUTH] Found user ${user.email} by Google ID - selectedTopics: ${JSON.stringify(user.selectedTopics || [])} (${(user.selectedTopics || []).length} topics)`);
         return user;
       }
     }
@@ -157,6 +184,7 @@ const fallbackAuth = {
     // Find user by id, but only if they have googleId
     for (const user of fallbackUsers.values()) {
       if (user._id === id && user.googleId) {
+        console.log(`[FALLBACK AUTH] Found user ${user.email} by ID - selectedTopics: ${JSON.stringify(user.selectedTopics || [])} (${(user.selectedTopics || []).length} topics)`);
         return user;
       }
     }
@@ -352,6 +380,10 @@ const fallbackAuth = {
   },
   
   async updatePreferences(user, preferences) {
+    console.log(`[FALLBACK AUTH] updatePreferences called for ${user.email}`);
+    console.log(`[FALLBACK AUTH] Current selectedTopics: ${JSON.stringify(user.selectedTopics || [])}`);
+    console.log(`[FALLBACK AUTH] New selectedTopics: ${JSON.stringify(preferences.selectedTopics)}`);
+    
     // Update string/number values (only if provided)
     if (preferences.selectedVoice !== undefined) {
       user.selectedVoice = preferences.selectedVoice;
@@ -371,6 +403,7 @@ const fallbackAuth = {
     }
     if (preferences.selectedTopics !== undefined) {
       user.selectedTopics = preferences.selectedTopics;
+      console.log(`[FALLBACK AUTH] Updated selectedTopics to: ${JSON.stringify(user.selectedTopics)}`);
     }
     if (preferences.selectedNewsSources !== undefined) {
       user.selectedNewsSources = preferences.selectedNewsSources;
@@ -388,7 +421,15 @@ const fallbackAuth = {
     }
     
     user.updatedAt = new Date();
+    
+    // Ensure the user is still in the Map (in case it was removed somehow)
+    if (!fallbackUsers.has(user.email)) {
+      console.log(`[FALLBACK AUTH] WARNING: User ${user.email} not in Map, re-adding before save`);
+      fallbackUsers.set(user.email, user);
+    }
+    
     saveUsers(); // Persist to disk
+    console.log(`[FALLBACK AUTH] After save - user.selectedTopics: ${JSON.stringify(user.selectedTopics || [])}`);
     return this.getPreferences(user);
   }
 };

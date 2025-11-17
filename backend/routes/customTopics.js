@@ -133,7 +133,7 @@ router.put('/', authenticateToken, async (req, res) => {
       user.customTopics = trimmedTopics;
       await user.save();
     } else {
-      user.customTopics = trimmedTopics;
+      await fallbackAuth.updateCustomTopics(user, trimmedTopics);
     }
     
     res.json({ 

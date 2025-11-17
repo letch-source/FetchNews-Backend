@@ -87,130 +87,6 @@ function ensureCompleteSentence(text) {
   return text + '.';
 }
 
-// AI-powered article relevance filter (optimized for memory efficiency)
-// Uses OpenAI to verify articles match the requested topic/category
-// This addresses API miscategorization issues in a general way
-async function filterArticlesByRelevance(articles, topicOrCategory) {
-  // Check if AI filtering is disabled via environment variable
-  if (process.env.DISABLE_AI_FILTER === 'true') {
-    console.log('[AI-FILTER] Disabled via DISABLE_AI_FILTER env variable');
-    return articles;
-  }
-  
-  if (!articles || articles.length === 0) {
-    return articles;
-  }
-  
-  // Don't filter if we have very few articles (might be too aggressive)
-  if (articles.length <= 3) {
-    return articles;
-  }
-  
-  // Create cache key from article titles + topic
-  const cacheKey = `${topicOrCategory}:${articles.map(a => a.title).join('|')}`;
-  const cacheHash = cacheKey.substring(0, 100); // Limit key size
-  
-  // Check cache first
-  const cached = filterCache.get(cacheHash);
-  if (cached && (Date.now() - cached.timestamp) < FILTER_CACHE_TTL) {
-    console.log(`[AI-FILTER] Using cached result for "${topicOrCategory}"`);
-    // Return filtered articles based on cached indices
-    return articles.filter((_, idx) => !cached.indicesToRemove.has(idx));
-  }
-  
-  console.log(`[AI-FILTER] Checking relevance of ${articles.length} articles for topic: "${topicOrCategory}"`);
-  
-  try {
-    // Prepare article summaries for batch classification (limit description length)
-    const articleSummaries = articles.map((article, idx) => {
-      const title = article.title || '';
-      const description = article.description || '';
-      return `${idx}. "${title}" - ${description.substring(0, 100)}`;
-    }).join('\n\n');
-    
-    // Use GPT to classify article relevance in a single API call
-    const prompt = `You are a content classifier. Given a topic/category "${topicOrCategory}", analyze these news articles and identify which ones are NOT relevant to this topic.
-
-Articles to analyze:
-${articleSummaries}
-
-Instructions:
-- Return ONLY the numbers (0-indexed) of articles that are OFF-TOPIC or misclassified
-- Separate numbers with commas
-- If all articles are relevant, return "NONE"
-- Be strict: filter out articles that don't genuinely match the topic
-- Examples of misclassification:
-  * Sports/racing articles in "technology" (unless about racing tech/innovation)
-  * Celebrity gossip in "AI"
-  * Political articles in "gaming"
-  
-Return format: Just the numbers or "NONE" (e.g., "1,5,7" or "NONE")`;
-
-    const response = await openaiClient.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: "You are a precise content classifier. Return only numbers or NONE."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      temperature: 0.1,
-      max_tokens: 50 // Reduced from 100 to save memory
-    });
-    
-    const result = response.choices[0]?.message?.content?.trim() || "NONE";
-    console.log(`[AI-FILTER] GPT classification result: ${result}`);
-    
-    let indicesToRemove = new Set();
-    
-    if (result !== "NONE") {
-      // Parse the indices to filter
-      indicesToRemove = new Set(
-        result.split(',')
-          .map(n => parseInt(n.trim()))
-          .filter(n => !isNaN(n) && n >= 0 && n < articles.length)
-      );
-    }
-    
-    // Cache the result
-    if (filterCache.size >= FILTER_CACHE_MAX_SIZE) {
-      // Remove oldest entry when cache is full
-      const firstKey = filterCache.keys().next().value;
-      filterCache.delete(firstKey);
-    }
-    filterCache.set(cacheHash, {
-      indicesToRemove,
-      timestamp: Date.now()
-    });
-    
-    if (indicesToRemove.size === 0) {
-      console.log(`[AI-FILTER] All articles are relevant, no filtering needed`);
-      return articles;
-    }
-    
-    // Filter out irrelevant articles
-    const filtered = articles.filter((article, idx) => {
-      if (indicesToRemove.has(idx)) {
-        console.log(`[AI-FILTER] Excluding irrelevant article: "${article.title}"`);
-        return false;
-      }
-      return true;
-    });
-    
-    console.log(`[AI-FILTER] Filtered ${articles.length - filtered.length} irrelevant articles, ${filtered.length} remaining`);
-    return filtered;
-    
-  } catch (error) {
-    console.error(`[AI-FILTER] Error during relevance filtering: ${error.message}`);
-    // On error, return original articles (fail-safe)
-    return articles;
-  }
-}
-
 // Authentication routes
 app.use("/api/auth", authRoutes);
 
@@ -613,14 +489,6 @@ if (!JWT_SECRET) {
 const MEDIASTACK_KEY = process.env.MEDIASTACK_KEY || "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 
-// Create a single shared OpenAI client instance to reduce memory usage
-const openaiClient = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-// In-memory cache for AI filtering results to reduce API calls and memory usage
-const filterCache = new Map();
-const FILTER_CACHE_MAX_SIZE = 100;
-const FILTER_CACHE_TTL = 3600000; // 1 hour
-
 // --- In-memory data store fallback (replace with SQLite later) ---
 let users = []; // [{ email, passwordHash, topics: [], location: "" }]
 
@@ -754,12 +622,8 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [])
     source: { id: article.source, name: article.source }
   }));
   
-  // Apply AI-powered relevance filter to remove miscategorized articles
-  const topicName = qParts.filter(Boolean).join(" ");
-  const filteredArticles = await filterArticlesByRelevance(mappedArticles, topicName);
-  
   // Removed source printing log
-  return filteredArticles;
+  return mappedArticles;
 }
 
 // Function to ensure variety by getting articles from multiple sources with progressive time expansion
@@ -897,11 +761,8 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
     source: { id: article.source, name: article.source }
   }));
   
-  // Apply AI-powered relevance filter to remove miscategorized articles
-  const filteredArticles = await filterArticlesByRelevance(articles, category || 'general');
-  
   // Removed source printing log
-  return filteredArticles;
+  return articles;
 }
 
 async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = []) {
@@ -1128,7 +989,7 @@ async function summarizeArticles(topic, geo, articles, wordCount, goodNewsOnly =
   }
 
   try {
-    // Use shared OpenAI client to reduce memory usage
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
     
     // Optimized article preparation for ChatGPT (limit to 4 articles for faster processing)
     const articleTexts = articles.slice(0, 4).map((article, index) => {
@@ -1182,7 +1043,7 @@ Requirements:
 
     console.log(`Sending ${articles.length} articles to ChatGPT for summarization`);
 
-    const completion = await openaiClient.chat.completions.create({
+    const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -1478,19 +1339,50 @@ app.get("/api/test-mediastack", async (req, res) => {
   }
 });
 
-// Signup - DISABLED: Google Sign-In only
+// Signup
 app.post("/api/auth/signup", (req, res) => {
-  res.status(403).json({ 
-    error: "Password-based signup is no longer supported. Please use Google Sign-In.",
-    googleSignInRequired: true
+  const { email, password } = req.body || {};
+  if (!email || !password)
+    return res.status(400).json({ error: "Email and password required" });
+
+  if (users.find((u) => u.email === email)) {
+    return res.status(400).json({ error: "Email already in use" });
+  }
+
+  const passwordHash = bcrypt.hashSync(password, 10);
+  const newUser = { email, passwordHash, topics: [], location: "" };
+  users.push(newUser);
+  saveUsers();
+
+  const token = createToken(newUser);
+  res.cookie("token", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  });
+  res.json({
+    message: "Signup successful",
+    user: { email, topics: [], location: "" },
   });
 });
 
-// Login - DISABLED: Google Sign-In only
+// Login
 app.post("/api/auth/login", (req, res) => {
-  res.status(403).json({ 
-    error: "Password-based login is no longer supported. Please use Google Sign-In.",
-    googleSignInRequired: true
+  const { email, password } = req.body || {};
+  const user = users.find((u) => u.email === email);
+  if (!user) return res.status(400).json({ error: "Invalid credentials" });
+  if (!bcrypt.compareSync(password, user.passwordHash)) {
+    return res.status(400).json({ error: "Invalid credentials" });
+  }
+  const token = createToken(user);
+  res.cookie("token", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  });
+  res.json({
+    message: "Login successful",
+    user: { email, topics: user.topics, location: user.location },
   });
 });
 
@@ -1553,17 +1445,22 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     if (req.user) {
       let usageCheck;
       if (mongoose.connection.readyState === 1) {
-        usageCheck = req.user.canFetchNews();
+        usageCheck = await req.user.canFetchNews();
+        // Reload user to ensure we have the latest dailyUsageCount after potential reset
+        req.user = await User.findById(req.user._id);
       } else {
         usageCheck = fallbackAuth.canFetchNews(req.user);
+        // Save the user if it was reset
+        await fallbackAuth.saveUser(req.user);
       }
       
       if (!usageCheck.allowed) {
         const limit = usageCheck.limit || (req.user?.isPremium ? 20 : 3);
         const isPremium = req.user?.isPremium || false;
         const message = isPremium
-          ? `You've reached your daily limit of ${limit} Fetches.`
-          : `You've reached your daily limit of ${limit} Fetches. Upgrade to Premium for ${20} Fetches per day.`;
+          ? `You've used all ${limit} of your daily Fetches. Your limit will reset tomorrow.`
+          : `You've used all ${limit} of your daily Fetches. Your limit will reset tomorrow, or upgrade to Premium for unlimited access.`;
+        
         return res.status(429).json({
           error: "Daily limit reached",
           message: message,
@@ -1608,7 +1505,6 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     const combinedPieces = [];
     const globalCandidates = [];
 
-
     // Helper to format topics like "A and B" or "A, B, and C"
     function formatTopicList(list, geoData) {
       const names = (list || []).map((t) => {
@@ -1623,7 +1519,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
     }
 
-    for (const topic of topics) {
+    // Helper function to process a single topic (extracted for parallelization)
+    async function processTopic(topic) {
       try {
         const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
         
@@ -1682,9 +1579,10 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
 
         // Optimized pool of unfiltered candidates for global backfill
+        const topicCandidates = [];
         for (let idx = 0; idx < articles.length; idx++) {
           const a = articles[idx];
-          globalCandidates.push({
+          topicCandidates.push({
             id: `${topic}-cand-${idx}-${Date.now()}`,
             title: a.title || "",
             summary: (a.description || a.title || "")
@@ -1711,9 +1609,6 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
 
         const summary = await summarizeArticles(topic, geoData, relevant, wordCount, goodNewsOnly, req.user);
 
-        // For single topic, use the summary as-is (ChatGPT already includes the intro)
-        if (summary) combinedPieces.push(summary);
-
         const sourceItems = relevant.map((a, idx) => ({
           id: `${topic}-${idx}-${Date.now()}`,
           title: a.title || "",
@@ -1726,18 +1621,38 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
           topic,
         }));
 
-        items.push(...sourceItems);
+        return {
+          summary,
+          sourceItems,
+          candidates: topicCandidates
+        };
       } catch (innerErr) {
         console.error("summarize topic failed", topic, innerErr);
-        items.push({
-          id: `${topic}-error-${Date.now()}`,
-          title: `Issue fetching ${topic}`,
-          summary: `Failed to fetch news for "${topic}".`,
-          source: "",
-          url: "",
-          topic,
-        });
+        return {
+          summary: null,
+          sourceItems: [{
+            id: `${topic}-error-${Date.now()}`,
+            title: `Issue fetching ${topic}`,
+            summary: `Failed to fetch news for "${topic}".`,
+            source: "",
+            url: "",
+            topic,
+          }],
+          candidates: []
+        };
       }
+    }
+
+    // Process all topics in parallel for better performance
+    const topicResults = await Promise.all(topics.map(topic => processTopic(topic)));
+    
+    // Combine results from parallel processing
+    for (const result of topicResults) {
+      if (result.summary) {
+        combinedPieces.push(result.summary);
+      }
+      items.push(...result.sourceItems);
+      globalCandidates.push(...result.candidates);
     }
 
     // Ensure at least 3 sources overall by backfilling from candidates
@@ -1811,10 +1726,23 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
 
     // Increment user usage for successful request (if authenticated)
     if (req.user) {
-      if (mongoose.connection.readyState === 1) {
-        await req.user.incrementUsage();
-      } else {
-        await fallbackAuth.incrementUsage(req.user);
+      try {
+        if (mongoose.connection.readyState === 1) {
+          // Reload user to ensure we have the latest data before incrementing
+          const freshUser = await User.findById(req.user._id || req.user.id);
+          if (freshUser) {
+            await freshUser.incrementUsage();
+            console.log(`[SUMMARIZE] Incremented usage for user ${freshUser.email}, new count: ${freshUser.dailyUsageCount}`);
+          } else {
+            console.error(`[SUMMARIZE] User not found when trying to increment usage: ${req.user._id || req.user.id}`);
+          }
+        } else {
+          await fallbackAuth.incrementUsage(req.user);
+          console.log(`[SUMMARIZE] Incremented usage (fallback) for user ${req.user.email}, new count: ${req.user.dailyUsageCount}`);
+        }
+      } catch (incrementError) {
+        console.error(`[SUMMARIZE] Error incrementing usage:`, incrementError);
+        // Don't fail the request if increment fails, but log it
       }
     }
 
@@ -1838,11 +1766,17 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
   } catch (e) {
     console.error("Summarize endpoint error:", e);
     console.error("Error stack:", e.stack);
-    res.status(500).json({ 
-      error: "summarize failed", 
-      details: e.message,
-      type: e.constructor.name
-    });
+    
+    // Ensure response hasn't been sent yet
+    if (!res.headersSent) {
+      res.status(500).json({ 
+        error: "summarize failed", 
+        details: e.message,
+        type: e.constructor.name
+      });
+    } else {
+      console.error("Response already sent, cannot send error response");
+    }
   }
 });
 
@@ -1858,17 +1792,22 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
     if (req.user) {
       let usageCheck;
       if (mongoose.connection.readyState === 1) {
-        usageCheck = req.user.canFetchNews();
+        usageCheck = await req.user.canFetchNews();
+        // Reload user to ensure we have the latest dailyUsageCount after potential reset
+        req.user = await User.findById(req.user._id);
       } else {
         usageCheck = fallbackAuth.canFetchNews(req.user);
+        // Save the user if it was reset
+        await fallbackAuth.saveUser(req.user);
       }
       
       if (!usageCheck.allowed) {
         const limit = usageCheck.limit || (req.user?.isPremium ? 20 : 3);
         const isPremium = req.user?.isPremium || false;
         const message = isPremium
-          ? `You've reached your daily limit of ${limit} Fetches.`
-          : `You've reached your daily limit of ${limit} Fetches. Upgrade to Premium for ${20} Fetches per day.`;
+          ? `You've used all ${limit} of your daily Fetches. Your limit will reset tomorrow.`
+          : `You've used all ${limit} of your daily Fetches. Your limit will reset tomorrow, or upgrade to Premium for unlimited access.`;
+        
         return res.status(429).json({
           error: "Daily limit reached",
           message: message,
@@ -2037,10 +1976,23 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
 
     // Increment user usage for successful request (if authenticated)
     if (req.user) {
-      if (mongoose.connection.readyState === 1) {
-        await req.user.incrementUsage();
-      } else {
-        await fallbackAuth.incrementUsage(req.user);
+      try {
+        if (mongoose.connection.readyState === 1) {
+          // Reload user to ensure we have the latest data before incrementing
+          const freshUser = await User.findById(req.user._id || req.user.id);
+          if (freshUser) {
+            await freshUser.incrementUsage();
+            console.log(`[BATCH_SUMMARIZE] Incremented usage for user ${freshUser.email}, new count: ${freshUser.dailyUsageCount}`);
+          } else {
+            console.error(`[BATCH_SUMMARIZE] User not found when trying to increment usage: ${req.user._id || req.user.id}`);
+          }
+        } else {
+          await fallbackAuth.incrementUsage(req.user);
+          console.log(`[BATCH_SUMMARIZE] Incremented usage (fallback) for user ${req.user.email}, new count: ${req.user.dailyUsageCount}`);
+        }
+      } catch (incrementError) {
+        console.error(`[BATCH_SUMMARIZE] Error incrementing usage:`, incrementError);
+        // Don't fail the request if increment fails, but log it
       }
     }
 
@@ -2096,8 +2048,8 @@ app.post("/api/tts", async (req, res) => {
     const cacheKey = cache.getTTSKey(finalText, voice, speed);
     const cached = await cache.get(cacheKey);
     
-    // Temporarily disable cache for voice testing
-    const disableCache = true; // Set to false to re-enable caching
+    // Cache is enabled for better performance
+    const disableCache = false;
     
     if (cached && !disableCache) {
       console.log(`TTS cache hit for ${finalText.substring(0, 50)}... with voice: ${voice}`);
@@ -2109,10 +2061,10 @@ app.post("/api/tts", async (req, res) => {
     
     console.log(`TTS cache miss - generating new audio with voice: ${voice}`);
 
-    // Use shared OpenAI client to reduce memory usage
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
     async function tryModel(model, voice) {
-      return await openaiClient.audio.speech.create({
+      return await openai.audio.speech.create({
         model,
         voice,
         input: finalText,
@@ -2129,59 +2081,62 @@ app.post("/api/tts", async (req, res) => {
     
     console.log(`TTS Request - Original voice: "${voice}", Normalized: "${normalizedVoice}", Selected: "${selectedVoice}"`);
 
-    let speech;
-    let lastErr;
-    
-    // Try the requested voice with different models
+    // Try the requested voice with different models in parallel for faster response
     const attempts = [
       { model: "tts-1", voice: selectedVoice },
       { model: "tts-1-hd", voice: selectedVoice },
-      { model: "gpt-4o-mini-tts", voice: selectedVoice },
     ];
     
-    // Only fall back to alloy if the requested voice completely fails
-    const fallbackAttempts = [
-      { model: "tts-1", voice: "alloy" },
-      { model: "tts-1-hd", voice: "alloy" },
-    ];
+    // Try all models in parallel and use the first successful one
+    let speech = null;
+    let lastErr = null;
     
-    // Try requested voice first
-    for (const { model, voice: attemptVoice } of attempts) {
+    const attemptPromises = attempts.map(async ({ model, voice: attemptVoice }) => {
       try {
         console.log(`TTS Attempt - Model: ${model}, Voice: ${attemptVoice}`);
-        speech = await tryModel(model, attemptVoice);
-        if (speech) {
-          console.log(`TTS Success - Model: ${model}, Voice: ${attemptVoice}`);
-          break;
-        }
+        const result = await tryModel(model, attemptVoice);
+        return { success: true, model, voice: attemptVoice, result };
       } catch (e) {
-        lastErr = e;
-        try {
-          const msg = e?.message || String(e);
-          console.warn(`/api/tts attempt failed (model=${model}, voice=${attemptVoice}):`, msg);
-          if (e?.response) {
-            const body = await e.response.text().catch(() => "");
-            console.warn("OpenAI response:", body);
-          }
-        } catch {}
+        const msg = e?.message || String(e);
+        console.warn(`/api/tts attempt failed (model=${model}, voice=${attemptVoice}):`, msg);
+        return { success: false, model, voice: attemptVoice, error: e };
       }
-    }
+    });
     
-    // If requested voice failed, try fallback
-    if (!speech) {
+    // Wait for all attempts and find the first successful one
+    const results = await Promise.all(attemptPromises);
+    const successful = results.find(r => r.success);
+    
+    if (successful) {
+      speech = successful.result;
+      console.log(`TTS Success - Model: ${successful.model}, Voice: ${successful.voice}`);
+    } else {
+      // If requested voice failed, try fallback models in parallel
       console.log(`TTS Fallback - Requested voice "${selectedVoice}" failed, trying alloy`);
-      for (const { model, voice: attemptVoice } of fallbackAttempts) {
+      const fallbackAttempts = [
+        { model: "tts-1", voice: "alloy" },
+        { model: "tts-1-hd", voice: "alloy" },
+      ];
+      
+      const fallbackPromises = fallbackAttempts.map(async ({ model, voice: attemptVoice }) => {
         try {
           console.log(`TTS Fallback Attempt - Model: ${model}, Voice: ${attemptVoice}`);
-          speech = await tryModel(model, attemptVoice);
-          if (speech) {
-            console.log(`TTS Fallback Success - Model: ${model}, Voice: ${attemptVoice}`);
-            break;
-          }
+          const result = await tryModel(model, attemptVoice);
+          return { success: true, model, voice: attemptVoice, result };
         } catch (e) {
-          lastErr = e;
           console.warn(`/api/tts fallback failed (model=${model}, voice=${attemptVoice}):`, e?.message || String(e));
+          return { success: false, model, voice: attemptVoice, error: e };
         }
+      });
+      
+      const fallbackResults = await Promise.all(fallbackPromises);
+      const fallbackSuccessful = fallbackResults.find(r => r.success);
+      
+      if (fallbackSuccessful) {
+        speech = fallbackSuccessful.result;
+        console.log(`TTS Fallback Success - Model: ${fallbackSuccessful.model}, Voice: ${fallbackSuccessful.voice}`);
+      } else {
+        lastErr = fallbackResults[0]?.error || results[0]?.error;
       }
     }
 
@@ -2216,8 +2171,77 @@ app.post("/api/tts", async (req, res) => {
 });
 
 // --- Scheduled Fetch Checker ---
+// Check if scheduler is disabled via environment variable
+const SCHEDULER_ENABLED = process.env.SCHEDULER_ENABLED !== 'false'; // Default to enabled unless explicitly disabled
+
+// Lock to prevent concurrent scheduler executions
+let schedulerRunning = false;
+let schedulerTimeout = null;
+
+// Helper function to save user with retry logic for version conflicts (for scheduler use)
+async function saveUserWithRetryForScheduler(user, retries = 3) {
+  while (retries > 0) {
+    try {
+      await user.save();
+      return;
+    } catch (error) {
+      if (error.name === 'VersionError' && retries > 1) {
+        console.log(`[SCHEDULER] Version conflict, retrying... (${retries - 1} retries left)`);
+        // Reload the document to get the latest version
+        const freshUser = await User.findById(user._id);
+        if (freshUser) {
+          // Preserve all changes from the current user object before reloading
+          const modifiedPaths = user.modifiedPaths();
+          const changesToPreserve = {};
+          
+          // Store all modified values
+          for (const path of modifiedPaths) {
+            changesToPreserve[path] = user.get(path);
+          }
+          
+          // Also check for common fields that might have been modified
+          if (user.isModified('scheduledSummaries')) {
+            changesToPreserve['scheduledSummaries'] = user.scheduledSummaries;
+          }
+          
+          // Copy the fresh user data to the original user object
+          Object.assign(user, freshUser.toObject());
+          
+          // Now apply our preserved changes on top of the fresh data
+          for (const [path, value] of Object.entries(changesToPreserve)) {
+            user.set(path, value);
+            user.markModified(path);
+          }
+          
+          retries--;
+          continue;
+        } else {
+          throw error;
+        }
+      } else {
+        throw error;
+      }
+    }
+  }
+  throw new Error('Failed to save user after retries');
+}
+
 // Function to check for scheduled summaries
 async function checkScheduledSummaries() {
+  // Early return if scheduler is disabled
+  if (!SCHEDULER_ENABLED) {
+    console.log(`[SCHEDULER] Scheduler is DISABLED (SCHEDULER_ENABLED=false). Skipping check.`);
+    return;
+  }
+  
+  // Prevent concurrent executions
+  if (schedulerRunning) {
+    console.log(`[SCHEDULER] Scheduler already running, skipping concurrent execution`);
+    return;
+  }
+  
+  schedulerRunning = true;
+  
   try {
     const now = new Date();
     const currentHour = now.getHours();
@@ -2241,7 +2265,7 @@ async function checkScheduledSummaries() {
     
     let executedCount = 0;
     let checkedCount = 0;
-    const usersToSave = []; // Batch user saves
+    const usersToSave = []; // Batch user saves (only for cleanup operations, not execution locks)
     
     for (const user of users) {
       let scheduledSummaries = user.scheduledSummaries || [];
@@ -2300,11 +2324,17 @@ async function checkScheduledSummaries() {
         const scheduledTimeMinutes = scheduledHour * 60 + scheduledMinute;
         const userTimeMinutes = userHour * 60 + userMinute;
         
-        // Check if summary hasn't already run today in user's timezone (prevent duplicate executions)
+        // Execute if we're within 5 minutes of the scheduled time (accounts for scheduler check intervals)
+        // Since we check at :00, :10, :20, :30, :40, :50, we need a small window to catch scheduled times
+        // The lastRun check ensures it only executes once per day, even if scheduler checks multiple times
+        const timeDifference = Math.abs(userTimeMinutes - scheduledTimeMinutes);
+        const isWithinTimeWindow = timeDifference <= 5; // Allow 5 minute window for scheduler check intervals
+        
+        // Check if summary has already run today in user's timezone (prevent duplicate executions)
         const lastRun = summary.lastRun ? new Date(summary.lastRun) : null;
         let alreadyRanToday = false;
         if (lastRun) {
-          // Reuse formatter for date comparison (same timezone)
+          // Use a robust date comparison that accounts for timezone
           const dateFormatter = new Intl.DateTimeFormat('en-US', {
             timeZone: userTimezone,
             year: 'numeric',
@@ -2315,48 +2345,103 @@ async function checkScheduledSummaries() {
           const lastRunDateStr = dateFormatter.format(lastRun);
           const nowDateStr = dateFormatter.format(now);
           alreadyRanToday = lastRunDateStr === nowDateStr;
+          
+          // Additional check: if lastRun was less than 23 hours ago, don't execute again
+          // This prevents edge cases around timezone boundaries
+          const hoursSinceLastRun = (now.getTime() - lastRun.getTime()) / (1000 * 60 * 60);
+          if (hoursSinceLastRun < 23) {
+            alreadyRanToday = true;
+          }
         }
         
-        // Check if scheduled time has passed and is within the last 30 minutes
-        // This accounts for the 10-minute check interval and ensures we catch scheduled times
-        // even if the scheduler runs slightly after the scheduled time or if there were delays
-        const timeDifference = userTimeMinutes - scheduledTimeMinutes;
-        const hasPassed = timeDifference >= 0; // Scheduled time has passed today
-        const withinWindow = timeDifference <= 30; // Within last 30 minutes (to account for 10-min check interval and potential delays)
-        const shouldExecute = hasPassed && withinWindow && !alreadyRanToday;
+        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (user time=${userTime}, server time=${currentTime}), user timezone=${userTimezone}, user day=${userDay}, timeDiff=${timeDifference}min, withinWindow=${isWithinTimeWindow}, alreadyRanToday=${alreadyRanToday}`);
         
-        console.log(`[SCHEDULER] Summary "${summary.name}": enabled=${isEnabled}, time=${summary.time} (user time=${userTime}, server time=${currentTime}), user timezone=${userTimezone}, user day=${userDay}, timeDiff=${timeDifference}min, hasPassed=${hasPassed}, withinWindow=${withinWindow}, alreadyRanToday=${alreadyRanToday}, shouldExecute=${shouldExecute}`);
-        
-        if (shouldExecute) {
+        if (isWithinTimeWindow && !alreadyRanToday) {
+          // CRITICAL: Reload user from database to get latest lastRun value and prevent concurrent executions
+          let freshUser;
+          try {
+            freshUser = await User.findById(user._id);
+            if (!freshUser) {
+              console.error(`[SCHEDULER] User ${user.email} not found in database`);
+              continue;
+            }
+          } catch (dbError) {
+            console.error(`[SCHEDULER] Error reloading user ${user.email}:`, dbError);
+            continue;
+          }
+          
+          // Check again with fresh data to prevent race conditions
+          const freshSummary = freshUser.scheduledSummaries?.find(s => s.id === summary.id);
+          if (!freshSummary) {
+            console.log(`[SCHEDULER] Summary "${summary.name}" not found for user ${user.email} after reload`);
+            continue;
+          }
+          
+          // Double-check lastRun with fresh data
+          const freshLastRun = freshSummary.lastRun ? new Date(freshSummary.lastRun) : null;
+          let freshAlreadyRanToday = false;
+          if (freshLastRun) {
+            const dateFormatter = new Intl.DateTimeFormat('en-US', {
+              timeZone: userTimezone,
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit'
+            });
+            const freshLastRunDateStr = dateFormatter.format(freshLastRun);
+            const nowDateStr = dateFormatter.format(now);
+            freshAlreadyRanToday = freshLastRunDateStr === nowDateStr;
+            
+            const hoursSinceLastRun = (now.getTime() - freshLastRun.getTime()) / (1000 * 60 * 60);
+            if (hoursSinceLastRun < 23) {
+              freshAlreadyRanToday = true;
+            }
+          }
+          
+          if (freshAlreadyRanToday) {
+            console.log(`[SCHEDULER] Summary "${summary.name}" already ran today for user ${user.email} (checked with fresh data)`);
+            continue;
+          }
+          
+          // Update lastRun IMMEDIATELY before execution to prevent concurrent runs
+          const summaryIndex = freshUser.scheduledSummaries.findIndex(s => s.id === summary.id);
+          if (summaryIndex !== -1) {
+            freshUser.scheduledSummaries[summaryIndex].lastRun = new Date().toISOString();
+            freshUser.markModified('scheduledSummaries');
+            
+            // Save immediately to lock the execution with retry logic for version conflicts
+            try {
+              await saveUserWithRetryForScheduler(freshUser);
+              console.log(`[SCHEDULER] Locked execution for "${summary.name}" - updated lastRun before execution`);
+            } catch (saveError) {
+              console.error(`[SCHEDULER] Failed to lock execution for "${summary.name}":`, saveError);
+              // If save fails, skip execution to prevent duplicates
+              continue;
+            }
+          }
+          
           console.log(`[SCHEDULER] Executing scheduled fetch "${summary.name}" for user ${user.email} on ${currentDay}`);
           
           try {
             // Import and call the execution function directly
             const { executeScheduledSummary } = require('./routes/scheduledSummaries');
-            await executeScheduledSummary(user, summary);
+            await executeScheduledSummary(freshUser, freshSummary);
             console.log(`[SCHEDULER] Successfully executed scheduled fetch "${summary.name}" for user ${user.email}`);
-            
-            // Update lastRun timestamp
-            const summaryIndex = scheduledSummaries.findIndex(s => s.id === summary.id);
-            if (summaryIndex !== -1) {
-              scheduledSummaries[summaryIndex].lastRun = new Date().toISOString();
-              user.scheduledSummaries = scheduledSummaries;
-              needsSave = true;
-              executedCount++;
-            }
+            executedCount++;
           } catch (error) {
             console.error(`[SCHEDULER] Failed to execute scheduled fetch "${summary.name}" for user ${user.email}:`, error);
+            // Note: lastRun was already updated, so this won't retry until tomorrow
           }
         }
       }
       
-      // Batch save user if needed
+      // Batch save user if needed (only for cleanup operations, not execution locks)
+      // Note: Execution locks are saved immediately before execution to prevent race conditions
       if (needsSave) {
         usersToSave.push(user);
       }
     }
     
-    // Batch save all modified users
+    // Batch save all modified users (only for cleanup operations)
     if (usersToSave.length > 0) {
       await Promise.all(usersToSave.map(user => user.save().catch(err => 
         console.error(`[SCHEDULER] Error saving user ${user.email}:`, err)
@@ -2375,48 +2460,240 @@ async function checkScheduledSummaries() {
     console.error('[SCHEDULER] Error checking scheduled summaries:', error);
     console.log(`[SCHEDULER] Next check in 10 minutes`);
     console.log(`[SCHEDULER] ============================================`);
+  } finally {
+    schedulerRunning = false;
   }
 }
 
-// Schedule checks every 10 minutes
-let schedulerInterval = null;
-let isSchedulerRunning = false;
+// Schedule checks at :00, :10, :20, :30, :40, and :50 minutes past each hour
+function scheduleNextCheck() {
+  // Clear any existing timeout to prevent duplicates
+  if (schedulerTimeout) {
+    clearTimeout(schedulerTimeout);
+    schedulerTimeout = null;
+  }
+  
+  const now = new Date();
+  const currentMinute = now.getMinutes();
+  const currentSecond = now.getSeconds();
+  const currentMillisecond = now.getMilliseconds();
+  
+  // Target minutes: 0, 10, 20, 30, 40, 50
+  const targetMinutes = [0, 10, 20, 30, 40, 50];
+  
+  // Find next target minute (always schedule for the NEXT target, never immediate)
+  let nextMinute = null;
+  for (const target of targetMinutes) {
+    if (target > currentMinute) {
+      nextMinute = target;
+      break;
+    }
+  }
+  
+  // If no target found in this hour, use the first target of next hour
+  if (nextMinute === null) {
+    nextMinute = targetMinutes[0];
+  }
+  
+  // Calculate milliseconds until next check
+  let msUntilNext;
+  if (nextMinute > currentMinute) {
+    // Next check is in the same hour
+    const minutesUntilNext = nextMinute - currentMinute;
+    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
+    msUntilNext = secondsUntilNext * 1000 - currentMillisecond;
+  } else {
+    // Next check is in the next hour
+    const minutesUntilNext = 60 - currentMinute + nextMinute;
+    const secondsUntilNext = minutesUntilNext * 60 - currentSecond;
+    msUntilNext = secondsUntilNext * 1000 - currentMillisecond;
+  }
+  
+  // Ensure minimum delay of at least 1 second to prevent immediate re-execution
+  if (msUntilNext < 1000) {
+    msUntilNext = 60000; // If we're at or past the target, wait for next interval (1 minute minimum)
+  }
+  
+  console.log(`[SCHEDULER] Next check scheduled in ${Math.floor(msUntilNext / 1000 / 60)} minutes ${Math.floor((msUntilNext / 1000) % 60)} seconds (at :${String(nextMinute).padStart(2, '0')})`);
+  
+  schedulerTimeout = setTimeout(() => {
+    schedulerTimeout = null;
+    checkScheduledSummaries().then(() => {
+      // Schedule the next check after this one completes
+      scheduleNextCheck();
+    }).catch((error) => {
+      console.error('[SCHEDULER] Error in checkScheduledSummaries, will retry:', error);
+      // Still schedule next check even on error
+      scheduleNextCheck();
+    });
+  }, msUntilNext);
+}
 
-function startScheduler() {
-  // Prevent multiple schedulers from running
-  if (isSchedulerRunning) {
-    console.log('[SCHEDULER] Scheduler already running, skipping start');
+// Start the scheduling only if enabled
+if (SCHEDULER_ENABLED) {
+  console.log(`[SCHEDULER] Scheduled summary checker ENABLED - checking every 10 minutes`);
+  scheduleNextCheck();
+} else {
+  console.log(`[SCHEDULER] ⚠️  Scheduled summary checker DISABLED (SCHEDULER_ENABLED=false)`);
+  console.log(`[SCHEDULER] Automatic news fetching is disabled. Set SCHEDULER_ENABLED=true to enable.`);
+}
+
+// --- Daily Usage Reset Scheduler ---
+// Reset all users' dailyUsageCount at midnight PST
+let dailyResetRunning = false;
+let dailyResetTimeout = null;
+let lastResetDate = null;
+
+// Helper function to get date string in PST timezone
+function getDateStringInPST(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.formatToParts(date);
+  const year = parts.find(p => p.type === 'year').value;
+  const month = parts.find(p => p.type === 'month').value;
+  const day = parts.find(p => p.type === 'day').value;
+  
+  const pstDate = new Date(`${year}-${month}-${day}T00:00:00`);
+  return pstDate.toDateString();
+}
+
+// Function to reset all users' daily usage counts
+async function resetAllUsersDailyCount() {
+  // Prevent concurrent executions
+  if (dailyResetRunning) {
+    console.log(`[DAILY_RESET] Reset already running, skipping concurrent execution`);
     return;
   }
   
-  // Clear any existing interval
-  if (schedulerInterval) {
-    clearInterval(schedulerInterval);
-    schedulerInterval = null;
-  }
+  dailyResetRunning = true;
   
-  isSchedulerRunning = true;
-  
-  // Run initial check immediately
-  checkScheduledSummaries().catch(error => {
-    console.error('[SCHEDULER] Error in initial check:', error);
-  });
-  
-  // Then check every 10 minutes (600000 ms)
-  schedulerInterval = setInterval(async () => {
-    try {
-      await checkScheduledSummaries();
-    } catch (error) {
-      console.error('[SCHEDULER] Error in scheduled check:', error);
+  try {
+    const now = new Date();
+    const todayPST = getDateStringInPST(now);
+    
+    // Check if we've already reset today
+    if (lastResetDate === todayPST) {
+      console.log(`[DAILY_RESET] Already reset today (${todayPST}), skipping`);
+      dailyResetRunning = false;
+      return;
     }
-  }, 600000); // 10 minutes = 600,000 milliseconds
-  
-  console.log('[SCHEDULER] Scheduled summary checker enabled - checking every 10 minutes');
-  console.log('[SCHEDULER] Running initial check now, then every 10 minutes thereafter');
+    
+    // Get current time in PST
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+    const pstTimeParts = formatter.formatToParts(now);
+    const pstHour = parseInt(pstTimeParts.find(p => p.type === 'hour').value);
+    const pstMinute = parseInt(pstTimeParts.find(p => p.type === 'minute').value);
+    
+    // Only reset at or just after midnight PST (between 00:00 and 00:05)
+    if (pstHour === 0 && pstMinute <= 5) {
+      console.log(`[DAILY_RESET] ============================================`);
+      console.log(`[DAILY_RESET] RESETTING ALL USERS' DAILY USAGE COUNTS`);
+      console.log(`[DAILY_RESET] Current PST time: ${pstHour}:${String(pstMinute).padStart(2, '0')}`);
+      console.log(`[DAILY_RESET] PST date: ${todayPST}`);
+      
+      // Find all users
+      const users = await User.find({});
+      console.log(`[DAILY_RESET] Found ${users.length} users to reset`);
+      
+      let resetCount = 0;
+      let errorCount = 0;
+      
+      // Reset all users' dailyUsageCount to 0 and update lastUsageDate
+      for (const user of users) {
+        try {
+          // Always reset at midnight PST - set dailyUsageCount to 0 and update lastUsageDate
+          // This ensures all users are synchronized to the new day
+          const needsReset = user.dailyUsageCount > 0 || 
+                            !user.lastUsageDate || 
+                            getDateStringInPST(new Date(user.lastUsageDate)) !== todayPST;
+          
+          if (needsReset) {
+            user.dailyUsageCount = 0;
+            user.lastUsageDate = now;
+            await user.save();
+            resetCount++;
+          }
+        } catch (err) {
+          console.error(`[DAILY_RESET] Error resetting user ${user.email}:`, err);
+          errorCount++;
+        }
+      }
+      
+      lastResetDate = todayPST;
+      
+      console.log(`[DAILY_RESET] Reset completed: ${resetCount} users reset, ${errorCount} errors`);
+      console.log(`[DAILY_RESET] ============================================`);
+    } else {
+      // Not midnight yet, skip
+      console.log(`[DAILY_RESET] Not midnight PST yet (current: ${pstHour}:${String(pstMinute).padStart(2, '0')}), skipping reset`);
+    }
+  } catch (error) {
+    console.error('[DAILY_RESET] Error resetting daily usage counts:', error);
+  } finally {
+    dailyResetRunning = false;
+  }
 }
 
-// Start the scheduling
-startScheduler();
+// Function to schedule the next daily reset check
+function scheduleDailyResetCheck() {
+  // Clear any existing timeout
+  if (dailyResetTimeout) {
+    clearTimeout(dailyResetTimeout);
+    dailyResetTimeout = null;
+  }
+  
+  const now = new Date();
+  
+  // Get current time in PST
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  const pstTimeParts = formatter.formatToParts(now);
+  const pstHour = parseInt(pstTimeParts.find(p => p.type === 'hour').value);
+  const pstMinute = parseInt(pstTimeParts.find(p => p.type === 'minute').value);
+  const pstSecond = parseInt(pstTimeParts.find(p => p.type === 'second').value);
+  
+  let msUntilNextCheck;
+  
+  // If we're in the midnight window (23:55 - 00:05), check every minute
+  if ((pstHour === 23 && pstMinute >= 55) || (pstHour === 0 && pstMinute <= 5)) {
+    // Check every minute during the reset window
+    msUntilNextCheck = 60 * 1000; // 1 minute
+  } else {
+    // Otherwise, check every hour (but we'll recalculate when we get closer to midnight)
+    msUntilNextCheck = 60 * 60 * 1000; // 1 hour
+  }
+  
+  dailyResetTimeout = setTimeout(() => {
+    dailyResetTimeout = null;
+    resetAllUsersDailyCount().then(() => {
+      // Schedule the next check
+      scheduleDailyResetCheck();
+    }).catch((error) => {
+      console.error('[DAILY_RESET] Error in resetAllUsersDailyCount, will retry:', error);
+      // Still schedule next check even on error
+      scheduleDailyResetCheck();
+    });
+  }, msUntilNextCheck);
+}
+
+// Start the daily reset scheduler
+console.log(`[DAILY_RESET] Daily usage reset scheduler ENABLED - will reset all users at midnight PST`);
+scheduleDailyResetCheck();
 
 // --- Trending Topics Updater ---
 // Update trending topics every hour
@@ -2744,9 +3021,13 @@ function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Backend server running on port ${PORT}`);
     const now = new Date();
-    const firstCheckIn = new Date(now.getTime() + (10 * 60 * 1000));
-    console.log(`[SCHEDULER] Scheduled summary checker enabled - checking every 10 minutes`);
-    console.log(`[SCHEDULER] Running initial check now, then every 10 minutes thereafter`);
+    if (SCHEDULER_ENABLED) {
+      const firstCheckIn = new Date(now.getTime() + (10 * 60 * 1000));
+      console.log(`[SCHEDULER] Scheduled summary checker enabled - checking every 10 minutes`);
+      console.log(`[SCHEDULER] Running initial check now, then every 10 minutes thereafter`);
+    } else {
+      console.log(`[SCHEDULER] ⚠️  Scheduled summary checker DISABLED - no automatic fetching`);
+    }
     if (!process.env.JWT_SECRET) {
       console.warn(
         "[WARN] JWT_SECRET is not set. Using an insecure fallback for development."
