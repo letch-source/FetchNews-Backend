@@ -2,6 +2,7 @@ const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 const mongoose = require('mongoose');
 const fallbackAuth = require('../utils/fallbackAuth');
+const User = require('../models/User');
 
 const router = express.Router();
 
@@ -29,6 +30,12 @@ router.post('/validate-receipt', authenticateToken, async (req, res) => {
 
     if (mongoose.connection.readyState === 1) {
       await user.updateSubscription(true, subscriptionId, expiresAt);
+      // Reload user from database to ensure we have the absolute latest state
+      // This ensures any hooks or middleware that might modify the user are reflected
+      const updatedUser = await User.findById(user._id);
+      if (updatedUser) {
+        user = updatedUser;
+      }
     } else {
       await fallbackAuth.updateSubscription(user, true, subscriptionId, expiresAt);
     }
@@ -36,7 +43,7 @@ router.post('/validate-receipt', authenticateToken, async (req, res) => {
     res.json({
       message: 'Subscription activated successfully',
       user: {
-        id: user._id,
+        id: user._id || user.id,
         email: user.email,
         isPremium: user.isPremium,
         subscriptionId: user.subscriptionId,
