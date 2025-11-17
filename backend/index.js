@@ -2174,6 +2174,54 @@ const SCHEDULER_ENABLED = process.env.SCHEDULER_ENABLED !== 'false'; // Default 
 let schedulerRunning = false;
 let schedulerTimeout = null;
 
+// Helper function to save user with retry logic for version conflicts (for scheduler use)
+async function saveUserWithRetryForScheduler(user, retries = 3) {
+  while (retries > 0) {
+    try {
+      await user.save();
+      return;
+    } catch (error) {
+      if (error.name === 'VersionError' && retries > 1) {
+        console.log(`[SCHEDULER] Version conflict, retrying... (${retries - 1} retries left)`);
+        // Reload the document to get the latest version
+        const freshUser = await User.findById(user._id);
+        if (freshUser) {
+          // Preserve all changes from the current user object before reloading
+          const modifiedPaths = user.modifiedPaths();
+          const changesToPreserve = {};
+          
+          // Store all modified values
+          for (const path of modifiedPaths) {
+            changesToPreserve[path] = user.get(path);
+          }
+          
+          // Also check for common fields that might have been modified
+          if (user.isModified('scheduledSummaries')) {
+            changesToPreserve['scheduledSummaries'] = user.scheduledSummaries;
+          }
+          
+          // Copy the fresh user data to the original user object
+          Object.assign(user, freshUser.toObject());
+          
+          // Now apply our preserved changes on top of the fresh data
+          for (const [path, value] of Object.entries(changesToPreserve)) {
+            user.set(path, value);
+            user.markModified(path);
+          }
+          
+          retries--;
+          continue;
+        } else {
+          throw error;
+        }
+      } else {
+        throw error;
+      }
+    }
+  }
+  throw new Error('Failed to save user after retries');
+}
+
 // Function to check for scheduled summaries
 async function checkScheduledSummaries() {
   // Early return if scheduler is disabled
@@ -2356,9 +2404,9 @@ async function checkScheduledSummaries() {
             freshUser.scheduledSummaries[summaryIndex].lastRun = new Date().toISOString();
             freshUser.markModified('scheduledSummaries');
             
-            // Save immediately to lock the execution
+            // Save immediately to lock the execution with retry logic for version conflicts
             try {
-              await freshUser.save();
+              await saveUserWithRetryForScheduler(freshUser);
               console.log(`[SCHEDULER] Locked execution for "${summary.name}" - updated lastRun before execution`);
             } catch (saveError) {
               console.error(`[SCHEDULER] Failed to lock execution for "${summary.name}":`, saveError);

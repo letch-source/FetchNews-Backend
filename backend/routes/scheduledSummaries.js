@@ -34,10 +34,8 @@ function getTimeBasedFetchName(timestamp = null) {
 }
 
 // Helper function to save user with retry logic for version conflicts
+// Preserves all changes made to the user object, not just scheduledSummaries
 async function saveUserWithRetry(user, retries = 3) {
-  // Preserve the scheduledSummaries we want to save
-  const scheduledSummariesToSave = user.scheduledSummaries;
-  
   while (retries > 0) {
     try {
       await user.save();
@@ -48,15 +46,38 @@ async function saveUserWithRetry(user, retries = 3) {
         // Reload the document to get the latest version
         const freshUser = await User.findById(user._id);
         if (freshUser) {
-          // Apply our scheduledSummaries changes to the fresh document
-          freshUser.scheduledSummaries = scheduledSummariesToSave;
-          freshUser.markModified('scheduledSummaries');
-          // Copy the fresh user back to the original user object
+          // Preserve all changes from the current user object before reloading
+          const modifiedPaths = user.modifiedPaths();
+          const changesToPreserve = {};
+          
+          // Store all modified values
+          for (const path of modifiedPaths) {
+            changesToPreserve[path] = user.get(path);
+          }
+          
+          // Also check for common fields that might have been modified
+          if (user.isModified('scheduledSummaries')) {
+            changesToPreserve['scheduledSummaries'] = user.scheduledSummaries;
+          }
+          if (user.isModified('summaryHistory')) {
+            changesToPreserve['summaryHistory'] = user.summaryHistory;
+          }
+          if (user.isModified('dailyUsageCount')) {
+            changesToPreserve['dailyUsageCount'] = user.dailyUsageCount;
+          }
+          if (user.isModified('lastUsageDate')) {
+            changesToPreserve['lastUsageDate'] = user.lastUsageDate;
+          }
+          
+          // Copy the fresh user data to the original user object
           Object.assign(user, freshUser.toObject());
-          // Ensure scheduledSummaries is set on the user object
-          user.scheduledSummaries = scheduledSummariesToSave;
-          // Mark as modified
-          user.markModified('scheduledSummaries');
+          
+          // Now apply our preserved changes on top of the fresh data
+          for (const [path, value] of Object.entries(changesToPreserve)) {
+            user.set(path, value);
+            user.markModified(path);
+          }
+          
           retries--;
           continue;
         } else {
@@ -418,8 +439,23 @@ async function executeScheduledSummary(user, summary) {
     // Combine all topic summaries
     let combinedText = combinedPieces.join(" ").trim();
     
+    // Validate that we have actual summary content before proceeding
+    // If no topics succeeded, don't save or increment usage
+    if (combinedPieces.length === 0 || !combinedText || combinedText.trim().length === 0) {
+      console.log(`[SCHEDULER] No valid summary generated for user ${user.email} - all topics failed or returned empty summaries`);
+      console.log(`[SCHEDULER] Skipping save and usage increment for scheduled fetch "${summary.name}"`);
+      return; // Exit early without saving or incrementing usage
+    }
+    
     // Add intro and outro
     combinedText = addIntroAndOutro(combinedText, allTopics, goodNewsOnly, user);
+    
+    // Double-check that we still have content after adding intro/outro
+    if (!combinedText || combinedText.trim().length === 0) {
+      console.log(`[SCHEDULER] Summary became empty after adding intro/outro for user ${user.email}`);
+      console.log(`[SCHEDULER] Skipping save and usage increment for scheduled fetch "${summary.name}"`);
+      return; // Exit early without saving or incrementing usage
+    }
     
     // Generate title
     let title = "Scheduled Fetch";
@@ -528,7 +564,7 @@ async function executeScheduledSummary(user, summary) {
       // Continue without audio - summary is still valuable
     }
     
-    // Save to user's summary history
+    // Save to user's summary history (only if we have valid content)
     const summaryData = {
       id: `scheduled-${Date.now()}`,
       title: title,
@@ -557,12 +593,12 @@ async function executeScheduledSummary(user, summary) {
         user.summaryHistory = user.summaryHistory.slice(0, 50);
       }
       
-      // Increment usage
+      // Increment usage - only increment if we successfully generated and saved a valid summary
       user.dailyUsageCount += 1;
       user.lastUsageDate = new Date();
       
-      // Single save for both operations
-      await user.save();
+      // Single save for both operations with retry logic for version conflicts
+      await saveUserWithRetry(user);
     } else {
       await fallbackAuth.addSummaryToHistory(user, summaryData);
       await fallbackAuth.incrementUsage(user);
