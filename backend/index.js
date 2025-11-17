@@ -22,6 +22,7 @@ const adminRoutes = require("./routes/adminActions");
 const preferencesRoutes = require("./routes/preferences");
 const newsSourcesRoutes = require("./routes/newsSources");
 const trendingAdminRoutes = require("./routes/trendingAdmin");
+const notificationsRoutes = require("./routes/notifications");
 const fallbackAuth = require("./utils/fallbackAuth");
 const User = require("./models/User");
 
@@ -233,6 +234,9 @@ app.use("/api/preferences", preferencesRoutes);
 
 // News sources routes
 app.use("/api/news-sources", newsSourcesRoutes);
+
+// Notifications routes
+app.use("/api/notifications", notificationsRoutes);
 
 // Function to extract breaking news topics from headlines
 function extractBreakingNewsTopics(articles) {
@@ -1555,11 +1559,16 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       }
       
       if (!usageCheck.allowed) {
+        const limit = usageCheck.limit || (req.user?.isPremium ? 20 : 3);
+        const isPremium = req.user?.isPremium || false;
+        const message = isPremium
+          ? `You've reached your daily limit of ${limit} Fetches.`
+          : `You've reached your daily limit of ${limit} Fetches. Upgrade to Premium for ${20} Fetches per day.`;
         return res.status(429).json({
           error: "Daily limit reached",
-          message: "You've reached your daily limit of 10 summaries. Upgrade to Premium for unlimited access.",
+          message: message,
           dailyCount: usageCheck.dailyCount,
-          limit: 1
+          limit: limit
         });
       }
     }
@@ -1855,11 +1864,16 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
       }
       
       if (!usageCheck.allowed) {
+        const limit = usageCheck.limit || (req.user?.isPremium ? 20 : 3);
+        const isPremium = req.user?.isPremium || false;
+        const message = isPremium
+          ? `You've reached your daily limit of ${limit} Fetches.`
+          : `You've reached your daily limit of ${limit} Fetches. Upgrade to Premium for ${20} Fetches per day.`;
         return res.status(429).json({
           error: "Daily limit reached",
-          message: "You've reached your daily limit of 10 summaries. Upgrade to Premium for unlimited access.",
+          message: message,
           dailyCount: usageCheck.dailyCount,
-          limit: 1
+          limit: limit
         });
       }
     }
@@ -2410,6 +2424,51 @@ let trendingTopicsCache = [];
 let trendingTopicsWithSources = {}; // Store topics with their source articles
 let lastTrendingUpdate = null;
 
+// Persistent file for trending topics cache
+const TRENDING_TOPICS_FILE = path.join(__dirname, "./server_data/trending_topics_cache.json");
+
+// Ensure server_data directory exists
+const serverDataDir = path.join(__dirname, "./server_data");
+if (!fs.existsSync(serverDataDir)) {
+  fs.mkdirSync(serverDataDir, { recursive: true });
+}
+
+// Load trending topics from file on startup
+function loadTrendingTopicsFromFile() {
+  try {
+    if (fs.existsSync(TRENDING_TOPICS_FILE)) {
+      const data = fs.readFileSync(TRENDING_TOPICS_FILE, 'utf8');
+      const parsed = JSON.parse(data);
+      if (parsed && Array.isArray(parsed.topics) && parsed.topics.length > 0) {
+        trendingTopicsCache = parsed.topics;
+        if (parsed.lastUpdated) {
+          lastTrendingUpdate = new Date(parsed.lastUpdated);
+        }
+        console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics from cache file`);
+      }
+    }
+  } catch (error) {
+    console.error('[TRENDING] Error loading trending topics from file:', error);
+  }
+}
+
+// Save trending topics to file
+function saveTrendingTopicsToFile() {
+  try {
+    const data = {
+      topics: trendingTopicsCache,
+      lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null
+    };
+    fs.writeFileSync(TRENDING_TOPICS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    console.log(`[TRENDING] Saved ${trendingTopicsCache.length} trending topics to cache file`);
+  } catch (error) {
+    console.error('[TRENDING] Error saving trending topics to file:', error);
+  }
+}
+
+// Load trending topics on startup
+loadTrendingTopicsFromFile();
+
 // Extract trending topics using ChatGPT analysis of news articles
 async function extractTrendingTopicsWithChatGPT(articles) {
   try {
@@ -2595,6 +2654,8 @@ async function updateTrendingTopics() {
       trendingTopicsWithSources = result.topicsWithSources;
       lastTrendingUpdate = new Date();
       console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${result.topics.join(', ')}`);
+      // Save to file for persistence
+      saveTrendingTopicsToFile();
     } else {
       console.log('[TRENDING] ChatGPT analysis failed, using fallback approach');
       await updateTrendingTopicsFallback();
@@ -2630,6 +2691,8 @@ async function updateTrendingTopicsFallback() {
     lastTrendingUpdate = new Date();
     
     console.log(`[TRENDING] Updated trending topics via fallback (${randomCategory}): ${trendingTopics.join(', ')}`);
+    // Save to file for persistence
+    saveTrendingTopicsToFile();
   } catch (error) {
     console.error('[TRENDING] Fallback method failed:', error);
   }

@@ -8,6 +8,7 @@ const OpenAI = require('openai');
 const fs = require('fs').promises;
 const path = require('path');
 const { uploadAudioToB2, isB2Configured } = require('../utils/b2Storage');
+const { sendScheduledSummaryNotification } = require('../utils/notifications');
 
 const router = express.Router();
 
@@ -554,6 +555,27 @@ async function executeScheduledSummary(user, summary) {
     }
     
     console.log(`[SCHEDULER] Successfully generated and saved summary "${title}" for user ${user.email}`);
+    
+    // Send push notification to user's device if token is available
+    try {
+      let deviceToken = null;
+      if (mongoose.connection.readyState === 1) {
+        deviceToken = user.deviceToken;
+      } else {
+        // Fallback mode - get from preferences
+        deviceToken = user.preferences?.deviceToken || null;
+      }
+      
+      if (deviceToken) {
+        await sendScheduledSummaryNotification(deviceToken, title, summaryData.id);
+        console.log(`[SCHEDULER] Sent push notification for scheduled summary "${title}" to user ${user.email}`);
+      } else {
+        console.log(`[SCHEDULER] No device token found for user ${user.email}, skipping push notification`);
+      }
+    } catch (notificationError) {
+      // Don't fail the entire operation if notification fails
+      console.error(`[SCHEDULER] Failed to send push notification for user ${user.email}:`, notificationError);
+    }
   } catch (error) {
     console.error(`[SCHEDULER] Error executing scheduled fetch for user ${user.email}:`, error);
     throw error;
