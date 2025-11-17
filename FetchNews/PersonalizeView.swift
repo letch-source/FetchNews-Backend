@@ -16,54 +16,58 @@ struct PersonalizeView: View {
     @State private var scheduledTopics: Set<String> = []
     @State private var scheduledCustomTopics: Set<String> = []
     @State private var saveTask: Task<Void, Never>? = nil
+    @State private var isLoadingScheduledSummary = false // Flag to prevent onChange saves during load
     
     var body: some View {
-        NavigationView {
-            ZStack {
-                Color.darkGreyBackground
-                    .ignoresSafeArea()
-                
-                VStack(spacing: 0) {
-                // Header
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Fetch News")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .foregroundColor(.primary)
-                            
-                            Text("News for Busy People")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
+        VStack(spacing: 0) {
+            // Header
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Fetch News")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.primary)
                         
-                        // Premium button - only show if user is not premium
-                        if let user = authVM.currentUser, !user.isPremium {
-                            Button("PREMIUM") {
-                                vm.showSubscriptionView()
-                            }
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.yellow)
-                            .foregroundColor(.black)
-                            .cornerRadius(8)
+                        Text("News for Busy People")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    
+                    // Premium button - only show if user is not premium
+                    if let user = authVM.currentUser, !user.isPremium {
+                        Button("PREMIUM") {
+                            vm.showSubscriptionView()
                         }
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.yellow)
+                        .foregroundColor(.black)
+                        .cornerRadius(8)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-                .background(Color.darkGreyBackground)
-                
-                // Personalization Content
-                ScrollView {
-                    VStack(spacing: 24) {
-                        
-                        // Morning Summary Section - Hidden for now
-                        // MorningSummarySection()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .background(Color.darkGreyBackground)
+            
+            // Personalization Content
+            ScrollView {
+                VStack(spacing: 24) {
+                    
+                    // Sub-header
+                    Text("Customize")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 8)
+                    
+                    // Morning Summary Section - Hidden for now
+                    // MorningSummarySection()
                         
                         // Summary Length Section
                         SummaryLengthSection()
@@ -92,39 +96,75 @@ struct PersonalizeView: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
                 }
+            }
+            .sheet(isPresented: $showingScheduledTopics) {
+                ScheduledTopicsSelectorView(
+                    selectedTopics: $scheduledTopics,
+                    selectedCustomTopics: $scheduledCustomTopics
+                )
+                .environmentObject(vm)
+            }
+            .onAppear {
+                Task {
+                    await loadScheduledSummary()
                 }
             }
-        }
-        .sheet(isPresented: $showingScheduledTopics) {
-            ScheduledTopicsSelectorView(
-                selectedTopics: $scheduledTopics,
-                selectedCustomTopics: $scheduledCustomTopics
-            )
-            .environmentObject(vm)
-        }
-        .onAppear {
-            Task {
-                await loadScheduledSummary()
+            .onChange(of: scheduledTime) { oldValue, newValue in
+                Task {
+                    // Ensure we have loaded the summary first
+                    if vm.scheduledSummaries.isEmpty {
+                        await loadScheduledSummary()
+                    }
+                    await saveScheduledSummary()
+                }
+            }
+            .onChange(of: scheduledEnabled) { oldValue, newValue in
+                Task {
+                    // Ensure we have loaded the summary first
+                    if vm.scheduledSummaries.isEmpty {
+                        await loadScheduledSummary()
+                    }
+                    await saveScheduledSummary()
+                }
+            }
+            .onChange(of: scheduledTopics) { oldValue, newValue in
+                // Only save if this is a user-initiated change, not a load from backend
+                guard !isLoadingScheduledSummary else { return }
+                
+                // Don't save if topics are being cleared (empty set)
+                // Scheduled fetch topics should persist unless explicitly changed by user
+                guard !newValue.isEmpty || !oldValue.isEmpty else { return }
+                
+                Task {
+                    // Ensure we have loaded the summary first
+                    if vm.scheduledSummaries.isEmpty {
+                        await loadScheduledSummary()
+                    }
+                    await saveScheduledSummary()
+                }
+            }
+            .onChange(of: scheduledCustomTopics) { oldValue, newValue in
+                // Only save if this is a user-initiated change, not a load from backend
+                guard !isLoadingScheduledSummary else { return }
+                
+                // Don't save if custom topics are being cleared (empty set) unless regular topics are also empty
+                // Scheduled fetch topics should persist unless explicitly changed by user
+                guard !newValue.isEmpty || !oldValue.isEmpty || !scheduledTopics.isEmpty else { return }
+                
+                Task {
+                    // Ensure we have loaded the summary first
+                    if vm.scheduledSummaries.isEmpty {
+                        await loadScheduledSummary()
+                    }
+                    await saveScheduledSummary()
+                }
+            }
+            .sheet(isPresented: $vm.showingSubscriptionView) {
+                SubscriptionView()
+                    .environmentObject(vm)
+                    .environmentObject(authVM)
             }
         }
-        .onChange(of: scheduledTime) { oldValue, newValue in
-            debouncedSave()
-        }
-        .onChange(of: scheduledEnabled) { oldValue, newValue in
-            debouncedSave()
-        }
-        .onChange(of: scheduledTopics) { oldValue, newValue in
-            debouncedSave()
-        }
-        .onChange(of: scheduledCustomTopics) { oldValue, newValue in
-            debouncedSave()
-        }
-        .sheet(isPresented: $vm.showingSubscriptionView) {
-            SubscriptionView()
-                .environmentObject(vm)
-                .environmentObject(authVM)
-        }
-    }
     
     // MARK: - Scheduled Fetch Functions
     
@@ -149,6 +189,18 @@ struct PersonalizeView: View {
     }
     
     private func loadScheduledSummary() async {
+        // Set loading flag to prevent onChange handlers from triggering saves
+        await MainActor.run {
+            isLoadingScheduledSummary = true
+        }
+        
+        defer {
+            // Always clear the loading flag when done
+            Task { @MainActor in
+                isLoadingScheduledSummary = false
+            }
+        }
+        
         do {
             let summaries = try await ApiClient.getScheduledSummaries()
             if let summary = summaries.first {
@@ -156,27 +208,24 @@ struct PersonalizeView: View {
                     // Update vm.scheduledSummaries first
                     vm.scheduledSummaries = [summary]
                     
-                    // IMPORTANT: Only update settings if they haven't been loaded yet
-                    // This prevents scheduled fetches from overwriting user's current selections
-                    // Only load on initial app launch or if settings are empty
-                    let shouldLoadSettings = scheduledTopics.isEmpty && scheduledCustomTopics.isEmpty
-                    
-                    if shouldLoadSettings {
-                        // Load time
-                        let formatter = DateFormatter()
-                        formatter.dateFormat = "HH:mm"
-                        if let time = formatter.date(from: summary.time) {
-                            scheduledTime = roundTo10Minutes(time)
-                        }
-                        
-                        // Load enabled state
-                        scheduledEnabled = summary.isEnabled
-                        
-                        // Load topics
+                    // IMPORTANT: Always load topics from backend to ensure they persist
+                    // This ensures scheduled fetch topics are never lost
+                    // Only update if backend has topics (don't overwrite with empty if backend is empty and we have local selections)
+                    if !summary.topics.isEmpty || scheduledTopics.isEmpty {
                         scheduledTopics = Set(summary.topics)
+                    }
+                    if !summary.customTopics.isEmpty || scheduledCustomTopics.isEmpty {
                         scheduledCustomTopics = Set(summary.customTopics)
                     }
-                    // Otherwise, preserve the user's current selections
+                    
+                    // Always load time and enabled state from backend
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "HH:mm"
+                    if let time = formatter.date(from: summary.time) {
+                        scheduledTime = roundTo10Minutes(time)
+                    }
+                    
+                    scheduledEnabled = summary.isEnabled
                 }
             } else {
                 // No summary yet - set defaults
@@ -184,8 +233,13 @@ struct PersonalizeView: View {
                     vm.scheduledSummaries = []
                     scheduledTime = roundTo10Minutes(Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date()) ?? Date())
                     scheduledEnabled = false
-                    scheduledTopics = ["general"]
-                    scheduledCustomTopics = []
+                    // Only set defaults if we don't already have topics
+                    if scheduledTopics.isEmpty {
+                        scheduledTopics = ["general"]
+                    }
+                    if scheduledCustomTopics.isEmpty {
+                        scheduledCustomTopics = []
+                    }
                 }
             }
         } catch {
@@ -238,8 +292,16 @@ struct PersonalizeView: View {
         }
         
         // Always use current topics (don't fall back to existing - save what user selected)
+        // IMPORTANT: Validate that we have at least one topic before saving
+        // Scheduled fetch topics should never be empty unless explicitly cleared by user
         let topicsToSave = Array(scheduledTopics)
         let customTopicsToSave = Array(scheduledCustomTopics)
+        
+        // Validate: must have at least one topic (regular or custom)
+        guard !topicsToSave.isEmpty || !customTopicsToSave.isEmpty else {
+            print("⚠️ Cannot save scheduled summary: no topics selected")
+            return
+        }
         
         print("💾 Saving scheduled summary - topics: \(topicsToSave.count), customTopics: \(customTopicsToSave.count)")
         
