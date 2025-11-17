@@ -385,6 +385,9 @@
         <div class="header">
             <h1>📊 FetchNews Analytics Dashboard</h1>
             <p>Real-time statistics and admin actions</p>
+            <div style="margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 6px; font-size: 0.9em; color: #666;">
+                <strong>💡 Need an authentication token?</strong> Run: <code style="background: #e9ecef; padding: 2px 6px; border-radius: 3px;">node backend/scripts/get-admin-token.js &lt;your-email&gt;</code>
+            </div>
             <div class="nav-tabs">
                 <button class="nav-tab active" onclick="switchPage('dashboard')">Dashboard</button>
                 <button class="nav-tab" onclick="switchPage('users')">Users</button>
@@ -392,6 +395,7 @@
         </div>
 
         <div id="error-container"></div>
+        <div id="connection-status" style="display: none; background: #fff3cd; color: #856404; padding: 10px; border-radius: 6px; margin-bottom: 20px;"></div>
 
         <!-- Dashboard Page -->
         <div id="dashboard-page" class="page-section active">
@@ -622,44 +626,78 @@
                 throw new Error('No authentication token provided. Please refresh the page and enter your token.');
             }
 
-            const response = await fetch(url, {
-                ...options,
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                    ...(options.headers || {})
+            try {
+                const response = await fetch(url, {
+                    ...options,
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                        ...(options.headers || {})
+                    }
+                });
+
+                if (response.status === 401) {
+                    // Token expired or invalid - remove it and throw error
+                    localStorage.removeItem('authToken');
+                    hasPromptedForToken = false; // Reset flag so user can re-authenticate
+                    const errorText = await response.text().catch(() => '');
+                    let errorMessage = 'Authentication failed. Your token may have expired or is invalid.';
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        errorMessage = errorJson.error || errorMessage;
+                    } catch {
+                        if (errorText) errorMessage = errorText;
+                    }
+                    throw new Error(errorMessage + ' Please refresh the page and enter a new token.');
                 }
-            });
 
-            if (response.status === 401) {
-                // Token expired or invalid - remove it and throw error
-                localStorage.removeItem('authToken');
-                hasPromptedForToken = false; // Reset flag so user can re-authenticate
-                throw new Error('Authentication failed. Your token may have expired. Please refresh the page and enter a new token.');
-            }
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                let errorMessage = `HTTP error! status: ${response.status}`;
-                try {
-                    const errorJson = JSON.parse(errorText);
-                    errorMessage = errorJson.error || errorMessage;
-                } catch {
-                    errorMessage = errorText || errorMessage;
+                if (!response.ok) {
+                    const errorText = await response.text().catch(() => '');
+                    let errorMessage = `HTTP error! status: ${response.status}`;
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        errorMessage = errorJson.error || errorMessage;
+                    } catch {
+                        if (errorText) errorMessage = errorText;
+                    }
+                    throw new Error(errorMessage);
                 }
-                throw new Error(errorMessage);
-            }
 
-            return response.json();
+                return response.json();
+            } catch (error) {
+                // Handle network errors, CORS errors, etc.
+                if (error.name === 'TypeError' && error.message.includes('fetch')) {
+                    console.error('Network error:', error);
+                    throw new Error(`Failed to connect to backend API. Please check:\n1. The backend server is running\n2. The API URL is correct\n3. CORS is properly configured\n\nError: ${error.message}`);
+                }
+                // Re-throw other errors
+                throw error;
+            }
         }
 
         // Public endpoint doesn't need auth
         async function fetchPublic(url) {
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    const errorText = await response.text().catch(() => '');
+                    let errorMessage = `HTTP error! status: ${response.status}`;
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        errorMessage = errorJson.error || errorMessage;
+                    } catch {
+                        if (errorText) errorMessage = errorText;
+                    }
+                    throw new Error(errorMessage);
+                }
+                return response.json();
+            } catch (error) {
+                if (error.name === 'TypeError' && error.message.includes('fetch')) {
+                    console.error('Network error:', error);
+                    throw new Error(`Failed to connect to backend API. Please check:\n1. The backend server is running\n2. The API URL is correct\n3. CORS is properly configured\n\nError: ${error.message}`);
+                }
+                throw error;
             }
-            return response.json();
         }
 
         function formatTimestamp(timestamp) {
@@ -680,7 +718,9 @@
 
         async function loadStats() {
             try {
+                console.log('Loading stats from /api/admin/stats...');
                 const data = await fetchWithAuth('/api/admin/stats');
+                console.log('Stats loaded successfully:', data);
                 const stats = data.stats;
 
                 // Basic stats
@@ -735,6 +775,7 @@
                     lengthDistDiv.innerHTML = '<div class="empty-state">No length data available</div>';
                 }
             } catch (error) {
+                console.error('Error loading stats:', error);
                 showError('Failed to load statistics: ' + error.message);
             }
         }
@@ -743,7 +784,9 @@
             const container = document.getElementById('actions-container');
             
             try {
+                console.log('Loading admin actions from /api/admin...');
                 const data = await fetchWithAuth('/api/admin');
+                console.log('Admin actions loaded successfully:', data);
                 const actions = data.adminActions || [];
 
                 if (actions.length === 0) {
@@ -768,6 +811,7 @@
                 html += '</tbody></table>';
                 container.innerHTML = html;
             } catch (error) {
+                console.error('Error loading admin actions:', error);
                 container.innerHTML = `<div class="error">Failed to load admin actions: ${error.message}</div>`;
             }
         }
@@ -1123,14 +1167,56 @@
             }
         }
 
+        async function testConnection() {
+            const statusDiv = document.getElementById('connection-status');
+            statusDiv.style.display = 'block';
+            statusDiv.innerHTML = '🔄 Testing connection...';
+            statusDiv.style.background = '#d1ecf1';
+            statusDiv.style.color = '#0c5460';
+            
+            try {
+                // Test with a public endpoint first
+                await fetchPublic('/api/trending-topics');
+                statusDiv.innerHTML = '✅ Connected to backend successfully';
+                statusDiv.style.background = '#d4edda';
+                statusDiv.style.color = '#155724';
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 3000);
+                return true;
+            } catch (error) {
+                console.error('Connection test failed:', error);
+                statusDiv.innerHTML = `❌ Connection failed: ${error.message}. Check browser console for details.`;
+                statusDiv.style.background = '#f8d7da';
+                statusDiv.style.color = '#721c24';
+                return false;
+            }
+        }
+
         async function loadData() {
+            // Test connection first
+            const connected = await testConnection();
+            if (!connected) {
+                showError('Cannot connect to backend. Please check that the server is running and accessible.');
+                return;
+            }
+            
             // Check for token on page load - prompt only once if missing
             const token = getAuthToken();
             if (!token) {
                 console.warn('No authentication token found. Some features may not work.');
+                showError('No authentication token found. Please refresh the page and enter your JWT token when prompted.');
+                return;
             }
             
-            await Promise.all([loadStats(), loadActions(), loadTrendingTopics(), loadRecommendedTopics()]);
+            console.log('Loading all dashboard data...');
+            try {
+                await Promise.all([loadStats(), loadActions(), loadTrendingTopics(), loadRecommendedTopics()]);
+                console.log('All data loaded successfully');
+            } catch (error) {
+                console.error('Error loading dashboard data:', error);
+                // Individual functions will show their own errors
+            }
         }
 
         // Load data on page load
