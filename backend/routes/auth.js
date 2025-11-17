@@ -233,8 +233,14 @@ router.post('/google', async (req, res) => {
   }
 });
 
-// Register new user
+// Register new user - DISABLED: Google-only authentication required
 router.post('/register', async (req, res) => {
+  return res.status(403).json({ 
+    error: 'Email/password registration is disabled. Please sign in with Google.' 
+  });
+  
+  // Original code kept for reference but disabled
+  /*
   try {
     const { email, password } = req.body;
 
@@ -314,10 +320,17 @@ router.post('/register', async (req, res) => {
     console.error('Registration error:', error);
     res.status(500).json({ error: 'Registration failed' });
   }
+  */
 });
 
-// Login user
+// Login user - DISABLED: Google-only authentication required
 router.post('/login', async (req, res) => {
+  return res.status(403).json({ 
+    error: 'Email/password login is disabled. Please sign in with Google.' 
+  });
+  
+  // Original code kept for reference but disabled
+  /*
   try {
     const { email, password } = req.body;
 
@@ -375,6 +388,7 @@ router.post('/login', async (req, res) => {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Login failed' });
   }
+  */
 });
 
 // Get current user
@@ -397,6 +411,30 @@ router.get('/me', authenticateToken, async (req, res) => {
       await fallbackAuth.saveUser(user);
       dailyUsageCount = user.dailyUsageCount || 0;
     }
+
+    // Get user preferences (same logic as Google auth endpoint)
+    let preferences = {};
+    if (isDatabaseAvailable()) {
+      preferences = user.getPreferences ? user.getPreferences() : {
+        selectedVoice: user.selectedVoice || 'alloy',
+        playbackRate: user.playbackRate || 1.0,
+        upliftingNewsOnly: user.upliftingNewsOnly || false,
+        lastFetchedTopics: user.lastFetchedTopics || [],
+        selectedTopics: user.selectedTopics || [],
+        selectedNewsSources: user.selectedNewsSources || [],
+        scheduledSummaries: user.scheduledSummaries || []
+      };
+    } else {
+      preferences = fallbackAuth.getPreferences ? fallbackAuth.getPreferences(user) : {
+        selectedVoice: user.selectedVoice || 'alloy',
+        playbackRate: user.playbackRate || 1.0,
+        upliftingNewsOnly: user.upliftingNewsOnly || false,
+        lastFetchedTopics: user.lastFetchedTopics || [],
+        selectedTopics: user.selectedTopics || [],
+        selectedNewsSources: user.selectedNewsSources || [],
+        scheduledSummaries: user.scheduledSummaries || []
+      };
+    }
     
     res.json({
       user: {
@@ -408,7 +446,8 @@ router.get('/me', authenticateToken, async (req, res) => {
         subscriptionId: user.subscriptionId,
         subscriptionExpiresAt: user.subscriptionExpiresAt,
         customTopics: user.customTopics || [],
-        summaryHistory: user.summaryHistory || []
+        summaryHistory: user.summaryHistory || [],
+        selectedTopics: preferences.selectedTopics || []
       }
     });
   } catch (error) {
@@ -693,6 +732,40 @@ router.post('/resend-verification', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Resend verification error:', error);
     res.status(500).json({ error: 'Failed to resend verification email' });
+  }
+});
+
+// Disconnect Google account access
+router.post('/disconnect-google', authenticateToken, async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (!user.googleId) {
+      return res.status(400).json({ error: 'Account is not linked to Google' });
+    }
+
+    if (isDatabaseAvailable()) {
+      // Remove Google ID from user account
+      user.googleId = undefined;
+      await user.save();
+    } else {
+      // Use fallback authentication
+      const fallbackAuth = require('../utils/fallbackAuth');
+      user.googleId = undefined;
+      await fallbackAuth.saveUser(user);
+    }
+
+    res.json({ 
+      message: 'Google account access has been removed. You will need to sign in with Google again to access your account.',
+      user: {
+        id: user._id,
+        email: user.email,
+        googleId: null
+      }
+    });
+  } catch (error) {
+    console.error('Disconnect Google error:', error);
+    res.status(500).json({ error: 'Failed to disconnect Google account' });
   }
 });
 

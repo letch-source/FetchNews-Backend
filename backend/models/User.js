@@ -11,7 +11,7 @@ const userSchema = new mongoose.Schema({
   },
   googleId: {
     type: String,
-    sparse: true,
+    required: true,
     unique: true
   },
   password: {
@@ -128,6 +128,14 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   }
+});
+
+// Ensure googleId is always present before saving (Google-only authentication)
+userSchema.pre('save', async function(next) {
+  if (!this.googleId) {
+    return next(new Error('Google ID is required. Please sign in with Google.'));
+  }
+  next();
 });
 
 // Hash password before saving (only if password is provided)

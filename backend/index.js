@@ -1339,50 +1339,17 @@ app.get("/api/test-mediastack", async (req, res) => {
   }
 });
 
-// Signup
+// Signup - DISABLED: Google-only authentication required
 app.post("/api/auth/signup", (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password)
-    return res.status(400).json({ error: "Email and password required" });
-
-  if (users.find((u) => u.email === email)) {
-    return res.status(400).json({ error: "Email already in use" });
-  }
-
-  const passwordHash = bcrypt.hashSync(password, 10);
-  const newUser = { email, passwordHash, topics: [], location: "" };
-  users.push(newUser);
-  saveUsers();
-
-  const token = createToken(newUser);
-  res.cookie("token", token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-  });
-  res.json({
-    message: "Signup successful",
-    user: { email, topics: [], location: "" },
+  return res.status(403).json({ 
+    error: 'Email/password registration is disabled. Please sign in with Google.' 
   });
 });
 
-// Login
+// Login - DISABLED: Google-only authentication required
 app.post("/api/auth/login", (req, res) => {
-  const { email, password } = req.body || {};
-  const user = users.find((u) => u.email === email);
-  if (!user) return res.status(400).json({ error: "Invalid credentials" });
-  if (!bcrypt.compareSync(password, user.passwordHash)) {
-    return res.status(400).json({ error: "Invalid credentials" });
-  }
-  const token = createToken(user);
-  res.cookie("token", token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-  });
-  res.json({
-    message: "Login successful",
-    user: { email, topics: user.topics, location: user.location },
+  return res.status(403).json({ 
+    error: 'Email/password login is disabled. Please sign in with Google.' 
   });
 });
 
