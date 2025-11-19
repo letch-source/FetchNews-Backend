@@ -606,42 +606,33 @@ async function executeScheduledSummary(user, summary) {
     
     // Send push notification if enabled and token is available
     const notificationPrefs = user.notificationPreferences || {};
-    if (notificationPrefs.scheduledSummaryNotifications !== false && user.pushNotificationToken) {
+    const notificationsEnabled = notificationPrefs.scheduledSummaryNotifications !== false;
+    
+    if (notificationsEnabled) {
       try {
-        await sendScheduledSummaryNotification(
-          user.pushNotificationToken,
-          title,
-          summaryData.id
-        );
-        console.log(`[SCHEDULER] Sent notification for scheduled summary "${title}" to user ${user.email}`);
-      } catch (notifError) {
-        console.error(`[SCHEDULER] Failed to send notification:`, notifError);
-        // Don't fail the whole operation if notification fails
+        let deviceToken = null;
+        if (mongoose.connection.readyState === 1) {
+          deviceToken = user.deviceToken;
+        } else {
+          // Fallback mode - get from preferences
+          deviceToken = user.preferences?.deviceToken || null;
+        }
+        
+        if (deviceToken) {
+          await sendScheduledSummaryNotification(deviceToken, title, summaryData.id);
+          console.log(`[SCHEDULER] ✅ Sent push notification for scheduled summary "${title}" to user ${user.email}`);
+        } else {
+          console.log(`[SCHEDULER] ⚠️  No device token found for user ${user.email}, skipping push notification`);
+        }
+      } catch (notificationError) {
+        // Don't fail the entire operation if notification fails
+        console.error(`[SCHEDULER] ❌ Failed to send push notification for user ${user.email}:`, notificationError);
       }
+    } else {
+      console.log(`[SCHEDULER] ℹ️  Scheduled summary notifications disabled for user ${user.email}`);
     }
     
     console.log(`[SCHEDULER] Successfully generated and saved summary "${title}" for user ${user.email}`);
-    
-    // Send push notification to user's device if token is available
-    try {
-      let deviceToken = null;
-      if (mongoose.connection.readyState === 1) {
-        deviceToken = user.deviceToken;
-      } else {
-        // Fallback mode - get from preferences
-        deviceToken = user.preferences?.deviceToken || null;
-      }
-      
-      if (deviceToken) {
-        await sendScheduledSummaryNotification(deviceToken, title, summaryData.id);
-        console.log(`[SCHEDULER] Sent push notification for scheduled summary "${title}" to user ${user.email}`);
-      } else {
-        console.log(`[SCHEDULER] No device token found for user ${user.email}, skipping push notification`);
-      }
-    } catch (notificationError) {
-      // Don't fail the entire operation if notification fails
-      console.error(`[SCHEDULER] Failed to send push notification for user ${user.email}:`, notificationError);
-    }
   } catch (error) {
     console.error(`[SCHEDULER] Error executing scheduled fetch for user ${user.email}:`, error);
     throw error;
