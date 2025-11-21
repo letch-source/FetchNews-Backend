@@ -52,7 +52,8 @@ async function saveUserWithRetry(user, retries = 3) {
       return currentUser;
     } catch (error) {
       if (error.name === 'VersionError' && retries > 1) {
-        console.log(`[SCHEDULED_SUMMARY] Version conflict, retrying... (${retries - 1} retries left)`);
+        retries--; // Decrement retry counter
+        console.log(`[SCHEDULED_SUMMARY] Version conflict, retrying... (${retries} retries left)`);
         
         // Reload the document to get the latest version
         const freshUser = await User.findById(currentUser._id);
@@ -100,25 +101,13 @@ async function saveUserWithRetry(user, retries = 3) {
           freshUser.markModified(path);
         }
         
-        // Save the fresh user with our changes
-        await freshUser.save();
+        // Update currentUser to freshUser and continue the loop to retry the save
+        // This allows the while loop to handle any version conflicts that might occur
+        // when saving the fresh user with our merged changes
+        currentUser = freshUser;
         
-        // Reload the user to get a clean document state with the correct version
-        // This ensures the original user reference is properly updated
-        const reloadedUser = await User.findById(user._id);
-        if (!reloadedUser) {
-          throw new Error('User not found after save');
-        }
-        
-        // Update the original user object by reinitializing it with the reloaded user's data
-        // This properly resets all Mongoose document state including version and modified paths
-        user.init(reloadedUser.toObject(), { overwrite: true });
-        
-        // Update currentUser for consistency
-        currentUser = reloadedUser;
-        
-        // Return immediately since we've already saved successfully
-        return;
+        // Continue the while loop to retry the save
+        continue;
       } else {
         throw error;
       }
@@ -242,6 +231,11 @@ router.post('/', authenticateToken, async (req, res) => {
     // Save user to database with retry logic for version conflicts
     const savedUser = await saveUserWithRetry(user);
     
+    // Safety check: ensure savedUser is valid
+    if (!savedUser) {
+      throw new Error('Failed to save user: savedUser is undefined');
+    }
+    
     // Get the updated summary from the saved user
     const updatedSummary = savedUser.scheduledSummaries?.[0] || existingSummary;
     
@@ -325,6 +319,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
     
     // Save user to database with retry logic for version conflicts
     const savedUser = await saveUserWithRetry(user);
+    
+    // Safety check: ensure savedUser is valid
+    if (!savedUser) {
+      throw new Error('Failed to save user: savedUser is undefined');
+    }
     
     // Get the updated summary from the saved user
     const updatedSummary = savedUser.scheduledSummaries?.[0] || existingSummary;
