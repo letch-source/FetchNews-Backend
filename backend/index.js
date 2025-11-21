@@ -25,6 +25,7 @@ const trendingAdminRoutes = require("./routes/trendingAdmin");
 const notificationsRoutes = require("./routes/notifications");
 const fallbackAuth = require("./utils/fallbackAuth");
 const User = require("./models/User");
+const GlobalSettings = require("./models/GlobalSettings");
 
 // Connect to MongoDB
 connectDB();
@@ -1028,7 +1029,7 @@ async function summarizeArticles(topic, geo, articles, wordCount, goodNewsOnly =
     const topicsText = Array.isArray(topic) ? topic.join(", ") : topic;
     const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
     
-    const prompt = `Create a ${upliftingPrefix}${topicsText} news summary in podcast style.
+    const prompt = `Create a ${upliftingPrefix}${topicsText} news summary in a conversational style.
 
 Articles:
 ${articleTexts}
@@ -1039,7 +1040,8 @@ Requirements:
 - Focus on most significant developments
 - Target ${wordCount} words exactly
 - For short summaries (≤200 words), be very concise and stick to the word limit
-- End at a complete sentence, but prioritize staying within the word count`;
+- End at a complete sentence, but prioritize staying within the word count
+- Do not use phrases like "welcome back to our podcast" or refer to it as a podcast`;
 
     console.log(`Sending ${articles.length} articles to ChatGPT for summarization`);
 
@@ -1048,7 +1050,7 @@ Requirements:
       messages: [
         {
           role: "system",
-          content: "You are a professional news podcaster. Create engaging, conversational summaries with a warm, informative tone."
+          content: "You are a professional news presenter. Create engaging, conversational news summaries with a warm, informative tone. Do not refer to the summary as a podcast."
         },
         {
           role: "user",
@@ -2746,8 +2748,26 @@ if (!fs.existsSync(serverDataDir)) {
   fs.mkdirSync(serverDataDir, { recursive: true });
 }
 
-// Load trending topics from file on startup
-function loadTrendingTopicsFromFile() {
+// Load trending topics from MongoDB (with file fallback)
+async function loadTrendingTopics() {
+  // Try MongoDB first
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const settings = await GlobalSettings.getOrCreate();
+      if (settings.trendingTopics && settings.trendingTopics.length > 0) {
+        trendingTopicsCache = settings.trendingTopics;
+        trendingTopicsWithSources = settings.trendingTopicsWithSources || {};
+        lastTrendingUpdate = settings.lastTrendingUpdate;
+        const sourcesCount = Object.keys(trendingTopicsWithSources).length;
+        console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics and ${sourcesCount} topic sources from MongoDB`);
+        return;
+      }
+    } catch (error) {
+      console.error('[TRENDING] Error loading from MongoDB, falling back to file:', error.message);
+    }
+  }
+  
+  // Fallback to file if MongoDB not available or empty
   try {
     if (fs.existsSync(TRENDING_TOPICS_FILE)) {
       const data = fs.readFileSync(TRENDING_TOPICS_FILE, 'utf8');
@@ -2757,30 +2777,78 @@ function loadTrendingTopicsFromFile() {
         if (parsed.lastUpdated) {
           lastTrendingUpdate = new Date(parsed.lastUpdated);
         }
-        console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics from cache file`);
+        // Load topics with sources if available
+        if (parsed.topicsWithSources && typeof parsed.topicsWithSources === 'object') {
+          trendingTopicsWithSources = parsed.topicsWithSources;
+          console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics and sources from cache file`);
+        } else {
+          console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics from cache file`);
+        }
+        // Migrate file data to MongoDB if available
+        if (mongoose.connection.readyState === 1) {
+          try {
+            const settings = await GlobalSettings.getOrCreate();
+            await settings.updateTrendingTopics(trendingTopicsCache, trendingTopicsWithSources);
+            console.log('[TRENDING] Migrated trending topics from file to MongoDB');
+          } catch (error) {
+            console.error('[TRENDING] Error migrating to MongoDB:', error.message);
+          }
+        }
       }
+    } else {
+      console.log('[TRENDING] No cache found, starting with empty trending topics');
     }
   } catch (error) {
     console.error('[TRENDING] Error loading trending topics from file:', error);
   }
 }
 
-// Save trending topics to file
-function saveTrendingTopicsToFile() {
+// Save trending topics to MongoDB (with file backup)
+async function saveTrendingTopics() {
+  // Try MongoDB first
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const settings = await GlobalSettings.getOrCreate();
+      await settings.updateTrendingTopics(trendingTopicsCache, trendingTopicsWithSources);
+      const sourcesCount = Object.keys(trendingTopicsWithSources || {}).length;
+      console.log(`[TRENDING] Saved ${trendingTopicsCache.length} trending topics and ${sourcesCount} topic sources to MongoDB`);
+      // Also save to file as backup
+      try {
+        const data = {
+          topics: trendingTopicsCache,
+          topicsWithSources: trendingTopicsWithSources || {},
+          lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null
+        };
+        fs.writeFileSync(TRENDING_TOPICS_FILE, JSON.stringify(data, null, 2), 'utf8');
+      } catch (fileError) {
+        // Non-critical - MongoDB is primary storage
+        console.warn('[TRENDING] Could not save backup to file:', fileError.message);
+      }
+      return;
+    } catch (error) {
+      console.error('[TRENDING] Error saving to MongoDB, falling back to file:', error.message);
+    }
+  }
+  
+  // Fallback to file if MongoDB not available
   try {
     const data = {
       topics: trendingTopicsCache,
+      topicsWithSources: trendingTopicsWithSources || {},
       lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null
     };
     fs.writeFileSync(TRENDING_TOPICS_FILE, JSON.stringify(data, null, 2), 'utf8');
-    console.log(`[TRENDING] Saved ${trendingTopicsCache.length} trending topics to cache file`);
+    const sourcesCount = Object.keys(trendingTopicsWithSources || {}).length;
+    console.log(`[TRENDING] Saved ${trendingTopicsCache.length} trending topics and ${sourcesCount} topic sources to cache file`);
   } catch (error) {
     console.error('[TRENDING] Error saving trending topics to file:', error);
   }
 }
 
-// Load trending topics on startup
-loadTrendingTopicsFromFile();
+// Load trending topics on startup (async, but don't block)
+loadTrendingTopics().catch(error => {
+  console.error('[TRENDING] Failed to load trending topics on startup:', error);
+});
 
 // Extract trending topics using ChatGPT analysis of news articles
 async function extractTrendingTopicsWithChatGPT(articles) {
@@ -2967,8 +3035,8 @@ async function updateTrendingTopics() {
       trendingTopicsWithSources = result.topicsWithSources;
       lastTrendingUpdate = new Date();
       console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${result.topics.join(', ')}`);
-      // Save to file for persistence
-      saveTrendingTopicsToFile();
+      // Save to MongoDB (with file backup)
+      await saveTrendingTopics();
     } else {
       console.log('[TRENDING] ChatGPT analysis failed, using fallback approach');
       await updateTrendingTopicsFallback();
@@ -3001,11 +3069,13 @@ async function updateTrendingTopicsFallback() {
     
     const trendingTopics = extractBreakingNewsTopics(data.data);
     trendingTopicsCache = trendingTopics;
+    // Clear topicsWithSources since fallback method doesn't provide sources
+    trendingTopicsWithSources = {};
     lastTrendingUpdate = new Date();
     
     console.log(`[TRENDING] Updated trending topics via fallback (${randomCategory}): ${trendingTopics.join(', ')}`);
-    // Save to file for persistence
-    saveTrendingTopicsToFile();
+    // Save to MongoDB (with file backup)
+    await saveTrendingTopics();
   } catch (error) {
     console.error('[TRENDING] Fallback method failed:', error);
   }
