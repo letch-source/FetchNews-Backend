@@ -3287,12 +3287,118 @@ async function updateTrendingTopicsFallback() {
   }
 }
 
-// AUTO-UPDATE DISABLED: Trending topics will only update manually via /api/trending-topics/update endpoint
-// Run immediately on startup
-// updateTrendingTopics();
+// --- Daily Trending Topics Update Scheduler ---
+// Update trending topics every morning at 5 AM PST
+let trendingTopicsUpdateTimeout = null;
+let trendingTopicsUpdateRunning = false;
 
-// Then run every 30 minutes for breaking news
-// setInterval(updateTrendingTopics, 30 * 60 * 1000); // 30 minutes
+// Function to update trending topics (wrapper to prevent concurrent runs)
+async function runTrendingTopicsUpdate() {
+  if (trendingTopicsUpdateRunning) {
+    console.log('[TRENDING] Update already running, skipping concurrent execution');
+    return;
+  }
+  
+  trendingTopicsUpdateRunning = true;
+  
+  try {
+    console.log('[TRENDING] Starting scheduled daily update at 5 AM PST...');
+    await updateTrendingTopics();
+    console.log('[TRENDING] Daily update completed successfully');
+  } catch (error) {
+    console.error('[TRENDING] Error in scheduled daily update:', error);
+  } finally {
+    trendingTopicsUpdateRunning = false;
+  }
+}
+
+// Function to schedule the next 5 AM PST update
+function scheduleTrendingTopicsUpdate() {
+  // Clear any existing timeout
+  if (trendingTopicsUpdateTimeout) {
+    clearTimeout(trendingTopicsUpdateTimeout);
+    trendingTopicsUpdateTimeout = null;
+  }
+  
+  const now = new Date();
+  
+  // Get current time in PST/PDT (America/Los_Angeles handles DST automatically)
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  const pstTimeParts = formatter.formatToParts(now);
+  const pstHour = parseInt(pstTimeParts.find(p => p.type === 'hour').value);
+  const pstMinute = parseInt(pstTimeParts.find(p => p.type === 'minute').value);
+  const pstSecond = parseInt(pstTimeParts.find(p => p.type === 'second').value);
+  
+  // Calculate milliseconds until next 5 AM PST
+  let msUntilNextUpdate;
+  
+  // If we're in the 5 AM window (4:55 - 5:05), check every minute
+  if ((pstHour === 4 && pstMinute >= 55) || (pstHour === 5 && pstMinute <= 5)) {
+    // Check every minute during the update window
+    msUntilNextUpdate = 60 * 1000; // 1 minute
+  } else {
+    // Calculate time until next 5 AM PST
+    let hoursUntil5AM = 0;
+    let minutesUntil5AM = 0;
+    
+    if (pstHour < 5) {
+      // 5 AM is later today
+      hoursUntil5AM = 5 - pstHour;
+      minutesUntil5AM = -pstMinute;
+    } else {
+      // 5 AM is tomorrow
+      hoursUntil5AM = 24 - pstHour + 5;
+      minutesUntil5AM = -pstMinute;
+    }
+    
+    // Calculate total milliseconds
+    const totalMinutes = hoursUntil5AM * 60 + minutesUntil5AM;
+    const totalSeconds = totalMinutes * 60 - pstSecond;
+    msUntilNextUpdate = totalSeconds * 1000 - now.getMilliseconds();
+    
+    // If calculation resulted in negative or very small value, schedule for next day
+    if (msUntilNextUpdate < 60000) {
+      // Schedule for next day at 5 AM
+      hoursUntil5AM = 24 - pstHour + 5;
+      minutesUntil5AM = -pstMinute;
+      const nextDayMinutes = hoursUntil5AM * 60 + minutesUntil5AM;
+      const nextDaySeconds = nextDayMinutes * 60 - pstSecond;
+      msUntilNextUpdate = nextDaySeconds * 1000 - now.getMilliseconds();
+    }
+    
+    // Cap at 24 hours to avoid very long timeouts
+    if (msUntilNextUpdate > 24 * 60 * 60 * 1000) {
+      msUntilNextUpdate = 24 * 60 * 60 * 1000;
+    }
+  }
+  
+  const hoursUntil = Math.floor(msUntilNextUpdate / (60 * 60 * 1000));
+  const minutesUntil = Math.floor((msUntilNextUpdate % (60 * 60 * 1000)) / (60 * 1000));
+  
+  console.log(`[TRENDING] Next daily update scheduled in ${hoursUntil}h ${minutesUntil}m (at 5:00 AM PST)`);
+  
+  trendingTopicsUpdateTimeout = setTimeout(() => {
+    trendingTopicsUpdateTimeout = null;
+    runTrendingTopicsUpdate().then(() => {
+      // Schedule the next update
+      scheduleTrendingTopicsUpdate();
+    }).catch((error) => {
+      console.error('[TRENDING] Error in scheduled update, will retry:', error);
+      // Still schedule next update even on error
+      scheduleTrendingTopicsUpdate();
+    });
+  }, msUntilNextUpdate);
+}
+
+// Start the daily trending topics update scheduler
+console.log(`[TRENDING] Daily trending topics update scheduler ENABLED - will update every morning at 5:00 AM PST`);
+scheduleTrendingTopicsUpdate();
 
 // --- Deployment Protection ---
 const DEPLOYMENT_MODE = process.env.DEPLOYMENT_MODE || 'development';
