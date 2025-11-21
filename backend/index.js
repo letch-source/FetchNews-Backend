@@ -2750,6 +2750,16 @@ if (!fs.existsSync(serverDataDir)) {
 
 // Load trending topics from MongoDB (with file fallback)
 async function loadTrendingTopics() {
+  // Wait for MongoDB connection if it's connecting (readyState 2 = connecting)
+  if (mongoose.connection.readyState === 2) {
+    console.log('[TRENDING] MongoDB is connecting, waiting up to 10 seconds...');
+    let waited = 0;
+    while (mongoose.connection.readyState !== 1 && waited < 10000) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      waited += 500;
+    }
+  }
+  
   // Try MongoDB first
   if (mongoose.connection.readyState === 1) {
     try {
@@ -2761,10 +2771,14 @@ async function loadTrendingTopics() {
         const sourcesCount = Object.keys(trendingTopicsWithSources).length;
         console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics and ${sourcesCount} topic sources from MongoDB`);
         return;
+      } else {
+        console.log('[TRENDING] MongoDB connected but no trending topics found in database');
       }
     } catch (error) {
       console.error('[TRENDING] Error loading from MongoDB, falling back to file:', error.message);
     }
+  } else {
+    console.log(`[TRENDING] MongoDB not connected (readyState: ${mongoose.connection.readyState}), falling back to file`);
   }
   
   // Fallback to file if MongoDB not available or empty
@@ -2846,8 +2860,17 @@ async function saveTrendingTopics() {
 }
 
 // Load trending topics on startup (async, but don't block)
+// Try loading immediately in case MongoDB is already connected
 loadTrendingTopics().catch(error => {
   console.error('[TRENDING] Failed to load trending topics on startup:', error);
+});
+
+// Also load trending topics when MongoDB connects (in case it wasn't connected on startup)
+mongoose.connection.on('connected', () => {
+  console.log('[TRENDING] MongoDB connected, loading trending topics...');
+  loadTrendingTopics().catch(error => {
+    console.error('[TRENDING] Failed to load trending topics after MongoDB connection:', error);
+  });
 });
 
 // Extract trending topics using ChatGPT analysis of news articles
