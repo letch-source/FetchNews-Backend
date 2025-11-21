@@ -326,9 +326,9 @@ async function summarizeArticles(topic, geo, articles, wordCount, goodNewsOnly =
       return `${index + 1}. **${title}** (${source})\n${description}`;
     }).join("\n\n");
 
-    // Optimized podcaster-style prompt for faster processing
+    // Optimized conversational-style prompt for faster processing
     const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
-    const prompt = `Create a ${wordCount}-word ${upliftingPrefix}${topic} news summary in podcast style.
+    const prompt = `Create a ${wordCount}-word ${upliftingPrefix}${topic} news summary in a conversational style.
 
 Articles:
 ${articleTexts}
@@ -338,6 +338,7 @@ Requirements:
 - Cover key stories in conversational tone
 - Connect related stories naturally
 - Focus on most significant developments
+- Do not use phrases like "welcome back to our podcast" or refer to it as a podcast
 - Target ${wordCount} words exactly`;
 
     console.log(`Sending ${articles.length} articles to ChatGPT for summarization`);
@@ -347,7 +348,7 @@ Requirements:
       messages: [
         {
           role: "system",
-          content: "You are a professional news podcaster. Create engaging, conversational summaries with a warm, informative tone."
+          content: "You are a professional news presenter. Create engaging, conversational news summaries with a warm, informative tone. Do not refer to the summary as a podcast."
         },
         {
           role: "user",

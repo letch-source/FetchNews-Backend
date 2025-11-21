@@ -16,7 +16,7 @@ class StoreKitManager: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     
-    private let productIDs = ["Premium"]
+    private let productIDs = ["com.fetchnews.premium.monthly"]
     
     init() {
         Task {
@@ -103,7 +103,7 @@ class StoreKitManager: ObservableObject {
     }
     
     var premiumProduct: StoreKit.Product? {
-        return products.first { $0.id == "Premium" }
+        return products.first { $0.id == "com.fetchnews.premium.monthly" }
     }
 }
 

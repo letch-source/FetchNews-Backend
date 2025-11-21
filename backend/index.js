@@ -1028,7 +1028,7 @@ async function summarizeArticles(topic, geo, articles, wordCount, goodNewsOnly =
     const topicsText = Array.isArray(topic) ? topic.join(", ") : topic;
     const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
     
-    const prompt = `Create a ${upliftingPrefix}${topicsText} news summary in podcast style.
+    const prompt = `Create a ${upliftingPrefix}${topicsText} news summary in a conversational style.
 
 Articles:
 ${articleTexts}
@@ -1039,7 +1039,8 @@ Requirements:
 - Focus on most significant developments
 - Target ${wordCount} words exactly
 - For short summaries (≤200 words), be very concise and stick to the word limit
-- End at a complete sentence, but prioritize staying within the word count`;
+- End at a complete sentence, but prioritize staying within the word count
+- Do not use phrases like "welcome back to our podcast" or refer to it as a podcast`;
 
     console.log(`Sending ${articles.length} articles to ChatGPT for summarization`);
 
@@ -1048,7 +1049,7 @@ Requirements:
       messages: [
         {
           role: "system",
-          content: "You are a professional news podcaster. Create engaging, conversational summaries with a warm, informative tone."
+          content: "You are a professional news presenter. Create engaging, conversational news summaries with a warm, informative tone. Do not refer to the summary as a podcast."
         },
         {
           role: "user",
