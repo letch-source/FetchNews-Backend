@@ -138,9 +138,10 @@ function extractBreakingNewsTopics(articles) {
   });
   
   // Sort by frequency and return top topics
+  // Increase to 8 topics since we're using high-quality sources
   const sortedTopics = Object.entries(topicCounts)
     .sort(([,a], [,b]) => b - a)
-    .slice(0, 6)
+    .slice(0, 10) // Get more candidates for ChatGPT to refine
     .map(([topic]) => topic);
   
   return sortedTopics.length >= 3 ? sortedTopics : [];
@@ -2905,7 +2906,7 @@ mongoose.connection.on('connected', () => {
 });
 
 // Extract trending topics using ChatGPT analysis of news articles
-async function extractTrendingTopicsWithChatGPT(articles) {
+async function extractTrendingTopicsWithChatGPT(articles, initialTopics = []) {
   try {
     if (!OPENAI_API_KEY) {
       console.log('[TRENDING] OpenAI API key not configured, skipping ChatGPT analysis');
@@ -2930,7 +2931,12 @@ async function extractTrendingTopicsWithChatGPT(articles) {
       `${index + 1}. ${article.title} (${article.source})\n   ${article.description}`
     ).join('\n\n');
     
-    const prompt = `Analyze the following news articles from major sources and extract the 8 most important trending topics/keywords that would be relevant for a news summary app. Focus on:
+    // Include initial topics from headline analysis if available
+    const initialTopicsText = initialTopics.length > 0 
+      ? `\n\nInitial topics extracted from headlines (for reference): ${initialTopics.join(', ')}`
+      : '';
+    
+    const prompt = `Analyze the following news articles from 9 major trusted sources (CNN, BBC, Reuters, NBC, AP, Bloomberg, NY Times, USA Today, NPR) and extract the 8 most important trending topics/keywords that would be relevant for a news summary app. Focus on:
 
 1. Major political events, policy changes, or government actions
 2. Significant business/economic developments
@@ -2941,15 +2947,23 @@ async function extractTrendingTopicsWithChatGPT(articles) {
 7. International relations or global events
 8. Environmental or climate-related news
 
-IMPORTANT: Each topic should be a complete, coherent phrase (1-3 words) that makes sense on its own. Avoid generic terms like "news", "report", "update", "latest", or weather-related terms unless they're truly significant events.
+CRITICAL REQUIREMENTS:
+- Each topic should be a complete, coherent phrase (2-4 words) that makes sense on its own
+- Avoid person names unless they represent major breaking news (e.g., "Trump Trial" is OK, but "John Smith" is not)
+- Avoid overlapping or duplicate topics (e.g., don't include both "Israel-Gaza Conflict" and "Israel-Hamas War" - pick the most comprehensive one)
+- Focus on events, issues, and developments - not individual people unless they're central to a major story
+- Avoid generic terms like "news", "report", "update", "latest", or weather-related terms unless they're truly significant events
+- Ensure topics are distinct and cover different aspects of current events
 
-Examples of good topics: "Federal Reserve", "Tesla Stock", "Olympic Games", "Climate Summit"
-Examples of bad topics: "Meta", "Fights", "Million", "Penalty" (too fragmented)
+Examples of good topics: "Federal Reserve Policy", "Tesla Stock Performance", "Olympic Games 2024", "Climate Summit", "Election Results"
+Examples of bad topics: "Meta", "Fights", "Million", "Penalty" (too fragmented), "John Doe" (person name without context), "Israel Conflict" and "Gaza War" (overlapping)
 
-Return ONLY a comma-separated list of 8 complete, coherent topics, in order of importance:
+IMPORTANT: These articles come from 9 trusted news sources. Prioritize topics that appear across multiple sources as they are more likely to be truly trending. Use the initial topics as a guide but refine them to be more comprehensive and avoid overlaps.
+
+Return ONLY a comma-separated list of exactly 8 distinct, non-overlapping topics, in order of importance. Do NOT use numbered lists or bullet points:
 
 Articles:
-${articlesText}`;
+${articlesText}${initialTopicsText}`;
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -2988,16 +3002,138 @@ ${articlesText}`;
       return [];
     }
     
-    // Parse the comma-separated response
-    let topics = content.split(',').map(topic => topic.trim()).filter(topic => topic.length > 0);
+    // Parse the response - handle both comma-separated and numbered list formats
+    let topics = [];
     
-    // Clean up fragmented topics by filtering out single words that are likely fragments
+    // First, try to handle numbered lists (1. 2. 3. or 1) 2) 3))
+    const numberedListPattern = /^\d+[\.\)]\s*(.+?)(?=\s*\d+[\.\)]|$)/gm;
+    const numberedMatches = [...content.matchAll(numberedListPattern)];
+    
+    if (numberedMatches.length > 0) {
+      // Extract topics from numbered list
+      topics = numberedMatches.map(match => match[1].trim()).filter(topic => topic.length > 0);
+    } else {
+      // Fall back to comma-separated parsing
+      topics = content.split(',').map(topic => topic.trim()).filter(topic => topic.length > 0);
+    }
+    
+    // Clean up topics: remove leading numbers, periods, and other formatting
+    topics = topics.map(topic => {
+      // Remove leading numbers and punctuation (e.g., "1. Topic" -> "Topic")
+      return topic.replace(/^\d+[\.\)]\s*/, '').trim();
+    }).filter(topic => topic.length > 0);
+    
+    // Filter out fragmented topics and person names
     const stopWords = ['meta', 'fights', 'million', 'penalty', 'over', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'];
     topics = topics.filter(topic => {
-      const words = topic.toLowerCase().split(' ');
-      // Keep topics that have 2+ words, or single words that aren't stop words
-      return words.length >= 2 || !stopWords.includes(words[0]);
+      const words = topic.toLowerCase().split(/\s+/);
+      // Keep topics that have 2+ words
+      if (words.length < 2) {
+        return false;
+      }
+      // Filter out topics that are just person names (common pattern: FirstName LastName)
+      // This is a simple heuristic - if it's 2 words that look like a name, skip it
+      const topicParts = topic.split(' ');
+      if (words.length === 2) {
+        // Check if both parts start with capital letters (likely a name)
+        const looksLikeName = /^[A-Z][a-z]+$/.test(topicParts[0]) && /^[A-Z][a-z]+$/.test(topicParts[1]);
+        if (looksLikeName) {
+          // Check if it's actually a news event (e.g., "Trump Trial" has context)
+          const hasContext = topicLower.includes('trial') || 
+                            topicLower.includes('election') ||
+                            topicLower.includes('war') ||
+                            topicLower.includes('conflict') ||
+                            topicLower.includes('summit') ||
+                            topicLower.includes('meeting') ||
+                            topicLower.includes('court') ||
+                            topicLower.includes('verdict') ||
+                            topicLower.includes('arrest') ||
+                            topicLower.includes('resignation');
+          if (!hasContext) {
+            return false; // Likely just a person name without news context
+          }
+        }
+      }
+      return true;
     });
+    
+    // Deduplicate similar/overlapping topics
+    const deduplicatedTopics = [];
+    
+    for (const topic of topics) {
+      const topicLower = topic.toLowerCase();
+      const words = topicLower.split(/[\s\-]+/); // Split on spaces and hyphens
+      
+      // Check for overlap with existing topics
+      let isDuplicate = false;
+      let replaceIndex = -1;
+      
+      for (let i = 0; i < deduplicatedTopics.length; i++) {
+        const existingTopic = deduplicatedTopics[i];
+        const existingLower = existingTopic.toLowerCase();
+        const existingWords = existingLower.split(/[\s\-]+/);
+        
+        // Check if topics share significant keywords (2+ words overlap, excluding common words)
+        const commonWords = words.filter(w => {
+          return existingWords.includes(w) && 
+                 w.length > 3 && 
+                 !['the', 'and', 'for', 'with', 'from', 'about'].includes(w);
+        });
+        
+        if (commonWords.length >= 2) {
+          // They overlap significantly - keep the more comprehensive one
+          if (topic.length > existingTopic.length) {
+            replaceIndex = i;
+          }
+          isDuplicate = true;
+          break;
+        }
+        
+        // Check if one topic is contained in another (e.g., "Israel-Gaza Conflict" vs "Gaza War")
+        // Only consider containment if the shorter one is at least 5 characters
+        if (topicLower.length >= 5 && existingLower.length >= 5) {
+          if (topicLower.includes(existingLower) || existingLower.includes(topicLower)) {
+            // Keep the longer, more specific one
+            if (topic.length > existingTopic.length) {
+              replaceIndex = i;
+            }
+            isDuplicate = true;
+            break;
+          }
+        }
+        
+        // Special case: check for similar conflicts/wars (e.g., "Israel-Gaza Conflict" vs "Israel-Hamas War")
+        // If they share a location/keyword and both mention conflict/war, merge them
+        const conflictKeywords = ['conflict', 'war', 'crisis', 'tension', 'fighting'];
+        const hasConflictKeyword = conflictKeywords.some(kw => topicLower.includes(kw));
+        const existingHasConflictKeyword = conflictKeywords.some(kw => existingLower.includes(kw));
+        
+        if (hasConflictKeyword && existingHasConflictKeyword) {
+          // Check if they share a location or main subject
+          const locationWords = words.filter(w => w.length > 4 && !conflictKeywords.includes(w));
+          const existingLocationWords = existingWords.filter(w => w.length > 4 && !conflictKeywords.includes(w));
+          const sharedLocations = locationWords.filter(w => existingLocationWords.includes(w));
+          
+          if (sharedLocations.length >= 1) {
+            // They're about the same conflict - keep the more comprehensive one
+            if (topic.length > existingTopic.length) {
+              replaceIndex = i;
+            }
+            isDuplicate = true;
+            break;
+          }
+        }
+      }
+      
+      if (isDuplicate && replaceIndex >= 0) {
+        // Replace the existing topic with the more comprehensive one
+        deduplicatedTopics[replaceIndex] = topic;
+      } else if (!isDuplicate) {
+        deduplicatedTopics.push(topic);
+      }
+    }
+    
+    topics = deduplicatedTopics.slice(0, 8); // Limit to 8 topics
     
     console.log(`[TRENDING] ChatGPT extracted ${topics.length} topics: ${topics.join(', ')}`);
     
@@ -3052,11 +3188,12 @@ async function updateTrendingTopics() {
     
     console.log('[TRENDING] Fetching top articles from major news sources...');
     
-    // Fetch top articles from each source
+    // Fetch top articles from each source (increase limit to get more comprehensive coverage)
     const allArticles = [];
     for (const source of newsSources) {
       try {
-        const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&languages=en&limit=3&sort=published_desc`;
+        // Fetch 5 articles per source for better topic coverage
+        const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&languages=en&limit=5&sort=published_desc`;
         const response = await fetch(url);
         
         if (response.ok) {
@@ -3079,21 +3216,36 @@ async function updateTrendingTopics() {
       return;
     }
     
-    console.log(`[TRENDING] Total articles collected: ${allArticles.length}`);
+    console.log(`[TRENDING] Total articles collected: ${allArticles.length} from ${newsSources.length} sources`);
     
-    // Use ChatGPT to analyze articles and extract trending topics
-    const result = await extractTrendingTopicsWithChatGPT(allArticles);
+    // First, extract trending topics directly from headlines of these high-quality sources
+    // This ensures we're getting topics that are actually trending across multiple trusted sources
+    const headlineTopics = extractBreakingNewsTopics(allArticles);
+    console.log(`[TRENDING] Extracted ${headlineTopics.length} topics from headlines: ${headlineTopics.join(', ')}`);
+    
+    // Use ChatGPT to refine, deduplicate, and improve topics from these sources
+    // Pass both the articles and the initial topics to help ChatGPT understand what's trending
+    const result = await extractTrendingTopicsWithChatGPT(allArticles, headlineTopics);
     
     if (result && result.topics && result.topics.length > 0) {
       trendingTopicsCache = result.topics;
       trendingTopicsWithSources = result.topicsWithSources;
       lastTrendingUpdate = new Date();
-      console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${result.topics.join(', ')}`);
+      console.log(`[TRENDING] Updated trending topics from ${newsSources.length} sources via ChatGPT analysis: ${result.topics.join(', ')}`);
       // Save to MongoDB (with file backup)
       await saveTrendingTopics();
     } else {
-      console.log('[TRENDING] ChatGPT analysis failed, using fallback approach');
-      await updateTrendingTopicsFallback();
+      // Fallback: use the headline-extracted topics if ChatGPT fails
+      if (headlineTopics.length >= 3) {
+        trendingTopicsCache = headlineTopics.slice(0, 8);
+        trendingTopicsWithSources = {};
+        lastTrendingUpdate = new Date();
+        console.log(`[TRENDING] Using headline-extracted topics as fallback: ${trendingTopicsCache.join(', ')}`);
+        await saveTrendingTopics();
+      } else {
+        console.log('[TRENDING] Not enough topics from headlines, using full fallback approach');
+        await updateTrendingTopicsFallback();
+      }
     }
     
   } catch (error) {
