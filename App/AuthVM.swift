@@ -87,13 +87,16 @@ final class AuthVM: ObservableObject {
             await handleAuthSuccess(response: response)
             
             // Show topic onboarding only if user hasn't selected topics yet
-            // Check both the response and the current user (in case it was updated)
+            // Check both selectedTopics and customTopics - if user has topics in "My Topics", skip onboarding
             let hasSelectedTopics = !response.user.selectedTopics.isEmpty || !(currentUser?.selectedTopics.isEmpty ?? true)
-            if !hasSelectedTopics {
-                print("📝 Showing topic onboarding - no topics selected")
+            let hasCustomTopics = !response.user.customTopics.isEmpty || !(currentUser?.customTopics.isEmpty ?? true)
+            let hasAnyTopics = hasSelectedTopics || hasCustomTopics
+            
+            if !hasAnyTopics {
+                print("📝 Showing topic onboarding - no topics selected and no custom topics")
                 showTopicOnboarding = true
             } else {
-                print("✅ User has selected topics, skipping onboarding")
+                print("✅ User has topics (selectedTopics: \(response.user.selectedTopics.count), customTopics: \(response.user.customTopics.count)), skipping onboarding")
                 showTopicOnboarding = false
             }
         } catch {
@@ -209,13 +212,18 @@ final class AuthVM: ObservableObject {
                     await setUserTimezone()
                     
                     // Check if onboarding is needed based on latest user data
+                    // Check both selectedTopics and customTopics - if user has topics in "My Topics", skip onboarding
                     if let currentUser = currentUser {
-                        print("📋 Loaded user selectedTopics count: \(currentUser.selectedTopics.count)")
-                        if currentUser.selectedTopics.isEmpty {
+                        print("📋 Loaded user selectedTopics count: \(currentUser.selectedTopics.count), customTopics count: \(currentUser.customTopics.count)")
+                        let hasSelectedTopics = !currentUser.selectedTopics.isEmpty
+                        let hasCustomTopics = !currentUser.customTopics.isEmpty
+                        let hasAnyTopics = hasSelectedTopics || hasCustomTopics
+                        
+                        if !hasAnyTopics {
                             print("📝 Showing topic onboarding - no topics in loaded user")
                             showTopicOnboarding = true
                         } else {
-                            print("✅ User has selected topics, skipping onboarding")
+                            print("✅ User has topics (selectedTopics: \(currentUser.selectedTopics.count), customTopics: \(currentUser.customTopics.count)), skipping onboarding")
                             showTopicOnboarding = false
                         }
                     }

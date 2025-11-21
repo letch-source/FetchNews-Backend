@@ -177,9 +177,10 @@ struct User: Codable {
     let customTopics: [String]
     let summaryHistory: [SummaryHistoryEntry]
     let selectedTopics: [String]
+    let name: String?
     
     // Memberwise initializer for creating User instances in code
-    init(id: String, email: String, emailVerified: Bool, isPremium: Bool, dailyUsageCount: Int, subscriptionId: String?, subscriptionExpiresAt: String?, customTopics: [String], summaryHistory: [SummaryHistoryEntry], selectedTopics: [String] = []) {
+    init(id: String, email: String, emailVerified: Bool, isPremium: Bool, dailyUsageCount: Int, subscriptionId: String?, subscriptionExpiresAt: String?, customTopics: [String], summaryHistory: [SummaryHistoryEntry], selectedTopics: [String] = [], name: String? = nil) {
         self.id = id
         self.email = email
         self.emailVerified = emailVerified
@@ -190,6 +191,7 @@ struct User: Codable {
         self.customTopics = customTopics
         self.summaryHistory = summaryHistory
         self.selectedTopics = selectedTopics
+        self.name = name
     }
     
     // Custom decoder to handle missing or null values gracefully
@@ -207,12 +209,13 @@ struct User: Codable {
         let customTopics = try container.decodeIfPresent([String].self, forKey: .customTopics) ?? []
         let summaryHistory = try container.decodeIfPresent([SummaryHistoryEntry].self, forKey: .summaryHistory) ?? []
         let selectedTopics = try container.decodeIfPresent([String].self, forKey: .selectedTopics) ?? []
+        let name = try container.decodeIfPresent(String.self, forKey: .name)
         
-        self.init(id: id, email: email, emailVerified: emailVerified, isPremium: isPremium, dailyUsageCount: dailyUsageCount, subscriptionId: subscriptionId, subscriptionExpiresAt: subscriptionExpiresAt, customTopics: customTopics, summaryHistory: summaryHistory, selectedTopics: selectedTopics)
+        self.init(id: id, email: email, emailVerified: emailVerified, isPremium: isPremium, dailyUsageCount: dailyUsageCount, subscriptionId: subscriptionId, subscriptionExpiresAt: subscriptionExpiresAt, customTopics: customTopics, summaryHistory: summaryHistory, selectedTopics: selectedTopics, name: name)
     }
     
     private enum CodingKeys: String, CodingKey {
-        case id, email, emailVerified, isPremium, dailyUsageCount, subscriptionId, subscriptionExpiresAt, customTopics, summaryHistory, selectedTopics
+        case id, email, emailVerified, isPremium, dailyUsageCount, subscriptionId, subscriptionExpiresAt, customTopics, summaryHistory, selectedTopics, name
     }
 }
 

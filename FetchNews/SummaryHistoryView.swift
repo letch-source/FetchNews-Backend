@@ -81,9 +81,20 @@ struct SummaryHistoryView: View {
                                 }
                             }
                         }
+                        
+                        // Bottom spacing to ensure full scroll (account for audio player when present)
+                        Spacer(minLength: vm.canPlay ? 180 : 100)
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 16)
+                }
+                // Adjust scroll content insets when audio player is visible
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if vm.canPlay {
+                        // Spacer that matches the audio player height (~100px for bubble + 80px bottom padding = 180px)
+                        // This allows content to scroll above the audio player
+                        Color.clear.frame(height: 180)
+                    }
                 }
             }
             }

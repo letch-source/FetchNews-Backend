@@ -476,7 +476,10 @@
         <div class="trending-section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                 <h2>🔥 Trending Topics Management</h2>
-                <button class="refresh-btn" onclick="loadTrendingTopics()">🔄 Refresh</button>
+                <div style="display: flex; gap: 10px;">
+                    <button class="refresh-btn" onclick="updateAndRefreshTrendingTopics()" id="update-trending-btn">🔄 Update Topics</button>
+                    <button class="refresh-btn" onclick="loadTrendingTopics()">📥 Reload</button>
+                </div>
             </div>
             
             <div id="trending-info-container">
@@ -497,35 +500,6 @@
                     <div class="button-group">
                         <button class="btn-primary" onclick="saveTrendingTopics()">💾 Save Override</button>
                         <button class="btn-danger" onclick="clearTrendingOverride()">🗑️ Clear Override (Use Auto)</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="trending-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2>⭐ Recommended Topics Management</h2>
-                <button class="refresh-btn" onclick="loadRecommendedTopics()">🔄 Refresh</button>
-            </div>
-            
-            <div id="recommended-info-container">
-                <div class="loading">Loading recommended topics...</div>
-            </div>
-
-            <div id="recommended-container" style="display: none;">
-                <div id="current-recommended-info"></div>
-                <div id="current-recommended-display"></div>
-
-                <div class="topics-input-container">
-                    <label for="recommended-input">Set Custom Recommended Topics (one per line, max 8):</label>
-                    <textarea 
-                        id="recommended-input" 
-                        class="topics-input" 
-                        placeholder="Enter topics, one per line...&#10;Example:&#10;Business&#10;Entertainment&#10;Health&#10;Science"
-                    ></textarea>
-                    <div class="button-group">
-                        <button class="btn-primary" onclick="saveRecommendedTopics()">💾 Save Override</button>
-                        <button class="btn-danger" onclick="clearRecommendedOverride()">🗑️ Clear Override (Use Default)</button>
                     </div>
                 </div>
             </div>
@@ -676,9 +650,16 @@
         }
 
         // Public endpoint doesn't need auth
-        async function fetchPublic(url) {
+        async function fetchPublic(url, options = {}) {
             try {
-                const response = await fetch(url);
+                const response = await fetch(url, {
+                    method: options.method || 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    },
+                    body: options.body ? JSON.stringify(options.body) : undefined
+                });
                 if (!response.ok) {
                     const errorText = await response.text().catch(() => '');
                     let errorMessage = `HTTP error! status: ${response.status}`;
@@ -824,11 +805,44 @@
             }, 5000);
         }
 
+        async function updateAndRefreshTrendingTopics() {
+            const btn = document.getElementById('update-trending-btn');
+            const originalText = btn.innerHTML;
+            
+            try {
+                btn.disabled = true;
+                btn.innerHTML = '⏳ Updating...';
+                
+                // Show loading state
+                const infoContainer = document.getElementById('trending-info-container');
+                infoContainer.innerHTML = '<div class="loading">Updating trending topics from news sources...</div>';
+                
+                // Trigger the update endpoint
+                const updateResult = await fetchPublic('/api/trending-topics/update', {
+                    method: 'POST'
+                });
+                
+                showSuccess('Trending topics updated successfully!');
+                
+                // Wait a moment for the update to complete, then reload
+                setTimeout(() => {
+                    loadTrendingTopics();
+                }, 1000);
+            } catch (error) {
+                showError('Failed to update trending topics: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
         async function loadTrendingTopics() {
             const infoContainer = document.getElementById('trending-info-container');
             const trendingContainer = document.getElementById('trending-container');
             
             try {
+                infoContainer.innerHTML = '<div class="loading">Loading trending topics...</div>';
+                
                 // Get current trending topics (public endpoint)
                 const currentData = await fetchPublic('/api/trending-topics');
                 
@@ -951,116 +965,6 @@
             }, 5000);
         }
 
-        async function loadRecommendedTopics() {
-            const infoContainer = document.getElementById('recommended-info-container');
-            const recommendedContainer = document.getElementById('recommended-container');
-            
-            try {
-                // Get current recommended topics (public endpoint)
-                const currentData = await fetchPublic('/api/recommended-topics');
-                
-                // Get override info (admin endpoint)
-                let overrideData = null;
-                try {
-                    overrideData = await fetchWithAuth('/api/admin/recommended-topics');
-                } catch (error) {
-                    console.log('Could not fetch override:', error);
-                }
-
-                recommendedContainer.style.display = 'block';
-                
-                // Display current recommended info
-                const source = currentData.source || 'default';
-                const isOverride = source === 'override';
-                const badgeClass = isOverride ? 'override' : 'auto';
-                const badgeText = isOverride ? '⚙️ Custom Override' : '📋 Default Topics';
-                
-                let infoHtml = `<div class="trending-info">`;
-                infoHtml += `<span class="trending-badge ${badgeClass}">${badgeText}</span>`;
-                if (isOverride && currentData.setBy) {
-                    infoHtml += `Set by: ${currentData.setBy}`;
-                }
-                if (currentData.lastUpdated) {
-                    infoHtml += ` | Last updated: ${formatTimestamp(currentData.lastUpdated)}`;
-                }
-                infoHtml += `</div>`;
-
-                document.getElementById('current-recommended-info').innerHTML = infoHtml;
-
-                // Display topics
-                const topics = currentData.recommendedTopics || [];
-                let topicsHtml = '<div class="topics-list">';
-                topics.forEach(topic => {
-                    topicsHtml += `<span class="topic-tag">${topic}</span>`;
-                });
-                topicsHtml += '</div>';
-                document.getElementById('current-recommended-display').innerHTML = topicsHtml;
-
-                // Pre-fill textarea with override topics if they exist
-                if (overrideData && overrideData.override && overrideData.override.topics) {
-                    document.getElementById('recommended-input').value = overrideData.override.topics.join('\n');
-                } else if (isOverride && topics.length > 0) {
-                    document.getElementById('recommended-input').value = topics.join('\n');
-                } else {
-                    document.getElementById('recommended-input').value = topics.join('\n');
-                }
-
-                infoContainer.innerHTML = '';
-            } catch (error) {
-                infoContainer.innerHTML = `<div class="error">Failed to load recommended topics: ${error.message}</div>`;
-                recommendedContainer.style.display = 'none';
-            }
-        }
-
-        async function saveRecommendedTopics() {
-            const input = document.getElementById('recommended-input');
-            const topicsText = input.value.trim();
-            
-            if (!topicsText) {
-                showError('Please enter at least one topic');
-                return;
-            }
-
-            const topics = topicsText.split('\n')
-                .map(t => t.trim())
-                .filter(t => t.length > 0)
-                .slice(0, 8);
-
-            if (topics.length === 0) {
-                showError('Please enter at least one valid topic');
-                return;
-            }
-
-            try {
-                const result = await fetchWithAuth('/api/admin/recommended-topics', {
-                    method: 'PUT',
-                    body: JSON.stringify({ topics })
-                });
-
-                showSuccess('Recommended topics override saved successfully!');
-                await loadRecommendedTopics();
-            } catch (error) {
-                showError('Failed to save recommended topics: ' + error.message);
-            }
-        }
-
-        async function clearRecommendedOverride() {
-            if (!confirm('Are you sure you want to clear the override? Recommended topics will return to default.')) {
-                return;
-            }
-
-            try {
-                await fetchWithAuth('/api/admin/recommended-topics', {
-                    method: 'DELETE'
-                });
-
-                document.getElementById('recommended-input').value = '';
-                showSuccess('Override cleared! Recommended topics will now be default.');
-                await loadRecommendedTopics();
-            } catch (error) {
-                showError('Failed to clear override: ' + error.message);
-            }
-        }
 
         async function loadUsers() {
             const container = document.getElementById('users-container');
@@ -1211,7 +1115,7 @@
             
             console.log('Loading all dashboard data...');
             try {
-                await Promise.all([loadStats(), loadActions(), loadTrendingTopics(), loadRecommendedTopics()]);
+                await Promise.all([loadStats(), loadActions(), loadTrendingTopics()]);
                 console.log('All data loaded successfully');
             } catch (error) {
                 console.error('Error loading dashboard data:', error);

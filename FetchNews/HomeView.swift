@@ -25,8 +25,6 @@ struct HomeView: View {
     @EnvironmentObject var authVM: AuthVM
     @State private var showingCustomTopics = false
     @State private var expandSummary = false
-    @State private var isScrubbing = false
-    @State private var scrubValue: Double = 0
     @State private var showAllSelected = false
     @State private var showAllTrending = false
     @State private var showAllCustom = false
@@ -220,30 +218,6 @@ struct HomeView: View {
                     // This allows content to scroll above the audio player
                     Color.clear.frame(height: 180)
                 }
-            }
-        }
-        // Now-playing bubble
-        .overlay(alignment: .bottom) {
-            if vm.canPlay {
-                NowPlayingBubble(
-                    title: fetchedTitle,
-                    isPlaying: vm.isPlaying,
-                    current: isScrubbing ? scrubValue : vm.currentTime,
-                    duration: vm.duration,
-                    onPlayPause: { vm.playPause() },
-                    onScrubChange: { newValue in
-                        scrubValue = newValue
-                        if !isScrubbing { vm.seek(to: newValue) }
-                    },
-                    onScrubEdit: { editing in
-                        isScrubbing = editing
-                        if !editing { vm.seek(to: scrubValue) }
-                    }
-                )
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .padding(.bottom, 80) // Space above navigation bar
-                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .onChange(of: vm.combined?.id, initial: false) { _, _ in

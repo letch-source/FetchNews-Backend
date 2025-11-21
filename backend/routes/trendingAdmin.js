@@ -1,7 +1,9 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const mongoose = require('mongoose');
 const { authenticateToken } = require('../middleware/auth');
+const GlobalSettings = require('../models/GlobalSettings');
 
 const router = express.Router();
 
@@ -52,7 +54,7 @@ router.get('/', authenticateToken, async (req, res) => {
 // Set/replace override
 router.put('/', authenticateToken, async (req, res) => {
   try {
-    const { topics } = req.body || {};
+    const { topics, saveToMongoDB = true } = req.body || {};
     if (!Array.isArray(topics)) {
       return res.status(400).json({ error: 'topics must be an array of strings' });
     }
@@ -74,10 +76,34 @@ router.put('/', authenticateToken, async (req, res) => {
       setBy: req.user?.email || 'admin',
       lastUpdated: new Date().toISOString(),
     };
+    
+    // Save to MongoDB if requested and available
+    let mongoDBSaved = false;
+    if (saveToMongoDB && mongoose.connection.readyState === 1) {
+      try {
+        const settings = await GlobalSettings.getOrCreate();
+        // Save topics to MongoDB (empty sources object since these are manually set)
+        await settings.updateTrendingTopics(cleaned, {});
+        mongoDBSaved = true;
+        console.log(`[TRENDING ADMIN] Saved ${cleaned.length} trending topics to MongoDB`);
+      } catch (mongoError) {
+        console.error('[TRENDING ADMIN] Error saving to MongoDB:', mongoError.message);
+        // Continue even if MongoDB save fails - file override is still saved
+      }
+    }
+    
+    // Always save override file (takes precedence over MongoDB)
     const ok = writeOverride(payload);
     if (!ok) return res.status(500).json({ error: 'Failed to persist override' });
-    res.json({ message: 'Trending topics override saved', override: payload });
+    
+    res.json({ 
+      message: 'Trending topics saved', 
+      override: payload,
+      savedToMongoDB: mongoDBSaved,
+      mongoDBConnected: mongoose.connection.readyState === 1
+    });
   } catch (e) {
+    console.error('[TRENDING ADMIN] Error setting override:', e);
     res.status(500).json({ error: 'Failed to set override' });
   }
 });

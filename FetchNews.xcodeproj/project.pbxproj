@@ -12,6 +12,7 @@
 		1764255A2E4E9085005C8526 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 176425552E4E8C80005C8526 /* Models.swift */; };
 		1764255B2E4E9089005C8526 /* AuthVM.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1764255C2E4E8C90005C8526 /* AuthVM.swift */; };
 		1764255E2E4E9089005C8526 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1764255D2E4E8C90005C8526 /* Assets.xcassets */; };
+		C48862140C1D5BED06E37FE9 /* Pods_FetchNews.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D376543E68A0BDFC8765865F /* Pods_FetchNews.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -40,6 +41,9 @@
 		176425572E4E8CBD005C8526 /* NewsVM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsVM.swift; sourceTree = "<group>"; };
 		1764255C2E4E8C90005C8526 /* AuthVM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthVM.swift; sourceTree = "<group>"; };
 		1764255D2E4E8C90005C8526 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		75C0317743F7BD1ED447A362 /* Pods-FetchNews.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-FetchNews.debug.xcconfig"; path = "Target Support Files/Pods-FetchNews/Pods-FetchNews.debug.xcconfig"; sourceTree = "<group>"; };
+		7AB08EAA9221E66829580A08 /* Pods-FetchNews.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-FetchNews.release.xcconfig"; path = "Target Support Files/Pods-FetchNews/Pods-FetchNews.release.xcconfig"; sourceTree = "<group>"; };
+		D376543E68A0BDFC8765865F /* Pods_FetchNews.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_FetchNews.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -78,6 +82,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C48862140C1D5BED06E37FE9 /* Pods_FetchNews.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -115,6 +120,8 @@
 				176425422E4E8A41005C8526 /* FetchNewsUITests */,
 				176425292E4E8A3F005C8526 /* Products */,
 				17428E762EA1C9DD004F201C /* Recovered References */,
+				5A627087C33A5A5CCB0C3A34 /* Pods */,
+				8B695B9F988F4ECC9A8BC1C9 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -139,6 +146,23 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		5A627087C33A5A5CCB0C3A34 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				75C0317743F7BD1ED447A362 /* Pods-FetchNews.debug.xcconfig */,
+				7AB08EAA9221E66829580A08 /* Pods-FetchNews.release.xcconfig */,
+			);
+			path = Pods;
+			sourceTree = "<group>";
+		};
+		8B695B9F988F4ECC9A8BC1C9 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				D376543E68A0BDFC8765865F /* Pods_FetchNews.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -146,9 +170,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 176425492E4E8A41005C8526 /* Build configuration list for PBXNativeTarget "FetchNews" */;
 			buildPhases = (
+				5BCCF38D7AE9645F99C6C208 /* [CP] Check Pods Manifest.lock */,
 				176425242E4E8A3F005C8526 /* Sources */,
 				176425252E4E8A3F005C8526 /* Frameworks */,
 				176425262E4E8A3F005C8526 /* Resources */,
+				C499CFF84D414462204A21E6 /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
@@ -158,8 +184,6 @@
 				1764252A2E4E8A3F005C8526 /* FetchNews */,
 			);
 			name = FetchNews;
-			packageProductDependencies = (
-			);
 			productName = FetchNews;
 			productReference = 176425282E4E8A3F005C8526 /* FetchNews.app */;
 			productType = "com.apple.product-type.application";
@@ -181,8 +205,6 @@
 				176425382E4E8A41005C8526 /* FetchNewsTests */,
 			);
 			name = FetchNewsTests;
-			packageProductDependencies = (
-			);
 			productName = FetchNewsTests;
 			productReference = 176425352E4E8A41005C8526 /* FetchNewsTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -204,8 +226,6 @@
 				176425422E4E8A41005C8526 /* FetchNewsUITests */,
 			);
 			name = FetchNewsUITests;
-			packageProductDependencies = (
-			);
 			productName = FetchNewsUITests;
 			productReference = 1764253F2E4E8A41005C8526 /* FetchNewsUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -278,6 +298,52 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		5BCCF38D7AE9645F99C6C208 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-FetchNews-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		C499CFF84D414462204A21E6 /* [CP] Embed Pods Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-FetchNews/Pods-FetchNews-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			inputPaths = (
+			);
+			name = "[CP] Embed Pods Frameworks";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-FetchNews/Pods-FetchNews-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-FetchNews/Pods-FetchNews-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		176425242E4E8A3F005C8526 /* Sources */ = {
@@ -444,6 +510,7 @@
 		};
 		1764254A2E4E8A41005C8526 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 75C0317743F7BD1ED447A362 /* Pods-FetchNews.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -452,6 +519,7 @@
 				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = 834624ZZ4N;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FetchNews/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -475,6 +543,7 @@
 		};
 		1764254B2E4E8A41005C8526 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7AB08EAA9221E66829580A08 /* Pods-FetchNews.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -483,6 +552,7 @@
 				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = 834624ZZ4N;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FetchNews/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -510,6 +580,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 14;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
 				MARKETING_VERSION = 1.0;
@@ -528,6 +599,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 14;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
 				MARKETING_VERSION = 1.0;
@@ -545,6 +617,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 14;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.finlaysmith.FetchNewsUITests;
@@ -561,6 +634,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 14;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.finlaysmith.FetchNewsUITests;

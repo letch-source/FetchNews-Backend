@@ -25,6 +25,7 @@ const trendingAdminRoutes = require("./routes/trendingAdmin");
 const notificationsRoutes = require("./routes/notifications");
 const fallbackAuth = require("./utils/fallbackAuth");
 const User = require("./models/User");
+const GlobalSettings = require("./models/GlobalSettings");
 
 // Connect to MongoDB
 connectDB();
@@ -137,9 +138,10 @@ function extractBreakingNewsTopics(articles) {
   });
   
   // Sort by frequency and return top topics
+  // Increase to 8 topics since we're using high-quality sources
   const sortedTopics = Object.entries(topicCounts)
     .sort(([,a], [,b]) => b - a)
-    .slice(0, 6)
+    .slice(0, 10) // Get more candidates for ChatGPT to refine
     .map(([topic]) => topic);
   
   return sortedTopics.length >= 3 ? sortedTopics : [];
@@ -2747,8 +2749,43 @@ if (!fs.existsSync(serverDataDir)) {
   fs.mkdirSync(serverDataDir, { recursive: true });
 }
 
-// Load trending topics from file on startup
-function loadTrendingTopicsFromFile() {
+// Load trending topics from MongoDB (with file fallback)
+async function loadTrendingTopics() {
+  // Wait for MongoDB connection if it's connecting (readyState 2 = connecting)
+  if (mongoose.connection.readyState === 2) {
+    console.log('[TRENDING] MongoDB is connecting, waiting up to 10 seconds...');
+    let waited = 0;
+    while (mongoose.connection.readyState !== 1 && waited < 10000) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      waited += 500;
+    }
+  }
+  
+  let loadedFromMongoDB = false;
+  
+  // Try MongoDB first
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const settings = await GlobalSettings.getOrCreate();
+      if (settings.trendingTopics && settings.trendingTopics.length > 0) {
+        trendingTopicsCache = settings.trendingTopics;
+        trendingTopicsWithSources = settings.trendingTopicsWithSources || {};
+        lastTrendingUpdate = settings.lastTrendingUpdate;
+        const sourcesCount = Object.keys(trendingTopicsWithSources).length;
+        console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics and ${sourcesCount} topic sources from MongoDB`);
+        loadedFromMongoDB = true;
+        return; // Successfully loaded from MongoDB, no need to check file
+      } else {
+        console.log('[TRENDING] MongoDB connected but no trending topics found in database, checking file fallback...');
+      }
+    } catch (error) {
+      console.error('[TRENDING] Error loading from MongoDB, falling back to file:', error.message);
+    }
+  } else {
+    console.log(`[TRENDING] MongoDB not connected (readyState: ${mongoose.connection.readyState}), falling back to file`);
+  }
+  
+  // Fallback to file if MongoDB not available or empty
   try {
     if (fs.existsSync(TRENDING_TOPICS_FILE)) {
       const data = fs.readFileSync(TRENDING_TOPICS_FILE, 'utf8');
@@ -2758,33 +2795,118 @@ function loadTrendingTopicsFromFile() {
         if (parsed.lastUpdated) {
           lastTrendingUpdate = new Date(parsed.lastUpdated);
         }
-        console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics from cache file`);
+        // Load topics with sources if available
+        if (parsed.topicsWithSources && typeof parsed.topicsWithSources === 'object') {
+          trendingTopicsWithSources = parsed.topicsWithSources;
+          console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics and sources from cache file`);
+        } else {
+          console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics from cache file`);
+        }
+        // Migrate file data to MongoDB if available
+        if (mongoose.connection.readyState === 1) {
+          try {
+            const settings = await GlobalSettings.getOrCreate();
+            await settings.updateTrendingTopics(trendingTopicsCache, trendingTopicsWithSources);
+            console.log('[TRENDING] Migrated trending topics from file to MongoDB');
+          } catch (error) {
+            console.error('[TRENDING] Error migrating to MongoDB:', error.message);
+          }
+        }
+        return; // Successfully loaded from file
       }
+    }
+    
+    // If we get here, neither MongoDB nor file had data
+    if (!loadedFromMongoDB) {
+      console.log('[TRENDING] No cache found, starting with empty trending topics');
     }
   } catch (error) {
     console.error('[TRENDING] Error loading trending topics from file:', error);
   }
+  
+  // If trending topics are still empty after trying all sources, trigger an update
+  if (trendingTopicsCache.length === 0) {
+    console.log('[TRENDING] No trending topics found, triggering automatic update...');
+    // Trigger update asynchronously (don't await to avoid blocking startup)
+    updateTrendingTopics().catch(error => {
+      console.error('[TRENDING] Failed to auto-update trending topics:', error);
+    });
+  }
 }
 
-// Save trending topics to file
-function saveTrendingTopicsToFile() {
+// Save trending topics to MongoDB (with file backup)
+async function saveTrendingTopics() {
+  // Try MongoDB first
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const settings = await GlobalSettings.getOrCreate();
+      await settings.updateTrendingTopics(trendingTopicsCache, trendingTopicsWithSources);
+      const sourcesCount = Object.keys(trendingTopicsWithSources || {}).length;
+      console.log(`[TRENDING] Saved ${trendingTopicsCache.length} trending topics and ${sourcesCount} topic sources to MongoDB`);
+      // Also save to file as backup
+      try {
+        const data = {
+          topics: trendingTopicsCache,
+          topicsWithSources: trendingTopicsWithSources || {},
+          lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null
+        };
+        fs.writeFileSync(TRENDING_TOPICS_FILE, JSON.stringify(data, null, 2), 'utf8');
+      } catch (fileError) {
+        // Non-critical - MongoDB is primary storage
+        console.warn('[TRENDING] Could not save backup to file:', fileError.message);
+      }
+      return;
+    } catch (error) {
+      console.error('[TRENDING] Error saving to MongoDB, falling back to file:', error.message);
+    }
+  }
+  
+  // Fallback to file if MongoDB not available
   try {
     const data = {
       topics: trendingTopicsCache,
+      topicsWithSources: trendingTopicsWithSources || {},
       lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null
     };
     fs.writeFileSync(TRENDING_TOPICS_FILE, JSON.stringify(data, null, 2), 'utf8');
-    console.log(`[TRENDING] Saved ${trendingTopicsCache.length} trending topics to cache file`);
+    const sourcesCount = Object.keys(trendingTopicsWithSources || {}).length;
+    console.log(`[TRENDING] Saved ${trendingTopicsCache.length} trending topics and ${sourcesCount} topic sources to cache file`);
   } catch (error) {
     console.error('[TRENDING] Error saving trending topics to file:', error);
   }
 }
 
-// Load trending topics on startup
-loadTrendingTopicsFromFile();
+// Load trending topics on startup (async, but don't block)
+// Try loading immediately in case MongoDB is already connected
+loadTrendingTopics().catch(error => {
+  console.error('[TRENDING] Failed to load trending topics on startup:', error);
+});
+
+// Also load trending topics when MongoDB connects (in case it wasn't connected on startup)
+mongoose.connection.on('connected', () => {
+  console.log('[TRENDING] MongoDB connected, loading trending topics...');
+  loadTrendingTopics().then(() => {
+    // After loading, check if we still have empty trending topics and trigger update if needed
+    if (trendingTopicsCache.length === 0) {
+      console.log('[TRENDING] Trending topics still empty after MongoDB connection, triggering update...');
+      updateTrendingTopics().catch(error => {
+        console.error('[TRENDING] Failed to auto-update trending topics after MongoDB connection:', error);
+      });
+    }
+  }).catch(error => {
+    console.error('[TRENDING] Failed to load trending topics after MongoDB connection:', error);
+    // Even if load failed, try to update if cache is empty
+    if (trendingTopicsCache.length === 0) {
+      console.log('[TRENDING] Triggering update after failed load...');
+      updateTrendingTopics().catch(updateError => {
+        console.error('[TRENDING] Failed to auto-update trending topics:', updateError);
+      });
+    }
+  });
+});
 
 // Extract trending topics using ChatGPT analysis of news articles
-async function extractTrendingTopicsWithChatGPT(articles) {
+async function extractTrendingTopicsWithChatGPT(articles, initialTopics = []) {
   try {
     if (!OPENAI_API_KEY) {
       console.log('[TRENDING] OpenAI API key not configured, skipping ChatGPT analysis');
@@ -2809,7 +2931,12 @@ async function extractTrendingTopicsWithChatGPT(articles) {
       `${index + 1}. ${article.title} (${article.source})\n   ${article.description}`
     ).join('\n\n');
     
-    const prompt = `Analyze the following news articles from major sources and extract the 8 most important trending topics/keywords that would be relevant for a news summary app. Focus on:
+    // Include initial topics from headline analysis if available
+    const initialTopicsText = initialTopics.length > 0 
+      ? `\n\nInitial topics extracted from headlines (for reference): ${initialTopics.join(', ')}`
+      : '';
+    
+    const prompt = `Analyze the following news articles from 9 major trusted sources (CNN, BBC, Reuters, NBC, AP, Bloomberg, NY Times, USA Today, NPR) and extract the 8 most important trending topics/keywords that would be relevant for a news summary app. Focus on:
 
 1. Major political events, policy changes, or government actions
 2. Significant business/economic developments
@@ -2820,15 +2947,23 @@ async function extractTrendingTopicsWithChatGPT(articles) {
 7. International relations or global events
 8. Environmental or climate-related news
 
-IMPORTANT: Each topic should be a complete, coherent phrase (1-3 words) that makes sense on its own. Avoid generic terms like "news", "report", "update", "latest", or weather-related terms unless they're truly significant events.
+CRITICAL REQUIREMENTS:
+- Each topic should be a complete, coherent phrase (2-4 words) that makes sense on its own
+- Avoid person names unless they represent major breaking news (e.g., "Trump Trial" is OK, but "John Smith" is not)
+- Avoid overlapping or duplicate topics (e.g., don't include both "Israel-Gaza Conflict" and "Israel-Hamas War" - pick the most comprehensive one)
+- Focus on events, issues, and developments - not individual people unless they're central to a major story
+- Avoid generic terms like "news", "report", "update", "latest", or weather-related terms unless they're truly significant events
+- Ensure topics are distinct and cover different aspects of current events
 
-Examples of good topics: "Federal Reserve", "Tesla Stock", "Olympic Games", "Climate Summit"
-Examples of bad topics: "Meta", "Fights", "Million", "Penalty" (too fragmented)
+Examples of good topics: "Federal Reserve Policy", "Tesla Stock Performance", "Olympic Games 2024", "Climate Summit", "Election Results"
+Examples of bad topics: "Meta", "Fights", "Million", "Penalty" (too fragmented), "John Doe" (person name without context), "Israel Conflict" and "Gaza War" (overlapping)
 
-Return ONLY a comma-separated list of 8 complete, coherent topics, in order of importance:
+IMPORTANT: These articles come from 9 trusted news sources. Prioritize topics that appear across multiple sources as they are more likely to be truly trending. Use the initial topics as a guide but refine them to be more comprehensive and avoid overlaps.
+
+Return ONLY a comma-separated list of exactly 8 distinct, non-overlapping topics, in order of importance. Do NOT use numbered lists or bullet points:
 
 Articles:
-${articlesText}`;
+${articlesText}${initialTopicsText}`;
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -2867,16 +3002,138 @@ ${articlesText}`;
       return [];
     }
     
-    // Parse the comma-separated response
-    let topics = content.split(',').map(topic => topic.trim()).filter(topic => topic.length > 0);
+    // Parse the response - handle both comma-separated and numbered list formats
+    let topics = [];
     
-    // Clean up fragmented topics by filtering out single words that are likely fragments
+    // First, try to handle numbered lists (1. 2. 3. or 1) 2) 3))
+    const numberedListPattern = /^\d+[\.\)]\s*(.+?)(?=\s*\d+[\.\)]|$)/gm;
+    const numberedMatches = [...content.matchAll(numberedListPattern)];
+    
+    if (numberedMatches.length > 0) {
+      // Extract topics from numbered list
+      topics = numberedMatches.map(match => match[1].trim()).filter(topic => topic.length > 0);
+    } else {
+      // Fall back to comma-separated parsing
+      topics = content.split(',').map(topic => topic.trim()).filter(topic => topic.length > 0);
+    }
+    
+    // Clean up topics: remove leading numbers, periods, and other formatting
+    topics = topics.map(topic => {
+      // Remove leading numbers and punctuation (e.g., "1. Topic" -> "Topic")
+      return topic.replace(/^\d+[\.\)]\s*/, '').trim();
+    }).filter(topic => topic.length > 0);
+    
+    // Filter out fragmented topics and person names
     const stopWords = ['meta', 'fights', 'million', 'penalty', 'over', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'];
     topics = topics.filter(topic => {
-      const words = topic.toLowerCase().split(' ');
-      // Keep topics that have 2+ words, or single words that aren't stop words
-      return words.length >= 2 || !stopWords.includes(words[0]);
+      const words = topic.toLowerCase().split(/\s+/);
+      // Keep topics that have 2+ words
+      if (words.length < 2) {
+        return false;
+      }
+      // Filter out topics that are just person names (common pattern: FirstName LastName)
+      // This is a simple heuristic - if it's 2 words that look like a name, skip it
+      const topicParts = topic.split(' ');
+      if (words.length === 2) {
+        // Check if both parts start with capital letters (likely a name)
+        const looksLikeName = /^[A-Z][a-z]+$/.test(topicParts[0]) && /^[A-Z][a-z]+$/.test(topicParts[1]);
+        if (looksLikeName) {
+          // Check if it's actually a news event (e.g., "Trump Trial" has context)
+          const hasContext = topicLower.includes('trial') || 
+                            topicLower.includes('election') ||
+                            topicLower.includes('war') ||
+                            topicLower.includes('conflict') ||
+                            topicLower.includes('summit') ||
+                            topicLower.includes('meeting') ||
+                            topicLower.includes('court') ||
+                            topicLower.includes('verdict') ||
+                            topicLower.includes('arrest') ||
+                            topicLower.includes('resignation');
+          if (!hasContext) {
+            return false; // Likely just a person name without news context
+          }
+        }
+      }
+      return true;
     });
+    
+    // Deduplicate similar/overlapping topics
+    const deduplicatedTopics = [];
+    
+    for (const topic of topics) {
+      const topicLower = topic.toLowerCase();
+      const words = topicLower.split(/[\s\-]+/); // Split on spaces and hyphens
+      
+      // Check for overlap with existing topics
+      let isDuplicate = false;
+      let replaceIndex = -1;
+      
+      for (let i = 0; i < deduplicatedTopics.length; i++) {
+        const existingTopic = deduplicatedTopics[i];
+        const existingLower = existingTopic.toLowerCase();
+        const existingWords = existingLower.split(/[\s\-]+/);
+        
+        // Check if topics share significant keywords (2+ words overlap, excluding common words)
+        const commonWords = words.filter(w => {
+          return existingWords.includes(w) && 
+                 w.length > 3 && 
+                 !['the', 'and', 'for', 'with', 'from', 'about'].includes(w);
+        });
+        
+        if (commonWords.length >= 2) {
+          // They overlap significantly - keep the more comprehensive one
+          if (topic.length > existingTopic.length) {
+            replaceIndex = i;
+          }
+          isDuplicate = true;
+          break;
+        }
+        
+        // Check if one topic is contained in another (e.g., "Israel-Gaza Conflict" vs "Gaza War")
+        // Only consider containment if the shorter one is at least 5 characters
+        if (topicLower.length >= 5 && existingLower.length >= 5) {
+          if (topicLower.includes(existingLower) || existingLower.includes(topicLower)) {
+            // Keep the longer, more specific one
+            if (topic.length > existingTopic.length) {
+              replaceIndex = i;
+            }
+            isDuplicate = true;
+            break;
+          }
+        }
+        
+        // Special case: check for similar conflicts/wars (e.g., "Israel-Gaza Conflict" vs "Israel-Hamas War")
+        // If they share a location/keyword and both mention conflict/war, merge them
+        const conflictKeywords = ['conflict', 'war', 'crisis', 'tension', 'fighting'];
+        const hasConflictKeyword = conflictKeywords.some(kw => topicLower.includes(kw));
+        const existingHasConflictKeyword = conflictKeywords.some(kw => existingLower.includes(kw));
+        
+        if (hasConflictKeyword && existingHasConflictKeyword) {
+          // Check if they share a location or main subject
+          const locationWords = words.filter(w => w.length > 4 && !conflictKeywords.includes(w));
+          const existingLocationWords = existingWords.filter(w => w.length > 4 && !conflictKeywords.includes(w));
+          const sharedLocations = locationWords.filter(w => existingLocationWords.includes(w));
+          
+          if (sharedLocations.length >= 1) {
+            // They're about the same conflict - keep the more comprehensive one
+            if (topic.length > existingTopic.length) {
+              replaceIndex = i;
+            }
+            isDuplicate = true;
+            break;
+          }
+        }
+      }
+      
+      if (isDuplicate && replaceIndex >= 0) {
+        // Replace the existing topic with the more comprehensive one
+        deduplicatedTopics[replaceIndex] = topic;
+      } else if (!isDuplicate) {
+        deduplicatedTopics.push(topic);
+      }
+    }
+    
+    topics = deduplicatedTopics.slice(0, 8); // Limit to 8 topics
     
     console.log(`[TRENDING] ChatGPT extracted ${topics.length} topics: ${topics.join(', ')}`);
     
@@ -2931,11 +3188,12 @@ async function updateTrendingTopics() {
     
     console.log('[TRENDING] Fetching top articles from major news sources...');
     
-    // Fetch top articles from each source
+    // Fetch top articles from each source (increase limit to get more comprehensive coverage)
     const allArticles = [];
     for (const source of newsSources) {
       try {
-        const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&languages=en&limit=3&sort=published_desc`;
+        // Fetch 5 articles per source for better topic coverage
+        const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&languages=en&limit=5&sort=published_desc`;
         const response = await fetch(url);
         
         if (response.ok) {
@@ -2958,21 +3216,36 @@ async function updateTrendingTopics() {
       return;
     }
     
-    console.log(`[TRENDING] Total articles collected: ${allArticles.length}`);
+    console.log(`[TRENDING] Total articles collected: ${allArticles.length} from ${newsSources.length} sources`);
     
-    // Use ChatGPT to analyze articles and extract trending topics
-    const result = await extractTrendingTopicsWithChatGPT(allArticles);
+    // First, extract trending topics directly from headlines of these high-quality sources
+    // This ensures we're getting topics that are actually trending across multiple trusted sources
+    const headlineTopics = extractBreakingNewsTopics(allArticles);
+    console.log(`[TRENDING] Extracted ${headlineTopics.length} topics from headlines: ${headlineTopics.join(', ')}`);
+    
+    // Use ChatGPT to refine, deduplicate, and improve topics from these sources
+    // Pass both the articles and the initial topics to help ChatGPT understand what's trending
+    const result = await extractTrendingTopicsWithChatGPT(allArticles, headlineTopics);
     
     if (result && result.topics && result.topics.length > 0) {
       trendingTopicsCache = result.topics;
       trendingTopicsWithSources = result.topicsWithSources;
       lastTrendingUpdate = new Date();
-      console.log(`[TRENDING] Updated trending topics via ChatGPT analysis: ${result.topics.join(', ')}`);
-      // Save to file for persistence
-      saveTrendingTopicsToFile();
+      console.log(`[TRENDING] Updated trending topics from ${newsSources.length} sources via ChatGPT analysis: ${result.topics.join(', ')}`);
+      // Save to MongoDB (with file backup)
+      await saveTrendingTopics();
     } else {
-      console.log('[TRENDING] ChatGPT analysis failed, using fallback approach');
-      await updateTrendingTopicsFallback();
+      // Fallback: use the headline-extracted topics if ChatGPT fails
+      if (headlineTopics.length >= 3) {
+        trendingTopicsCache = headlineTopics.slice(0, 8);
+        trendingTopicsWithSources = {};
+        lastTrendingUpdate = new Date();
+        console.log(`[TRENDING] Using headline-extracted topics as fallback: ${trendingTopicsCache.join(', ')}`);
+        await saveTrendingTopics();
+      } else {
+        console.log('[TRENDING] Not enough topics from headlines, using full fallback approach');
+        await updateTrendingTopicsFallback();
+      }
     }
     
   } catch (error) {
@@ -3002,22 +3275,130 @@ async function updateTrendingTopicsFallback() {
     
     const trendingTopics = extractBreakingNewsTopics(data.data);
     trendingTopicsCache = trendingTopics;
+    // Clear topicsWithSources since fallback method doesn't provide sources
+    trendingTopicsWithSources = {};
     lastTrendingUpdate = new Date();
     
     console.log(`[TRENDING] Updated trending topics via fallback (${randomCategory}): ${trendingTopics.join(', ')}`);
-    // Save to file for persistence
-    saveTrendingTopicsToFile();
+    // Save to MongoDB (with file backup)
+    await saveTrendingTopics();
   } catch (error) {
     console.error('[TRENDING] Fallback method failed:', error);
   }
 }
 
-// AUTO-UPDATE DISABLED: Trending topics will only update manually via /api/trending-topics/update endpoint
-// Run immediately on startup
-// updateTrendingTopics();
+// --- Daily Trending Topics Update Scheduler ---
+// Update trending topics every morning at 5 AM PST
+let trendingTopicsUpdateTimeout = null;
+let trendingTopicsUpdateRunning = false;
 
-// Then run every 30 minutes for breaking news
-// setInterval(updateTrendingTopics, 30 * 60 * 1000); // 30 minutes
+// Function to update trending topics (wrapper to prevent concurrent runs)
+async function runTrendingTopicsUpdate() {
+  if (trendingTopicsUpdateRunning) {
+    console.log('[TRENDING] Update already running, skipping concurrent execution');
+    return;
+  }
+  
+  trendingTopicsUpdateRunning = true;
+  
+  try {
+    console.log('[TRENDING] Starting scheduled daily update at 5 AM PST...');
+    await updateTrendingTopics();
+    console.log('[TRENDING] Daily update completed successfully');
+  } catch (error) {
+    console.error('[TRENDING] Error in scheduled daily update:', error);
+  } finally {
+    trendingTopicsUpdateRunning = false;
+  }
+}
+
+// Function to schedule the next 5 AM PST update
+function scheduleTrendingTopicsUpdate() {
+  // Clear any existing timeout
+  if (trendingTopicsUpdateTimeout) {
+    clearTimeout(trendingTopicsUpdateTimeout);
+    trendingTopicsUpdateTimeout = null;
+  }
+  
+  const now = new Date();
+  
+  // Get current time in PST/PDT (America/Los_Angeles handles DST automatically)
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  const pstTimeParts = formatter.formatToParts(now);
+  const pstHour = parseInt(pstTimeParts.find(p => p.type === 'hour').value);
+  const pstMinute = parseInt(pstTimeParts.find(p => p.type === 'minute').value);
+  const pstSecond = parseInt(pstTimeParts.find(p => p.type === 'second').value);
+  
+  // Calculate milliseconds until next 5 AM PST
+  let msUntilNextUpdate;
+  
+  // If we're in the 5 AM window (4:55 - 5:05), check every minute
+  if ((pstHour === 4 && pstMinute >= 55) || (pstHour === 5 && pstMinute <= 5)) {
+    // Check every minute during the update window
+    msUntilNextUpdate = 60 * 1000; // 1 minute
+  } else {
+    // Calculate time until next 5 AM PST
+    let hoursUntil5AM = 0;
+    let minutesUntil5AM = 0;
+    
+    if (pstHour < 5) {
+      // 5 AM is later today
+      hoursUntil5AM = 5 - pstHour;
+      minutesUntil5AM = -pstMinute;
+    } else {
+      // 5 AM is tomorrow
+      hoursUntil5AM = 24 - pstHour + 5;
+      minutesUntil5AM = -pstMinute;
+    }
+    
+    // Calculate total milliseconds
+    const totalMinutes = hoursUntil5AM * 60 + minutesUntil5AM;
+    const totalSeconds = totalMinutes * 60 - pstSecond;
+    msUntilNextUpdate = totalSeconds * 1000 - now.getMilliseconds();
+    
+    // If calculation resulted in negative or very small value, schedule for next day
+    if (msUntilNextUpdate < 60000) {
+      // Schedule for next day at 5 AM
+      hoursUntil5AM = 24 - pstHour + 5;
+      minutesUntil5AM = -pstMinute;
+      const nextDayMinutes = hoursUntil5AM * 60 + minutesUntil5AM;
+      const nextDaySeconds = nextDayMinutes * 60 - pstSecond;
+      msUntilNextUpdate = nextDaySeconds * 1000 - now.getMilliseconds();
+    }
+    
+    // Cap at 24 hours to avoid very long timeouts
+    if (msUntilNextUpdate > 24 * 60 * 60 * 1000) {
+      msUntilNextUpdate = 24 * 60 * 60 * 1000;
+    }
+  }
+  
+  const hoursUntil = Math.floor(msUntilNextUpdate / (60 * 60 * 1000));
+  const minutesUntil = Math.floor((msUntilNextUpdate % (60 * 60 * 1000)) / (60 * 1000));
+  
+  console.log(`[TRENDING] Next daily update scheduled in ${hoursUntil}h ${minutesUntil}m (at 5:00 AM PST)`);
+  
+  trendingTopicsUpdateTimeout = setTimeout(() => {
+    trendingTopicsUpdateTimeout = null;
+    runTrendingTopicsUpdate().then(() => {
+      // Schedule the next update
+      scheduleTrendingTopicsUpdate();
+    }).catch((error) => {
+      console.error('[TRENDING] Error in scheduled update, will retry:', error);
+      // Still schedule next update even on error
+      scheduleTrendingTopicsUpdate();
+    });
+  }, msUntilNextUpdate);
+}
+
+// Start the daily trending topics update scheduler
+console.log(`[TRENDING] Daily trending topics update scheduler ENABLED - will update every morning at 5:00 AM PST`);
+scheduleTrendingTopicsUpdate();
 
 // --- Deployment Protection ---
 const DEPLOYMENT_MODE = process.env.DEPLOYMENT_MODE || 'development';

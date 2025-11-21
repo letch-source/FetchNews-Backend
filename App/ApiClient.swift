@@ -23,6 +23,10 @@ final class ApiClient {
         authToken = token
     }
     
+    static func getAuthToken() -> String? {
+        return authToken
+    }
+    
     static var isAuthenticated: Bool {
         return authToken != nil
     }
@@ -52,13 +56,17 @@ final class ApiClient {
         }
     }
     
-    static func register(email: String, password: String) async throws -> AuthResponse {
-        let endpoint = "/api/auth/register"
+    static func updateUserName(_ name: String?) async throws {
+        let endpoint = "/api/auth/name"
         var req = URLRequest(url: base.appendingPathComponent(endpoint))
-        req.httpMethod = "POST"
+        req.httpMethod = "PUT"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        let body = ["email": email, "password": password]
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let body: [String: Any?] = ["name": name]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         
         let (data, response) = try await session.data(for: req)
@@ -67,21 +75,19 @@ final class ApiClient {
             throw NetworkError.invalidResponse
         }
         
-        if httpResponse.statusCode == 201 {
-            return try JSONDecoder().decode(AuthResponse.self, from: data)
-        } else {
+        if httpResponse.statusCode != 200 {
             let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
             throw NetworkError.serverError(errorResponse.error)
         }
     }
     
-    static func login(email: String, password: String) async throws -> AuthResponse {
-        let endpoint = "/api/auth/login"
+    static func authenticateWithGoogle(idToken: String) async throws -> AuthResponse {
+        let endpoint = "/api/auth/google"
         var req = URLRequest(url: base.appendingPathComponent(endpoint))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        let body = ["email": email, "password": password]
+        let body = ["idToken": idToken]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         
         let (data, response) = try await session.data(for: req)
@@ -148,59 +154,6 @@ final class ApiClient {
         }
         
         if httpResponse.statusCode != 200 {
-            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
-            throw NetworkError.serverError(errorResponse.error)
-        }
-    }
-    
-    // MARK: - Password Reset
-    
-    static func requestPasswordReset(email: String) async throws -> String {
-        let endpoint = "/api/auth/forgot-password"
-        var req = URLRequest(url: base.appendingPathComponent(endpoint))
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let body = ["email": email]
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        
-        let (data, response) = try await session.data(for: req)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError.invalidResponse
-        }
-        
-        if httpResponse.statusCode == 200 {
-            let response = try JSONDecoder().decode([String: String].self, from: data)
-            return response["message"] ?? "Password reset email sent"
-        } else {
-            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
-            throw NetworkError.serverError(errorResponse.error)
-        }
-    }
-    
-    static func resetPassword(token: String, newPassword: String) async throws -> String {
-        let endpoint = "/api/auth/reset-password"
-        var req = URLRequest(url: base.appendingPathComponent(endpoint))
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let body = [
-            "token": token,
-            "newPassword": newPassword
-        ]
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        
-        let (data, response) = try await session.data(for: req)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError.invalidResponse
-        }
-        
-        if httpResponse.statusCode == 200 {
-            let response = try JSONDecoder().decode([String: String].self, from: data)
-            return response["message"] ?? "Password reset successful"
-        } else {
             let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
             throw NetworkError.serverError(errorResponse.error)
         }
@@ -652,6 +605,17 @@ final class ApiClient {
                 return convertBatchResponseToSummarizeResponse(batchResponse)
             }
         } catch {
+            // Check if this is a cancellation - don't log or treat as error
+            if let urlError = error as? URLError, urlError.code == .cancelled {
+                // Silently handle cancellation - this is expected when tasks are cancelled
+                throw CancellationError()
+            }
+            
+            // Check for Swift Task cancellation
+            if error is CancellationError {
+                throw error
+            }
+            
             print("Error in summarize: \(error)")
             if let urlError = error as? URLError {
                 switch urlError.code {
