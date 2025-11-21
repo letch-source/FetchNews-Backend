@@ -116,6 +116,10 @@ router.post('/google', async (req, res) => {
             if (email_verified) {
               user.emailVerified = true;
             }
+            // Update name if provided and not already set
+            if (name && !user.name) {
+              user.name = name;
+            }
             await user.save();
           } else {
             // User has different googleId - this shouldn't happen, but handle gracefully
@@ -126,14 +130,21 @@ router.post('/google', async (req, res) => {
           user = new User({
             email: email.toLowerCase(),
             googleId: googleId,
-            emailVerified: email_verified || false
+            emailVerified: email_verified || false,
+            name: name || null
           });
           await user.save();
         }
       } else {
-        // Update email verification status if needed
+        // Update email verification status and name if needed
         if (email_verified && !user.emailVerified) {
           user.emailVerified = true;
+        }
+        // Update name if provided and not already set
+        if (name && !user.name) {
+          user.name = name;
+        }
+        if (user.isModified()) {
           await user.save();
         }
       }
@@ -142,8 +153,13 @@ router.post('/google', async (req, res) => {
       const existingUser = await fallbackAuth.findUserByGoogleId(googleId);
       if (existingUser) {
         user = existingUser;
+        // Update name if provided and not already set
+        if (name && !user.name) {
+          user.name = name;
+          await fallbackAuth.saveUser(user);
+        }
       } else {
-        user = await fallbackAuth.createGoogleUser(email, googleId);
+        user = await fallbackAuth.createGoogleUser(email, googleId, name);
       }
     }
 
@@ -207,7 +223,8 @@ router.post('/google', async (req, res) => {
         selectedVoice: preferences.selectedVoice || 'alloy',
         playbackRate: preferences.playbackRate || 1.0,
         upliftingNewsOnly: preferences.upliftingNewsOnly || false,
-        selectedNewsSources: preferences.selectedNewsSources || []
+        selectedNewsSources: preferences.selectedNewsSources || [],
+        name: user.name || null
       }
     });
   } catch (error) {
@@ -447,12 +464,41 @@ router.get('/me', authenticateToken, async (req, res) => {
         subscriptionExpiresAt: user.subscriptionExpiresAt,
         customTopics: user.customTopics || [],
         summaryHistory: user.summaryHistory || [],
-        selectedTopics: preferences.selectedTopics || []
+        selectedTopics: preferences.selectedTopics || [],
+        name: user.name || null
       }
     });
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ error: 'Failed to get user' });
+  }
+});
+
+// Update user name
+router.put('/name', authenticateToken, async (req, res) => {
+  try {
+    const { name } = req.body;
+    const user = req.user;
+    
+    if (isDatabaseAvailable()) {
+      user.name = name || null;
+      await user.save();
+    } else {
+      user.name = name || null;
+      await fallbackAuth.saveUser(user);
+    }
+    
+    res.json({
+      message: 'Name updated successfully',
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name || null
+      }
+    });
+  } catch (error) {
+    console.error('Update name error:', error);
+    res.status(500).json({ error: 'Failed to update name' });
   }
 });
 

@@ -1181,12 +1181,22 @@ function addIntroAndOutro(summary, topics, goodNewsOnly = false, user = null) {
     timeGreeting = "Good evening";
   }
   
+  // Extract first name from user's name if available
+  let firstName = null;
+  if (user?.name) {
+    const nameParts = user.name.trim().split(/\s+/);
+    firstName = nameParts[0] || null;
+  }
+  
   // Format topics for the intro
   const topicsText = Array.isArray(topics) ? topics.join(", ") : topics;
   const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
   
+  // Add personalized greeting with first name if available
+  const personalizedGreeting = firstName ? `${timeGreeting}, ${firstName}` : timeGreeting;
+  
   // Add intro and outro
-  const intro = `${timeGreeting}, here's your ${upliftingPrefix}${topicsText} news update. `;
+  const intro = `${personalizedGreeting}, here's your ${upliftingPrefix}${topicsText} news update. `;
   const outro = " That's it for your news summary, brought to you by Fetch News.";
   
   return intro + summary.trim() + outro;

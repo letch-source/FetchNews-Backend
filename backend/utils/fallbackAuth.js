@@ -191,11 +191,12 @@ const fallbackAuth = {
     return null;
   },
   
-  async createGoogleUser(email, googleId) {
+  async createGoogleUser(email, googleId, name = null) {
     const user = {
       _id: `fallback-${Date.now()}`,
       email,
       googleId: googleId,
+      name: name || null,
       isPremium: false,
       dailyUsageCount: 0,
       lastUsageDate: new Date(),
