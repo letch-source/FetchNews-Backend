@@ -336,7 +336,7 @@ router.post('/:id/execute', authenticateToken, async (req, res) => {
 async function executeScheduledSummary(user, summary) {
   try {
     // Lazy require to avoid circular dependency with index.js
-    const { fetchArticlesForTopic, summarizeArticles, addIntroAndOutro, filterRelevantArticles, isUpliftingNews } = require('../index');
+    const { fetchArticlesForTopic, summarizeArticles, addIntroAndOutro, combineTopicSummaries, filterRelevantArticles, isUpliftingNews } = require('../index');
     
     console.log(`[SCHEDULER] Executing scheduled fetch "${summary.name}" for user ${user.email}`);
     
@@ -366,7 +366,7 @@ async function executeScheduledSummary(user, summary) {
     }
     
     const items = [];
-    const combinedPieces = [];
+    const summariesWithTopics = [];
     
     // Helper function to process a single topic (extracted for parallelization)
     async function processTopic(topic) {
@@ -428,20 +428,22 @@ async function executeScheduledSummary(user, summary) {
     // Process all topics in parallel for better performance
     const topicResults = await Promise.all(allTopics.map(topic => processTopic(topic)));
     
-    // Combine results from parallel processing
-    for (const result of topicResults) {
+    // Combine results from parallel processing, tracking which summary belongs to which topic
+    for (let i = 0; i < topicResults.length; i++) {
+      const result = topicResults[i];
+      const topic = allTopics[i];
       if (result.summary) {
-        combinedPieces.push(result.summary);
+        summariesWithTopics.push({ summary: result.summary, topic: topic });
       }
       items.push(...result.sourceItems);
     }
     
-    // Combine all topic summaries
-    let combinedText = combinedPieces.join(" ").trim();
+    // Combine all topic summaries with varied transitions
+    let combinedText = combineTopicSummaries(summariesWithTopics);
     
     // Validate that we have actual summary content before proceeding
     // If no topics succeeded, don't save or increment usage
-    if (combinedPieces.length === 0 || !combinedText || combinedText.trim().length === 0) {
+    if (summariesWithTopics.length === 0 || !combinedText || combinedText.trim().length === 0) {
       console.log(`[SCHEDULER] No valid summary generated for user ${user.email} - all topics failed or returned empty summaries`);
       console.log(`[SCHEDULER] Skipping save and usage increment for scheduled fetch "${summary.name}"`);
       return; // Exit early without saving or incrementing usage

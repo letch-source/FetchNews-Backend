@@ -1103,6 +1103,63 @@ Requirements:
 }
 
 
+// Helper function to generate varied transition phrases between topics
+function getTopicTransition(topic, index, totalTopics) {
+  // Format topic name for display (capitalize first letter, handle multi-word topics)
+  const formattedTopic = topic.split(' ').map(word => 
+    word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+  ).join(' ');
+  
+  // Array of varied transition phrases
+  const transitions = [
+    `And moving onto news about ${formattedTopic}.`,
+    `Now, let's turn to ${formattedTopic}.`,
+    `Shifting focus to ${formattedTopic}.`,
+    `Next up, ${formattedTopic} news.`,
+    `Turning our attention to ${formattedTopic}.`,
+    `And now for updates on ${formattedTopic}.`,
+    `Let's check in on ${formattedTopic}.`,
+    `Switching gears to ${formattedTopic}.`,
+    `Up next, ${formattedTopic}.`,
+    `Now for ${formattedTopic} updates.`,
+    `Moving forward with ${formattedTopic} news.`,
+    `Here's what's happening in ${formattedTopic}.`,
+    `And in ${formattedTopic} news.`,
+    `Let's dive into ${formattedTopic}.`,
+    `Now covering ${formattedTopic}.`
+  ];
+  
+  // Use index to select a transition (cycles through options)
+  return transitions[index % transitions.length];
+}
+
+// Helper function to combine topic summaries with varied transitions
+function combineTopicSummaries(summariesWithTopics) {
+  if (!summariesWithTopics || summariesWithTopics.length === 0) {
+    return "";
+  }
+  
+  // If only one topic, return it without transition
+  if (summariesWithTopics.length === 1) {
+    return summariesWithTopics[0].summary.trim();
+  }
+  
+  // Combine summaries with transitions
+  const parts = [];
+  summariesWithTopics.forEach((item, index) => {
+    if (item.summary && item.summary.trim()) {
+      // Add transition for all topics except the first one
+      if (index > 0) {
+        const transition = getTopicTransition(item.topic, index - 1, summariesWithTopics.length);
+        parts.push(transition);
+      }
+      parts.push(item.summary.trim());
+    }
+  });
+  
+  return parts.join(" ");
+}
+
 // Helper function to add intro and outro to final summary
 function addIntroAndOutro(summary, topics, goodNewsOnly = false, user = null) {
   if (!summary || summary.trim().length === 0) {
@@ -1469,7 +1526,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     // If no sources selected (or not premium), use all available sources (empty array means no filtering)
 
     const items = [];
-    const combinedPieces = [];
+    const summariesWithTopics = [];
     const globalCandidates = [];
 
     // Helper to format topics like "A and B" or "A, B, and C"
@@ -1613,10 +1670,12 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     // Process all topics in parallel for better performance
     const topicResults = await Promise.all(topics.map(topic => processTopic(topic)));
     
-    // Combine results from parallel processing
-    for (const result of topicResults) {
+    // Combine results from parallel processing, tracking which summary belongs to which topic
+    for (let i = 0; i < topicResults.length; i++) {
+      const result = topicResults[i];
+      const topic = topics[i];
       if (result.summary) {
-        combinedPieces.push(result.summary);
+        summariesWithTopics.push({ summary: result.summary, topic: topic });
       }
       items.push(...result.sourceItems);
       globalCandidates.push(...result.candidates);
@@ -1685,8 +1744,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       return null;
     })() : null;
     
-    // Combine all topic summaries
-    let combinedText = combinedPieces.join(" ").trim();
+    // Combine all topic summaries with varied transitions
+    let combinedText = combineTopicSummaries(summariesWithTopics);
     
     // Add intro and outro to the final summary (once per summary, not per topic)
     combinedText = addIntroAndOutro(combinedText, topics, goodNewsOnly, req.user);
@@ -1820,7 +1879,7 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
         const goodNewsOnly = Boolean(b.goodNewsOnly);
 
         const items = [];
-        const combinedPieces = [];
+        const summariesWithTopics = [];
         const globalCandidates = [];
 
 
@@ -1875,8 +1934,8 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
             }
 
             const summary = await summarizeArticles(topic, { country: location }, relevant, wordCount, goodNewsOnly, req.user);
-            // For multi-topic, each summary already includes its own intro, so use as-is
-            if (summary) combinedPieces.push(summary);
+            // Track summaries with their topics for transition generation
+            if (summary) summariesWithTopics.push({ summary: summary, topic: topic });
 
             const sourceItems = relevant.map((a, idx) => ({
               id: `${topic}-${idx}-${Date.now()}`,
@@ -1915,8 +1974,8 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
           }
         }
 
-        // Combine all topic summaries
-        let combinedText = combinedPieces.join(" ").trim();
+        // Combine all topic summaries with varied transitions
+        let combinedText = combineTopicSummaries(summariesWithTopics);
         
         // Add intro and outro to the final summary (once per summary, not per topic)
         combinedText = addIntroAndOutro(combinedText, topics, goodNewsOnly, req.user);
@@ -3017,6 +3076,7 @@ module.exports = {
   fetchArticlesForTopic,
   summarizeArticles,
   addIntroAndOutro,
+  combineTopicSummaries,
   filterRelevantArticles,
   isUpliftingNews
 };
