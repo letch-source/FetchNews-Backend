@@ -43,46 +43,69 @@ async function saveUserWithRetry(user, retries = 3) {
     } catch (error) {
       if (error.name === 'VersionError' && retries > 1) {
         console.log(`[SCHEDULED_SUMMARY] Version conflict, retrying... (${retries - 1} retries left)`);
+        
         // Reload the document to get the latest version
         const freshUser = await User.findById(user._id);
-        if (freshUser) {
-          // Preserve all changes from the current user object before reloading
-          const modifiedPaths = user.modifiedPaths();
-          const changesToPreserve = {};
-          
-          // Store all modified values
-          for (const path of modifiedPaths) {
-            changesToPreserve[path] = user.get(path);
-          }
-          
-          // Also check for common fields that might have been modified
-          if (user.isModified('scheduledSummaries')) {
-            changesToPreserve['scheduledSummaries'] = user.scheduledSummaries;
-          }
-          if (user.isModified('summaryHistory')) {
-            changesToPreserve['summaryHistory'] = user.summaryHistory;
-          }
-          if (user.isModified('dailyUsageCount')) {
-            changesToPreserve['dailyUsageCount'] = user.dailyUsageCount;
-          }
-          if (user.isModified('lastUsageDate')) {
-            changesToPreserve['lastUsageDate'] = user.lastUsageDate;
-          }
-          
-          // Copy the fresh user data to the original user object
-          Object.assign(user, freshUser.toObject());
-          
-          // Now apply our preserved changes on top of the fresh data
-          for (const [path, value] of Object.entries(changesToPreserve)) {
-            user.set(path, value);
-            user.markModified(path);
-          }
-          
-          retries--;
-          continue;
-        } else {
-          throw error;
+        if (!freshUser) {
+          throw new Error('User not found during retry');
         }
+        
+        // Preserve all changes from the current user object before reloading
+        const modifiedPaths = user.modifiedPaths();
+        const changesToPreserve = {};
+        
+        // Store all modified values - deep clone to avoid reference issues
+        for (const path of modifiedPaths) {
+          const value = user.get(path);
+          if (value !== undefined && value !== null) {
+            // Deep clone objects and arrays to avoid reference issues
+            if (typeof value === 'object' && value !== null && !(value instanceof Date)) {
+              changesToPreserve[path] = JSON.parse(JSON.stringify(value));
+            } else {
+              changesToPreserve[path] = value;
+            }
+          }
+        }
+        
+        // Explicitly check for common fields that might have been modified
+        if (user.isModified('scheduledSummaries')) {
+          changesToPreserve['scheduledSummaries'] = JSON.parse(JSON.stringify(user.scheduledSummaries || []));
+        }
+        if (user.isModified('summaryHistory')) {
+          changesToPreserve['summaryHistory'] = JSON.parse(JSON.stringify(user.summaryHistory || []));
+        }
+        if (user.isModified('dailyUsageCount')) {
+          changesToPreserve['dailyUsageCount'] = user.dailyUsageCount;
+        }
+        if (user.isModified('lastUsageDate')) {
+          changesToPreserve['lastUsageDate'] = user.lastUsageDate;
+        }
+        if (user.isModified('preferences')) {
+          changesToPreserve['preferences'] = JSON.parse(JSON.stringify(user.preferences || {}));
+        }
+        
+        // Apply our preserved changes to the fresh user
+        for (const [path, value] of Object.entries(changesToPreserve)) {
+          freshUser.set(path, value);
+          freshUser.markModified(path);
+        }
+        
+        // Save the fresh user with our changes
+        await freshUser.save();
+        
+        // Reload the user to get a clean document state with the correct version
+        // This ensures the original user reference is properly updated
+        const reloadedUser = await User.findById(user._id);
+        if (!reloadedUser) {
+          throw new Error('User not found after save');
+        }
+        
+        // Update the original user object by reinitializing it with the reloaded user's data
+        // This properly resets all Mongoose document state including version and modified paths
+        user.init(reloadedUser.toObject(), { overwrite: true });
+        
+        // Return immediately since we've already saved successfully
+        return;
       } else {
         throw error;
       }
