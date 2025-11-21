@@ -243,6 +243,37 @@ userSchema.methods.getCustomTopics = function() {
 
 // Summary history management
 userSchema.methods.addSummaryToHistory = async function(summaryData) {
+  // Normalize sources array - handle both string arrays (old format) and object arrays (new format)
+  let normalizedSources = [];
+  if (summaryData.sources && Array.isArray(summaryData.sources)) {
+    normalizedSources = summaryData.sources.map(source => {
+      // If source is a string (old format), convert to object
+      if (typeof source === 'string') {
+        return {
+          id: '',
+          title: '',
+          summary: '',
+          source: source,
+          url: '',
+          topic: ''
+        };
+      }
+      // If source is already an object, ensure it has all required fields
+      if (typeof source === 'object' && source !== null) {
+        return {
+          id: source.id || '',
+          title: source.title || '',
+          summary: source.summary || '',
+          source: source.source || '',
+          url: source.url || '',
+          topic: source.topic || ''
+        };
+      }
+      // Skip invalid entries
+      return null;
+    }).filter(source => source !== null);
+  }
+  
   const historyEntry = {
     id: summaryData.id || Date.now().toString(),
     title: summaryData.title,
@@ -251,7 +282,7 @@ userSchema.methods.addSummaryToHistory = async function(summaryData) {
     length: summaryData.length || 'short',
     timestamp: new Date(),
     audioUrl: summaryData.audioUrl,
-    sources: summaryData.sources || []
+    sources: normalizedSources
   };
   
   // Add to beginning of array (most recent first)
