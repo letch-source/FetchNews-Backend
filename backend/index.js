@@ -2760,6 +2760,8 @@ async function loadTrendingTopics() {
     }
   }
   
+  let loadedFromMongoDB = false;
+  
   // Try MongoDB first
   if (mongoose.connection.readyState === 1) {
     try {
@@ -2770,9 +2772,10 @@ async function loadTrendingTopics() {
         lastTrendingUpdate = settings.lastTrendingUpdate;
         const sourcesCount = Object.keys(trendingTopicsWithSources).length;
         console.log(`[TRENDING] Loaded ${trendingTopicsCache.length} trending topics and ${sourcesCount} topic sources from MongoDB`);
-        return;
+        loadedFromMongoDB = true;
+        return; // Successfully loaded from MongoDB, no need to check file
       } else {
-        console.log('[TRENDING] MongoDB connected but no trending topics found in database');
+        console.log('[TRENDING] MongoDB connected but no trending topics found in database, checking file fallback...');
       }
     } catch (error) {
       console.error('[TRENDING] Error loading from MongoDB, falling back to file:', error.message);
@@ -2808,12 +2811,25 @@ async function loadTrendingTopics() {
             console.error('[TRENDING] Error migrating to MongoDB:', error.message);
           }
         }
+        return; // Successfully loaded from file
       }
-    } else {
+    }
+    
+    // If we get here, neither MongoDB nor file had data
+    if (!loadedFromMongoDB) {
       console.log('[TRENDING] No cache found, starting with empty trending topics');
     }
   } catch (error) {
     console.error('[TRENDING] Error loading trending topics from file:', error);
+  }
+  
+  // If trending topics are still empty after trying all sources, trigger an update
+  if (trendingTopicsCache.length === 0) {
+    console.log('[TRENDING] No trending topics found, triggering automatic update...');
+    // Trigger update asynchronously (don't await to avoid blocking startup)
+    updateTrendingTopics().catch(error => {
+      console.error('[TRENDING] Failed to auto-update trending topics:', error);
+    });
   }
 }
 
@@ -2868,8 +2884,23 @@ loadTrendingTopics().catch(error => {
 // Also load trending topics when MongoDB connects (in case it wasn't connected on startup)
 mongoose.connection.on('connected', () => {
   console.log('[TRENDING] MongoDB connected, loading trending topics...');
-  loadTrendingTopics().catch(error => {
+  loadTrendingTopics().then(() => {
+    // After loading, check if we still have empty trending topics and trigger update if needed
+    if (trendingTopicsCache.length === 0) {
+      console.log('[TRENDING] Trending topics still empty after MongoDB connection, triggering update...');
+      updateTrendingTopics().catch(error => {
+        console.error('[TRENDING] Failed to auto-update trending topics after MongoDB connection:', error);
+      });
+    }
+  }).catch(error => {
     console.error('[TRENDING] Failed to load trending topics after MongoDB connection:', error);
+    // Even if load failed, try to update if cache is empty
+    if (trendingTopicsCache.length === 0) {
+      console.log('[TRENDING] Triggering update after failed load...');
+      updateTrendingTopics().catch(updateError => {
+        console.error('[TRENDING] Failed to auto-update trending topics:', updateError);
+      });
+    }
   });
 });
 
