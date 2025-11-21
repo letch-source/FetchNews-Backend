@@ -12,8 +12,6 @@ struct FetchNewsApp: App {
     @StateObject private var vm = NewsVM()
     @StateObject private var authVM = AuthVM()
     @Environment(\.scenePhase) var scenePhase
-    @State private var showingResetPassword = false
-    @State private var resetToken = ""
     
     // Toggle between new and old UI - set to false to use old ContentView
     private let useNewUI = true
@@ -98,10 +96,6 @@ struct FetchNewsApp: App {
             .onOpenURL { url in
                 handleDeepLink(url)
             }
-            .sheet(isPresented: $showingResetPassword) {
-                ResetPasswordView(resetToken: $resetToken, showingResetPassword: $showingResetPassword)
-                    .environmentObject(authVM)
-            }
         }
     }
     
@@ -109,14 +103,6 @@ struct FetchNewsApp: App {
     private func handleDeepLink(_ url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
             return
-        }
-        
-        // Handle password reset: fetchnews://reset-password?token=xxx
-        if url.path.contains("reset-password") || url.host == "reset-password" {
-            if let token = components.queryItems?.first(where: { $0.name == "token" })?.value {
-                resetToken = token
-                showingResetPassword = true
-            }
         }
         
         // Handle email verification: fetchnews://verify-email?token=xxx

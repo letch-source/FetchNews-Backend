@@ -11,6 +11,8 @@ struct MainTabView: View {
     @EnvironmentObject var vm: NewsVM
     @EnvironmentObject var authVM: AuthVM
     @State private var selectedTab = 0
+    @State private var isScrubbing = false
+    @State private var scrubValue: Double = 0
     
     var body: some View {
         ZStack {
@@ -44,6 +46,32 @@ struct MainTabView: View {
             VStack {
                 Spacer()
                 CustomBottomNavigation(selectedTab: $selectedTab, vm: vm)
+            }
+            
+            // Now-playing bubble - persistent across all tabs
+            VStack {
+                Spacer()
+                if vm.canPlay {
+                    NowPlayingBubble(
+                        title: vm.nowPlayingTitle.isEmpty ? userNewsTitle(from: vm.lastFetchedTopics) : vm.nowPlayingTitle,
+                        isPlaying: vm.isPlaying,
+                        current: isScrubbing ? scrubValue : vm.currentTime,
+                        duration: vm.duration,
+                        onPlayPause: { vm.playPause() },
+                        onScrubChange: { newValue in
+                            scrubValue = newValue
+                            if !isScrubbing { vm.seek(to: newValue) }
+                        },
+                        onScrubEdit: { editing in
+                            isScrubbing = editing
+                            if !editing { vm.seek(to: scrubValue) }
+                        }
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .padding(.bottom, 80) // Space above navigation bar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -119,122 +147,206 @@ struct AccountView: View {
     @EnvironmentObject var vm: NewsVM
     
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
-                // Header
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Fetch News")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .foregroundColor(.primary)
-                            
-                            Text("News for Busy People")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
+        VStack(spacing: 0) {
+            // Header
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Fetch News")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.primary)
                         
-                        // Premium indicator - Hidden
-                        // if let user = authVM.currentUser, user.isPremium {
-                        //     Button("PREMIUM") {
-                        //         // Already premium, could show premium features
-                        //     }
-                        //     .font(.subheadline.weight(.semibold))
-                        //     .padding(.horizontal, 12)
-                        //     .padding(.vertical, 6)
-                        //     .background(Color.yellow)
-                        //     .foregroundColor(.black)
-                        //     .cornerRadius(8)
-                        // }
+                        Text("News for Busy People")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
                     }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-                .background(Color(.systemBackground))
-                
-                // Account Content
-                ScrollView {
-                    VStack(spacing: 24) {
-                        if let user = authVM.currentUser {
-                            // Account Information
-                            VStack(alignment: .leading, spacing: 16) {
-                                Text("Account Information")
-                                    .font(.headline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.primary)
-                                
-                                VStack(spacing: 16) {
-                                    HStack {
-                                        Text("Email")
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-                                            .foregroundColor(.primary)
-                                        Spacer()
-                                        Text(user.email)
-                                            .font(.subheadline)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    
-                                    HStack {
-                                        Text("Status")
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-                                            .foregroundColor(.primary)
-                                        Spacer()
-                                        Text(user.isPremium ? "Premium" : "Free")
-                                            .font(.subheadline)
-                                            .foregroundColor(user.isPremium ? .yellow : .secondary)
-                                    }
-                                    
-                                    if !user.isPremium {
-                                        HStack {
-                                            Text("Daily Usage")
-                                                .font(.subheadline)
-                                                .fontWeight(.medium)
-                                                .foregroundColor(.primary)
-                                            Spacer()
-                                            Text("\(user.dailyUsageCount)/3 Fetches")
-                                                .font(.subheadline)
-                                                .foregroundColor(.secondary)
-                                        }
-                                    }
-                                }
-                                .padding()
-                                .background(Color(.systemGray6))
-                                .cornerRadius(12)
-                            }
-                            
-                            // Account Actions
-                            VStack(alignment: .leading, spacing: 16) {
-                                Text("Account")
-                                    .font(.headline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.primary)
-                                
-                                VStack(spacing: 12) {
-                                    Button("Sign Out") {
-                                        authVM.logout()
-                                    }
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundColor(.red)
-                                    .padding()
-                                    .frame(maxWidth: .infinity)
-                                    .background(Color.red.opacity(0.1))
-                                    .cornerRadius(12)
-                                }
-                                .padding()
-                                .background(Color(.systemGray6))
-                                .cornerRadius(12)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
+                    Spacer()
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .background(Color.darkGreyBackground)
+            
+            // Account Content
+            VStack(spacing: 24) {
+                if let user = authVM.currentUser {
+                    // Account Information
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Account Information")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        
+                        VStack(spacing: 16) {
+                            // Name field
+                            NameInputField(authVM: authVM)
+                            
+                            HStack {
+                                Text("Email")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Text(user.email)
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            HStack {
+                                Text("Status")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Text(user.isPremium ? "Premium" : "Free")
+                                    .font(.subheadline)
+                                    .foregroundColor(user.isPremium ? .yellow : .secondary)
+                            }
+                            
+                            if !user.isPremium {
+                                HStack {
+                                    Text("Daily Usage")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    Text("\(user.dailyUsageCount)/3 Fetches")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                        .padding()
+                        .background(Color(.systemGray6))
+                        .cornerRadius(12)
+                    }
+                    
+                    // Account Actions
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Account")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        
+                        VStack(spacing: 12) {
+                            Button("Sign Out") {
+                                authVM.logout()
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.red)
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(12)
+                        }
+                        .padding()
+                        .background(Color(.systemGray6))
+                        .cornerRadius(12)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .background(Color.darkGreyBackground)
+    }
+}
+
+// Name Input Field Component
+struct NameInputField: View {
+    @ObservedObject var authVM: AuthVM
+    @State private var nameText: String = ""
+    @State private var isEditing: Bool = false
+    @State private var isSaving: Bool = false
+    
+    var body: some View {
+        HStack {
+            Text("Name")
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(.primary)
+            Spacer()
+            
+            if isEditing {
+                HStack {
+                    TextField("Enter your name", text: $nameText)
+                        .font(.subheadline)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 150)
+                    
+                    Button(action: {
+                        Task {
+                            await saveName()
+                        }
+                    }) {
+                        if isSaving {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "checkmark")
+                                .foregroundColor(.green)
+                        }
+                    }
+                    .disabled(isSaving)
+                    
+                    Button(action: {
+                        cancelEditing()
+                    }) {
+                        Image(systemName: "xmark")
+                            .foregroundColor(.red)
+                    }
+                    .disabled(isSaving)
+                }
+            } else {
+                HStack {
+                    Text(authVM.currentUser?.name ?? "Not set")
+                        .font(.subheadline)
+                        .foregroundColor(authVM.currentUser?.name != nil ? .secondary : .secondary.opacity(0.6))
+                    
+                    Button(action: {
+                        startEditing()
+                    }) {
+                        Image(systemName: "pencil")
+                            .foregroundColor(.blue)
+                            .font(.caption)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            nameText = authVM.currentUser?.name ?? ""
+        }
+    }
+    
+    private func startEditing() {
+        nameText = authVM.currentUser?.name ?? ""
+        isEditing = true
+    }
+    
+    private func cancelEditing() {
+        nameText = authVM.currentUser?.name ?? ""
+        isEditing = false
+    }
+    
+    private func saveName() async {
+        isSaving = true
+        defer { isSaving = false }
+        
+        do {
+            let trimmedName = nameText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let nameToSave = trimmedName.isEmpty ? nil : trimmedName
+            try await ApiClient.updateUserName(nameToSave)
+            
+            // Refresh user data to get updated name
+            await authVM.refreshUser()
+            
+            isEditing = false
+        } catch {
+            print("Failed to update name: \(error)")
+            // Optionally show an error message to the user
         }
     }
 }

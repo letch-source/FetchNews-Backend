@@ -9,8 +9,6 @@ import SwiftUI
 
 struct WelcomeView: View {
     @EnvironmentObject var authVM: AuthVM
-    @State private var showingLogin = false
-    @State private var showingSignUp = false
     
     var body: some View {
         NavigationView {
@@ -52,35 +50,32 @@ struct WelcomeView: View {
                     
                     Spacer()
                     
-                    // Action buttons
+                    // Google Sign-In button
                     VStack(spacing: isSmallScreen ? 10 : 14) {
                         Button(action: {
-                            showingLogin = true
+                            Task {
+                                await authVM.signInWithGoogle()
+                            }
                         }) {
-                            Text("Login")
-                                .font(isSmallScreen ? .body.weight(.semibold) : .headline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, isSmallScreen ? 13 : 15)
-                                .background(Color.blue)
-                                .foregroundColor(.white)
-                                .cornerRadius(12)
+                            HStack {
+                                if authVM.isLoading {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        .scaleEffect(0.8)
+                                } else {
+                                    Image(systemName: "globe")
+                                        .font(.headline)
+                                }
+                                Text(authVM.isLoading ? "Signing in..." : "Sign in with Google")
+                                    .font(isSmallScreen ? .body.weight(.semibold) : .headline.weight(.semibold))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, isSmallScreen ? 13 : 15)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
                         }
-                        
-                        Button(action: {
-                            showingSignUp = true
-                        }) {
-                            Text("Sign Up")
-                                .font(isSmallScreen ? .body.weight(.semibold) : .headline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, isSmallScreen ? 13 : 15)
-                                .background(Color.white)
-                                .foregroundColor(.blue)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color.blue, lineWidth: 2)
-                                )
-                                .cornerRadius(12)
-                        }
+                        .disabled(authVM.isLoading)
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, max(30, geometry.safeAreaInsets.bottom + 30))
@@ -90,14 +85,6 @@ struct WelcomeView: View {
             }
             .navigationTitle("")
             .navigationBarHidden(true)
-        }
-        .sheet(isPresented: $showingLogin) {
-            AuthView(isLoginMode: true)
-                .environmentObject(authVM)
-        }
-        .sheet(isPresented: $showingSignUp) {
-            AuthView(isLoginMode: false)
-                .environmentObject(authVM)
         }
     }
 }

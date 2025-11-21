@@ -36,27 +36,37 @@ function getTimeBasedFetchName(timestamp = null) {
 // Helper function to save user with retry logic for version conflicts
 // Preserves all changes made to the user object, not just scheduledSummaries
 async function saveUserWithRetry(user, retries = 3) {
+  let currentUser = user;
+  
   while (retries > 0) {
     try {
-      await user.save();
-      return;
+      await currentUser.save();
+      // Update the original user reference with the saved user's data
+      if (currentUser !== user) {
+        Object.keys(currentUser.toObject()).forEach(key => {
+          if (key !== '_id' && key !== '__v') {
+            user[key] = currentUser[key];
+          }
+        });
+      }
+      return currentUser;
     } catch (error) {
       if (error.name === 'VersionError' && retries > 1) {
         console.log(`[SCHEDULED_SUMMARY] Version conflict, retrying... (${retries - 1} retries left)`);
         
         // Reload the document to get the latest version
-        const freshUser = await User.findById(user._id);
+        const freshUser = await User.findById(currentUser._id);
         if (!freshUser) {
           throw new Error('User not found during retry');
         }
         
         // Preserve all changes from the current user object before reloading
-        const modifiedPaths = user.modifiedPaths();
+        const modifiedPaths = currentUser.modifiedPaths();
         const changesToPreserve = {};
         
         // Store all modified values - deep clone to avoid reference issues
         for (const path of modifiedPaths) {
-          const value = user.get(path);
+          const value = currentUser.get(path);
           if (value !== undefined && value !== null) {
             // Deep clone objects and arrays to avoid reference issues
             if (typeof value === 'object' && value !== null && !(value instanceof Date)) {
@@ -68,20 +78,20 @@ async function saveUserWithRetry(user, retries = 3) {
         }
         
         // Explicitly check for common fields that might have been modified
-        if (user.isModified('scheduledSummaries')) {
-          changesToPreserve['scheduledSummaries'] = JSON.parse(JSON.stringify(user.scheduledSummaries || []));
+        if (currentUser.isModified('scheduledSummaries')) {
+          changesToPreserve['scheduledSummaries'] = JSON.parse(JSON.stringify(currentUser.scheduledSummaries || []));
         }
-        if (user.isModified('summaryHistory')) {
-          changesToPreserve['summaryHistory'] = JSON.parse(JSON.stringify(user.summaryHistory || []));
+        if (currentUser.isModified('summaryHistory')) {
+          changesToPreserve['summaryHistory'] = JSON.parse(JSON.stringify(currentUser.summaryHistory || []));
         }
-        if (user.isModified('dailyUsageCount')) {
-          changesToPreserve['dailyUsageCount'] = user.dailyUsageCount;
+        if (currentUser.isModified('dailyUsageCount')) {
+          changesToPreserve['dailyUsageCount'] = currentUser.dailyUsageCount;
         }
-        if (user.isModified('lastUsageDate')) {
-          changesToPreserve['lastUsageDate'] = user.lastUsageDate;
+        if (currentUser.isModified('lastUsageDate')) {
+          changesToPreserve['lastUsageDate'] = currentUser.lastUsageDate;
         }
-        if (user.isModified('preferences')) {
-          changesToPreserve['preferences'] = JSON.parse(JSON.stringify(user.preferences || {}));
+        if (currentUser.isModified('preferences')) {
+          changesToPreserve['preferences'] = JSON.parse(JSON.stringify(currentUser.preferences || {}));
         }
         
         // Apply our preserved changes to the fresh user
@@ -104,6 +114,9 @@ async function saveUserWithRetry(user, retries = 3) {
         // This properly resets all Mongoose document state including version and modified paths
         user.init(reloadedUser.toObject(), { overwrite: true });
         
+        // Update currentUser for consistency
+        currentUser = reloadedUser;
+        
         // Return immediately since we've already saved successfully
         return;
       } else {
@@ -117,7 +130,12 @@ async function saveUserWithRetry(user, retries = 3) {
 // Get user's scheduled fetch (ensure one always exists)
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const user = req.user;
+    // Reload user fresh from database to ensure we have the latest version
+    // This prevents version conflicts from stale user objects
+    let user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
     
     // Get scheduled fetch from user.scheduledSummaries
     let scheduledSummaries = user.scheduledSummaries || [];
@@ -163,7 +181,13 @@ router.get('/', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { name, topics, customTopics, time, days, wordCount, isEnabled } = req.body;
-    const user = req.user;
+    
+    // Reload user fresh from database to ensure we have the latest version
+    // This prevents version conflicts from stale user objects
+    let user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
     
     if (!time) {
       return res.status(400).json({ error: 'Time is required' });
@@ -216,11 +240,14 @@ router.post('/', authenticateToken, async (req, res) => {
     user.markModified('scheduledSummaries');
     
     // Save user to database with retry logic for version conflicts
-    await saveUserWithRetry(user);
+    const savedUser = await saveUserWithRetry(user);
+    
+    // Get the updated summary from the saved user
+    const updatedSummary = savedUser.scheduledSummaries?.[0] || existingSummary;
     
     res.status(200).json({ 
       message: 'Scheduled fetch updated successfully',
-      scheduledSummary: existingSummary 
+      scheduledSummary: updatedSummary 
     });
   } catch (error) {
     console.error('Create/Update scheduled fetch error:', error);
@@ -233,7 +260,13 @@ router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, topics, customTopics, time, days, wordCount, isEnabled, timezone } = req.body;
-    const user = req.user;
+    
+    // Reload user fresh from database to ensure we have the latest version
+    // This prevents version conflicts from stale user objects
+    let user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
     
     // Update timezone if provided
     if (timezone) {
@@ -291,13 +324,16 @@ router.put('/:id', authenticateToken, async (req, res) => {
     user.markModified('scheduledSummaries');
     
     // Save user to database with retry logic for version conflicts
-    await saveUserWithRetry(user);
+    const savedUser = await saveUserWithRetry(user);
+    
+    // Get the updated summary from the saved user
+    const updatedSummary = savedUser.scheduledSummaries?.[0] || existingSummary;
     
     // Log final state for debugging
-    console.log(`[SCHEDULED_SUMMARY] Updated scheduled fetch for ${user.email} - topics: ${existingSummary.topics?.length || 0}, customTopics: ${existingSummary.customTopics?.length || 0}, timezone: ${user.preferences?.timezone || 'not set'}`);
+    console.log(`[SCHEDULED_SUMMARY] Updated scheduled fetch for ${savedUser.email} - topics: ${updatedSummary.topics?.length || 0}, customTopics: ${updatedSummary.customTopics?.length || 0}, timezone: ${savedUser.preferences?.timezone || 'not set'}`);
     
     // Return the scheduled summary directly (frontend expects this format)
-    res.json(existingSummary);
+    res.json(updatedSummary);
   } catch (error) {
     console.error('Update scheduled fetch error:', error);
     res.status(500).json({ error: 'Failed to update scheduled fetch' });
@@ -308,7 +344,13 @@ router.put('/:id', authenticateToken, async (req, res) => {
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const user = req.user;
+    
+    // Reload user fresh from database to ensure we have the latest version
+    // This prevents version conflicts from stale user objects
+    let user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
     
     const scheduledSummaries = user.scheduledSummaries || [];
     

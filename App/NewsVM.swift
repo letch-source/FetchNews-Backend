@@ -52,8 +52,12 @@ final class NewsVM: ObservableObject {
     // Timer for automatic trending topics refresh
     private var trendingTopicsTimer: Timer?
     
+    // Timer for periodic scheduled summary checking
+    private var scheduledSummaryTimer: Timer?
+    
     deinit {
         trendingTopicsTimer?.invalidate()
+        scheduledSummaryTimer?.invalidate()
     }
     
     // Last fetched topics for "Fetch again" functionality
@@ -157,6 +161,7 @@ final class NewsVM: ObservableObject {
             async let trendingTask = fetchTrendingTopics()
             async let customTopicsTask = loadCustomTopics()
             async let settingsTask = loadRemoteSettings()
+            async let historyTask = checkForScheduledSummary() // Load lastFetchedTopics from history
             
             // Wait for trending topics first (no auth required, can show immediately)
             await trendingTask
@@ -164,6 +169,7 @@ final class NewsVM: ObservableObject {
             // Wait for user-specific data
             await customTopicsTask
             await settingsTask
+            await historyTask // Ensure lastFetchedTopics is loaded from history
             
             // Load news sources for premium users in parallel
             if let authVM = authVM, authVM.currentUser?.isPremium == true {
@@ -560,6 +566,14 @@ final class NewsVM: ObservableObject {
             isDirty = false // Reset dirty flag at start to allow retries
             
             // Note: This is a manual fetch, so when it completes, it will replace any scheduled fetch on the homepage
+            
+            // Use defer to ensure loading state is always reset, even on cancellation
+            defer {
+                Task { @MainActor in
+                    phase = .idle
+                    isBusy = false
+                }
+            }
 
             do {
                 // UX: show "Building summary…" shortly after start
@@ -648,13 +662,33 @@ final class NewsVM: ObservableObject {
                 // Store the topics that were used for this summary before deselecting
                 lastFetchedTopics = selectedTopics
                 
+                // Immediately save lastFetchedTopics to backend (not debounced) to ensure persistence
+                if ApiClient.isAuthenticated {
+                    do {
+                        let preferences = UserPreferences(
+                            selectedVoice: selectedVoice,
+                            playbackRate: playbackRate,
+                            upliftingNewsOnly: upliftingNewsOnly,
+                            length: String(length.rawValue),
+                            lastFetchedTopics: Array(lastFetchedTopics),
+                            selectedTopics: Array(selectedTopics),
+                            selectedNewsSources: Array(selectedNewsSources),
+                            scheduledSummaries: []
+                        )
+                        _ = try await ApiClient.updateUserPreferences(preferences)
+                        print("✅ Saved lastFetchedTopics to backend: \(lastFetchedTopics.count) topics")
+                    } catch {
+                        print("⚠️ Failed to save lastFetchedTopics: \(error)")
+                    }
+                }
+                
                 // Deselect all topics after successful summary generation
                 selectedTopics.removeAll()
                 
                 // Refresh user data to update usage count
                 await authVM?.refreshUser()
             } catch {
-                // Don't show error if task was cancelled
+                // Don't show error if task was cancelled - defer block will handle state reset
                 if Task.isCancelled {
                     return
                 }
@@ -665,6 +699,11 @@ final class NewsVM: ObservableObject {
                 if let networkError = error as? NetworkError {
                     lastError = networkError.errorDescription
                 } else if let urlError = error as? URLError {
+                    // Check for cancellation error code
+                    if urlError.code == .cancelled {
+                        // This is a cancellation - don't show error, just return
+                        return
+                    }
                     switch urlError.code {
                     case .badServerResponse:
                         lastError = "Server error (500) - please try again"
@@ -679,8 +718,6 @@ final class NewsVM: ObservableObject {
                     lastError = "Failed to fetch news: \(error.localizedDescription)"
                 }
             }
-
-            phase = .idle; isBusy = false
         }
     }
 
@@ -1016,34 +1053,37 @@ final class NewsVM: ObservableObject {
                 return // No history
             }
             
-            // Check if the most recent entry is a scheduled fetch
-            guard mostRecent.id.hasPrefix("scheduled-") else {
-                // Most recent is a manual fetch, so we shouldn't replace it
-                // But if there's no current combined, we might want to load it anyway
-                // Actually, manual fetches should already be on the homepage, so skip
-                return
+            // IMPORTANT: Always update lastFetchedTopics from the most recent history entry
+            // This ensures recent topics are always available even if we don't load a new summary
+            await MainActor.run {
+                if !mostRecent.topics.isEmpty {
+                    lastFetchedTopics = Set(mostRecent.topics)
+                    print("✅ Updated lastFetchedTopics from history: \(mostRecent.topics.joined(separator: ", "))")
+                }
             }
             
-            // The most recent entry is a scheduled fetch
-            // Check if we should load it
+            // Always load the most recent fetch (whether scheduled or manual)
+            // Check if we should load it by comparing with current summary
             var shouldLoad = false
             
             if let currentCombined = combined {
-                // If current summary is different, replace it with scheduled
+                // If current summary is different from the most recent, replace it
                 if currentCombined.id != mostRecent.id {
                     shouldLoad = true
                 }
             } else {
-                // No current summary, load the scheduled one
+                // No current summary, load the most recent one
                 shouldLoad = true
             }
             
             guard shouldLoad else { return }
             
-            // Send notification that a new scheduled fetch is ready
-            await sendScheduledFetchNotification(title: mostRecent.title)
+            // Send notification if this is a new scheduled fetch (not a manual fetch)
+            if mostRecent.id.hasPrefix("scheduled-") {
+                await sendScheduledFetchNotification(title: mostRecent.title)
+            }
             
-            // Load the scheduled fetch to the homepage
+            // Load the most recent fetch to the homepage (scheduled or manual)
             await MainActor.run {
                 // Set combined summary
                 combined = Combined(
@@ -1053,7 +1093,7 @@ final class NewsVM: ObservableObject {
                     audioUrl: mostRecent.audioUrl
                 )
                 
-                // Set last fetched topics from the scheduled fetch's topics
+                // Set last fetched topics from the fetch's topics (already set above, but ensure it's set)
                 lastFetchedTopics = Set(mostRecent.topics)
                 
                 // Convert sources to items if available
@@ -1076,11 +1116,31 @@ final class NewsVM: ObservableObject {
                 // Reset player state for new summary
                 resetPlayerState()
                 
-                print("✅ Loaded scheduled fetch '\(mostRecent.title)' to homepage")
+                let fetchType = mostRecent.id.hasPrefix("scheduled-") ? "scheduled" : "manual"
+                print("✅ Loaded \(fetchType) fetch '\(mostRecent.title)' to homepage")
             }
         } catch {
             print("Failed to check for scheduled fetch: \(error)")
         }
+    }
+    
+    // Start periodic checking for scheduled summaries every 2 minutes
+    func startPeriodicScheduledSummaryCheck() {
+        // Cancel existing timer if any
+        scheduledSummaryTimer?.invalidate()
+        
+        // Set up new timer to check for scheduled summaries every 2 minutes
+        scheduledSummaryTimer = Timer.scheduledTimer(withTimeInterval: 2 * 60, repeats: true) { [weak self] _ in
+            Task {
+                await self?.checkForScheduledSummary()
+            }
+        }
+    }
+    
+    // Stop periodic checking for scheduled summaries
+    func stopPeriodicScheduledSummaryCheck() {
+        scheduledSummaryTimer?.invalidate()
+        scheduledSummaryTimer = nil
     }
     
     private func parseTimestamp(_ timestamp: String) -> Date? {
