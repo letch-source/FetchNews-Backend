@@ -3059,51 +3059,129 @@ ${articlesText}${initialTopicsText}`;
     
     // Deduplicate similar/overlapping topics
     const deduplicatedTopics = [];
+    const commonWords = ['the', 'and', 'for', 'with', 'from', 'about', 'in', 'on', 'at', 'to', 'of', 'a', 'an'];
+    
+    // Helper function to extract significant words (excluding common words)
+    function getSignificantWords(text) {
+      return text.toLowerCase().split(/[\s\-]+/).filter(w => 
+        w.length > 2 && !commonWords.includes(w)
+      );
+    }
+    
+    // Helper function to merge two topics into a more comprehensive one
+    function mergeTopics(topic1, topic2) {
+      const words1 = topic1.toLowerCase().split(/[\s\-]+/);
+      const words2 = topic2.toLowerCase().split(/[\s\-]+/);
+      const allWords = [...new Set([...words1, ...words2])];
+      // Try to preserve word order by checking if one contains the other
+      if (topic1.toLowerCase().includes(topic2.toLowerCase())) {
+        return topic1;
+      }
+      if (topic2.toLowerCase().includes(topic1.toLowerCase())) {
+        return topic2;
+      }
+      // Check for sequential overlap (e.g., "Modi Declares" + "Declares Victory")
+      const topic1Lower = topic1.toLowerCase();
+      const topic2Lower = topic2.toLowerCase();
+      // Check if the end of one matches the start of another
+      for (let i = 1; i < Math.min(words1.length, words2.length); i++) {
+        const endOf1 = words1.slice(-i).join(' ');
+        const startOf2 = words2.slice(0, i).join(' ');
+        if (endOf1 === startOf2) {
+          // Merge them: take all words from topic1 + remaining words from topic2
+          return (words1.join(' ') + ' ' + words2.slice(i).join(' '))
+            .split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        }
+      }
+      // If no sequential match, combine unique significant words
+      const significant1 = getSignificantWords(topic1);
+      const significant2 = getSignificantWords(topic2);
+      const combined = [...new Set([...significant1, ...significant2])];
+      return combined.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    }
     
     for (const topic of topics) {
       const topicLower = topic.toLowerCase();
-      const words = topicLower.split(/[\s\-]+/); // Split on spaces and hyphens
+      const words = topicLower.split(/[\s\-]+/);
+      const significantWords = getSignificantWords(topic);
       
       // Check for overlap with existing topics
       let isDuplicate = false;
       let replaceIndex = -1;
+      let mergedTopic = null;
       
       for (let i = 0; i < deduplicatedTopics.length; i++) {
         const existingTopic = deduplicatedTopics[i];
         const existingLower = existingTopic.toLowerCase();
         const existingWords = existingLower.split(/[\s\-]+/);
+        const existingSignificantWords = getSignificantWords(existingTopic);
         
-        // Check if topics share significant keywords (2+ words overlap, excluding common words)
-        const commonWords = words.filter(w => {
-          return existingWords.includes(w) && 
-                 w.length > 3 && 
-                 !['the', 'and', 'for', 'with', 'from', 'about'].includes(w);
-        });
-        
-        if (commonWords.length >= 2) {
-          // They overlap significantly - keep the more comprehensive one
-          if (topic.length > existingTopic.length) {
-            replaceIndex = i;
-          }
-          isDuplicate = true;
-          break;
-        }
-        
-        // Check if one topic is contained in another (e.g., "Israel-Gaza Conflict" vs "Gaza War")
-        // Only consider containment if the shorter one is at least 5 characters
-        if (topicLower.length >= 5 && existingLower.length >= 5) {
+        // Check if one topic is fully contained in another
+        if (topicLower.length >= 3 && existingLower.length >= 3) {
           if (topicLower.includes(existingLower) || existingLower.includes(topicLower)) {
             // Keep the longer, more specific one
             if (topic.length > existingTopic.length) {
               replaceIndex = i;
+              mergedTopic = topic;
+            } else {
+              mergedTopic = existingTopic;
             }
             isDuplicate = true;
             break;
           }
         }
         
-        // Special case: check for similar conflicts/wars (e.g., "Israel-Gaza Conflict" vs "Israel-Hamas War")
-        // If they share a location/keyword and both mention conflict/war, merge them
+        // Check for sequential overlap (e.g., "Modi Declares" + "Declares Victory")
+        const topicWords = topicLower.split(/\s+/);
+        const existingTopicWords = existingLower.split(/\s+/);
+        for (let j = 1; j < Math.min(topicWords.length, existingTopicWords.length); j++) {
+          const endOfTopic = topicWords.slice(-j).join(' ');
+          const startOfExisting = existingTopicWords.slice(0, j).join(' ');
+          if (endOfTopic === startOfExisting && endOfTopic.length > 3) {
+            // Sequential overlap detected - merge them
+            mergedTopic = mergeTopics(topic, existingTopic);
+            replaceIndex = i;
+            isDuplicate = true;
+            break;
+          }
+        }
+        if (isDuplicate) break;
+        
+        // Check if topics share significant keywords (1+ significant word overlap)
+        const sharedSignificant = significantWords.filter(w => existingSignificantWords.includes(w));
+        if (sharedSignificant.length >= 1 && sharedSignificant.some(w => w.length > 3)) {
+          // They share at least one significant word - merge if they're clearly related
+          // Check if they share a key entity (person, place, or event)
+          const keyEntities = ['modi', 'india', 'election', 'bjp', 'party', 'victory', 'declares'];
+          const hasKeyEntity = keyEntities.some(entity => 
+            topicLower.includes(entity) && existingLower.includes(entity)
+          );
+          
+          if (hasKeyEntity || sharedSignificant.length >= 2) {
+            // Merge them into a more comprehensive topic
+            mergedTopic = mergeTopics(topic, existingTopic);
+            replaceIndex = i;
+            isDuplicate = true;
+            break;
+          }
+        }
+        
+        // Check if topics share 2+ words (original logic for strong overlap)
+        const commonWordsList = words.filter(w => {
+          return existingWords.includes(w) && 
+                 w.length > 3 && 
+                 !commonWords.includes(w);
+        });
+        
+        if (commonWordsList.length >= 2) {
+          // They overlap significantly - keep the more comprehensive one
+          mergedTopic = mergeTopics(topic, existingTopic);
+          replaceIndex = i;
+          isDuplicate = true;
+          break;
+        }
+        
+        // Special case: check for similar conflicts/wars
         const conflictKeywords = ['conflict', 'war', 'crisis', 'tension', 'fighting'];
         const hasConflictKeyword = conflictKeywords.some(kw => topicLower.includes(kw));
         const existingHasConflictKeyword = conflictKeywords.some(kw => existingLower.includes(kw));
@@ -3115,10 +3193,9 @@ ${articlesText}${initialTopicsText}`;
           const sharedLocations = locationWords.filter(w => existingLocationWords.includes(w));
           
           if (sharedLocations.length >= 1) {
-            // They're about the same conflict - keep the more comprehensive one
-            if (topic.length > existingTopic.length) {
-              replaceIndex = i;
-            }
+            // They're about the same conflict - merge them
+            mergedTopic = mergeTopics(topic, existingTopic);
+            replaceIndex = i;
             isDuplicate = true;
             break;
           }
@@ -3126,8 +3203,8 @@ ${articlesText}${initialTopicsText}`;
       }
       
       if (isDuplicate && replaceIndex >= 0) {
-        // Replace the existing topic with the more comprehensive one
-        deduplicatedTopics[replaceIndex] = topic;
+        // Replace the existing topic with the merged one
+        deduplicatedTopics[replaceIndex] = mergedTopic || topic;
       } else if (!isDuplicate) {
         deduplicatedTopics.push(topic);
       }

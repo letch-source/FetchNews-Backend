@@ -382,6 +382,10 @@ struct TrendingTopicsSection: View {
     let onTopicToggle: (String) -> Void
     @Binding var showAll: Bool
     
+    var displayedTopics: [String] {
+        showAll ? trendingTopics : Array(trendingTopics.prefix(3))
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -390,7 +394,7 @@ struct TrendingTopicsSection: View {
                     .fontWeight(.semibold)
                     .foregroundColor(.primary)
                 Spacer()
-                if !trendingTopics.isEmpty {
+                if !trendingTopics.isEmpty && trendingTopics.count > 3 {
                     Button(showAll ? "Show less" : "See all") {
                         showAll.toggle()
                     }
@@ -407,36 +411,64 @@ struct TrendingTopicsSection: View {
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 8)
-            } else if showAll {
-                // Vertical stacked layout
-                LazyVGrid(columns: [
-                    GridItem(.adaptive(minimum: 140), spacing: 10, alignment: .center)
-                ], alignment: .leading, spacing: 10) {
-                    ForEach(trendingTopics, id: \.self) { topic in
-                        TopicChip(
+            } else {
+                // Headline-style vertical list
+                VStack(spacing: 12) {
+                    ForEach(displayedTopics, id: \.self) { topic in
+                        TrendingTopicHeadline(
                             title: topic,
-                            isActive: selectedTopics.contains(topic.lowercased()),
-                            minWidth: 140
-                        ) { onTopicToggle(topic.lowercased()) }
+                            isSelected: selectedTopics.contains(topic.lowercased()),
+                            onTap: { onTopicToggle(topic.lowercased()) }
+                        )
                     }
                 }
                 .padding(.horizontal, 20)
-            } else {
-                // Horizontal scroll layout
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(trendingTopics, id: \.self) { topic in
-                            TopicChip(
-                                title: topic,
-                                isActive: selectedTopics.contains(topic.lowercased()),
-                                minWidth: 140
-                            ) { onTopicToggle(topic.lowercased()) }
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                }
             }
         }
+    }
+}
+
+struct TrendingTopicHeadline: View {
+    let title: String
+    let isSelected: Bool
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            HStack(alignment: .top, spacing: 12) {
+                // Selection indicator
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20))
+                    .foregroundColor(isSelected ? .blue : .secondary)
+                    .padding(.top, 2)
+                
+                // Headline text
+                Text(title)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                
+                Spacer()
+                
+                // Chevron indicator
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 14)
+            .padding(.horizontal, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isSelected ? Color.blue.opacity(0.1) : Color(.systemGray6))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
