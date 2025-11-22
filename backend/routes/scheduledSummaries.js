@@ -474,6 +474,7 @@ async function executeScheduledSummary(user, summary) {
           source: a.source || "",
           url: a.url || "",
           topic,
+          imageUrl: a.urlToImage || "",
         }));
         
         return {

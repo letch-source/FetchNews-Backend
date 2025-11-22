@@ -1657,6 +1657,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
           source: a.source || "",
           url: a.url || "",
           topic,
+          imageUrl: a.urlToImage || "",
         }));
 
         return {
@@ -1961,6 +1962,7 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
               source: a.source || "",
               url: a.url || "",
               topic,
+              imageUrl: a.urlToImage || "",
             }));
 
             items.push(...sourceItems);
