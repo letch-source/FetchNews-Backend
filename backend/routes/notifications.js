@@ -172,5 +172,74 @@ router.post('/test', authenticateToken, async (req, res) => {
   }
 });
 
+// Diagnostic endpoint to check notification configuration status
+router.get('/diagnostics', authenticateToken, async (req, res) => {
+  try {
+    const user = req.user;
+    
+    // Check APNs configuration
+    const apnKeyId = process.env.APN_KEY_ID;
+    const apnTeamId = process.env.APN_TEAM_ID;
+    const apnBundleId = process.env.APN_BUNDLE_ID || 'com.finlaysmith.FetchNews';
+    const apnKeyContent = process.env.APN_KEY_CONTENT;
+    const apnKeyPath = process.env.APN_KEY_PATH;
+    const nodeEnv = process.env.NODE_ENV || 'development';
+    
+    const apnsConfigured = !!(apnKeyId && apnTeamId && (apnKeyContent || apnKeyPath));
+    
+    // Check user's device token
+    let deviceToken = null;
+    if (mongoose.connection.readyState === 1) {
+      deviceToken = user.deviceToken;
+    } else {
+      deviceToken = user.preferences?.deviceToken || null;
+    }
+    
+    // Check notification preferences
+    const notificationPrefs = user.notificationPreferences || {};
+    const scheduledSummaryNotifications = notificationPrefs.scheduledSummaryNotifications !== false;
+    const engagementReminders = notificationPrefs.engagementReminders !== false;
+    const lastEngagementReminder = notificationPrefs.lastEngagementReminderSent || null;
+    
+    // Check last usage
+    const lastUsageDate = user.lastUsageDate || null;
+    const hoursSinceLastUsage = lastUsageDate 
+      ? Math.floor((new Date().getTime() - new Date(lastUsageDate).getTime()) / (60 * 60 * 1000))
+      : null;
+    
+    res.json({
+      apns: {
+        configured: apnsConfigured,
+        keyId: apnKeyId ? `${apnKeyId.substring(0, 4)}...` : 'Not set',
+        teamId: apnTeamId ? `${apnTeamId.substring(0, 4)}...` : 'Not set',
+        bundleId: apnBundleId,
+        keySource: apnKeyContent ? 'APN_KEY_CONTENT' : (apnKeyPath ? 'APN_KEY_PATH' : 'Not set'),
+        environment: nodeEnv === 'production' ? 'production' : 'development (sandbox)'
+      },
+      user: {
+        hasDeviceToken: !!deviceToken,
+        deviceTokenPreview: deviceToken ? `${deviceToken.substring(0, 8)}...` : 'Not registered',
+        scheduledSummaryNotifications: scheduledSummaryNotifications,
+        engagementReminders: engagementReminders,
+        lastEngagementReminderSent: lastEngagementReminder,
+        lastUsageDate: lastUsageDate,
+        hoursSinceLastUsage: hoursSinceLastUsage
+      },
+      status: {
+        canReceiveNotifications: apnsConfigured && !!deviceToken,
+        issues: [
+          !apnsConfigured && 'APNs not configured (missing APN_KEY_ID, APN_TEAM_ID, or APN_KEY_CONTENT)',
+          !deviceToken && 'No device token registered (user needs to grant notification permissions)',
+          !scheduledSummaryNotifications && 'Scheduled summary notifications disabled',
+          !engagementReminders && 'Engagement reminders disabled'
+        ].filter(Boolean)
+      }
+    });
+  } catch (error) {
+    console.error('Notification diagnostics error:', error);
+    res.status(500).json({ error: 'Failed to get notification diagnostics' });
+  }
+});
+
 module.exports = router;
 

@@ -23,6 +23,7 @@ const preferencesRoutes = require("./routes/preferences");
 const newsSourcesRoutes = require("./routes/newsSources");
 const trendingAdminRoutes = require("./routes/trendingAdmin");
 const notificationsRoutes = require("./routes/notifications");
+const { sendEngagementReminder } = require("./utils/notifications");
 const fallbackAuth = require("./utils/fallbackAuth");
 const User = require("./models/User");
 const GlobalSettings = require("./models/GlobalSettings");
@@ -2733,6 +2734,161 @@ function scheduleDailyResetCheck() {
 // Start the daily reset scheduler
 console.log(`[DAILY_RESET] Daily usage reset scheduler ENABLED - will reset all users at midnight PST`);
 scheduleDailyResetCheck();
+
+// --- Engagement Reminder Scheduler ---
+// Send engagement reminders to users who haven't used the app in 24+ hours
+let engagementReminderRunning = false;
+let engagementReminderTimeout = null;
+
+async function checkEngagementReminders() {
+  // Prevent concurrent executions
+  if (engagementReminderRunning) {
+    console.log(`[ENGAGEMENT] Engagement reminder check already running, skipping`);
+    return;
+  }
+  
+  engagementReminderRunning = true;
+  
+  try {
+    const now = new Date();
+    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+    
+    console.log(`[ENGAGEMENT] ============================================`);
+    console.log(`[ENGAGEMENT] Checking for users needing engagement reminders`);
+    console.log(`[ENGAGEMENT] Current time: ${now.toISOString()}`);
+    
+    // Find users who:
+    // 1. Have a device token registered
+    // 2. Have engagement reminders enabled (default: true)
+    // 3. Haven't used app in 24+ hours (based on lastUsageDate)
+    // 4. Haven't received reminder in 48+ hours
+    const users = await User.find({
+      deviceToken: { $exists: true, $ne: null },
+      lastUsageDate: { $lt: twentyFourHoursAgo }
+    });
+    
+    console.log(`[ENGAGEMENT] Found ${users.length} users with device tokens who haven't used app in 24+ hours`);
+    
+    let remindersSent = 0;
+    let remindersSkipped = 0;
+    
+    for (const user of users) {
+      try {
+        // Check if engagement reminders are enabled (default: true)
+        const notificationPrefs = user.notificationPreferences || {};
+        const engagementRemindersEnabled = notificationPrefs.engagementReminders !== false;
+        
+        if (!engagementRemindersEnabled) {
+          console.log(`[ENGAGEMENT] Engagement reminders disabled for user ${user.email}`);
+          remindersSkipped++;
+          continue;
+        }
+        
+        // Check when last reminder was sent
+        const lastReminderSent = notificationPrefs.lastEngagementReminderSent 
+          ? new Date(notificationPrefs.lastEngagementReminderSent) 
+          : null;
+        
+        // Skip if reminder was sent within last 48 hours
+        if (lastReminderSent && lastReminderSent > fortyEightHoursAgo) {
+          const hoursSinceReminder = Math.floor((now.getTime() - lastReminderSent.getTime()) / (60 * 60 * 1000));
+          console.log(`[ENGAGEMENT] Skipping user ${user.email} - reminder sent ${hoursSinceReminder} hours ago (min 48h)`);
+          remindersSkipped++;
+          continue;
+        }
+        
+        // Get device token (check both MongoDB and fallback)
+        let deviceToken = null;
+        if (mongoose.connection.readyState === 1) {
+          deviceToken = user.deviceToken;
+        } else {
+          deviceToken = user.preferences?.deviceToken || null;
+        }
+        
+        if (!deviceToken) {
+          console.log(`[ENGAGEMENT] No device token found for user ${user.email}`);
+          remindersSkipped++;
+          continue;
+        }
+        
+        // Send engagement reminder
+        const success = await sendEngagementReminder(deviceToken);
+        
+        if (success) {
+          // Update last reminder sent time
+          if (!user.notificationPreferences) {
+            user.notificationPreferences = {};
+          }
+          user.notificationPreferences.lastEngagementReminderSent = now;
+          
+          if (mongoose.connection.readyState === 1) {
+            user.markModified('notificationPreferences');
+            await user.save();
+          } else {
+            if (!user.preferences) {
+              user.preferences = {};
+            }
+            user.preferences.notificationPreferences = user.notificationPreferences;
+            await fallbackAuth.updatePreferences(user, user.preferences);
+          }
+          
+          const hoursSinceUsage = Math.floor((now.getTime() - user.lastUsageDate.getTime()) / (60 * 60 * 1000));
+          console.log(`[ENGAGEMENT] ✅ Sent engagement reminder to user ${user.email} (last used ${hoursSinceUsage}h ago)`);
+          remindersSent++;
+        } else {
+          console.log(`[ENGAGEMENT] ❌ Failed to send engagement reminder to user ${user.email}`);
+          remindersSkipped++;
+        }
+      } catch (error) {
+        console.error(`[ENGAGEMENT] Error processing user ${user.email}:`, error);
+        remindersSkipped++;
+      }
+    }
+    
+    console.log(`[ENGAGEMENT] Summary: ${remindersSent} reminders sent, ${remindersSkipped} skipped`);
+    console.log(`[ENGAGEMENT] ============================================`);
+  } catch (error) {
+    console.error('[ENGAGEMENT] Error in checkEngagementReminders:', error);
+  } finally {
+    engagementReminderRunning = false;
+  }
+}
+
+// Function to schedule the next engagement reminder check (runs every hour)
+function scheduleEngagementReminderCheck() {
+  // Clear any existing timeout
+  if (engagementReminderTimeout) {
+    clearTimeout(engagementReminderTimeout);
+    engagementReminderTimeout = null;
+  }
+  
+  // Run every hour (60 minutes)
+  const msUntilNextCheck = 60 * 60 * 1000; // 1 hour
+  
+  engagementReminderTimeout = setTimeout(() => {
+    engagementReminderTimeout = null;
+    checkEngagementReminders().then(() => {
+      // Schedule the next check
+      scheduleEngagementReminderCheck();
+    }).catch((error) => {
+      console.error('[ENGAGEMENT] Error in checkEngagementReminders, will retry:', error);
+      // Still schedule next check even on error
+      scheduleEngagementReminderCheck();
+    });
+  }, msUntilNextCheck);
+  
+  console.log(`[ENGAGEMENT] Next engagement reminder check scheduled in 1 hour`);
+}
+
+// Start the engagement reminder scheduler
+console.log(`[ENGAGEMENT] Engagement reminder scheduler ENABLED - checking every hour`);
+// Run initial check after 5 minutes (to allow server to fully start)
+setTimeout(() => {
+  checkEngagementReminders().then(() => {
+    scheduleEngagementReminderCheck();
+  });
+}, 5 * 60 * 1000);
 
 // --- Trending Topics Updater ---
 // Update trending topics every hour
