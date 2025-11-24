@@ -316,6 +316,69 @@ router.get('/users', authenticateToken, async (req, res) => {
   }
 });
 
+// Reset user's Fetch Usage (dailyUsageCount) to 0 for the current day
+router.post('/users/:email/reset-usage', authenticateToken, async (req, res) => {
+  try {
+    if (!isDatabaseAvailable()) {
+      return res.status(503).json({ error: 'Database not available' });
+    }
+
+    const { email } = req.params;
+    const adminUser = req.user;
+    
+    // Find the target user
+    const user = await User.findOne({ email: email.toLowerCase() });
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Store old count for logging
+    const oldCount = user.dailyUsageCount || 0;
+    
+    // Reset dailyUsageCount to 0 and update lastUsageDate to today
+    // This ensures the reset is for the current day and won't auto-reset on next check
+    user.dailyUsageCount = 0;
+    user.lastUsageDate = new Date();
+    await user.save();
+    
+    // Log the admin action
+    const adminEmail = adminUser.email || adminUser.id || 'unknown';
+    const action = 'Reset Fetch Usage';
+    const details = `Reset daily usage count from ${oldCount} to 0 for ${email}`;
+    
+    let adminAction;
+    if (isDatabaseAvailable()) {
+      adminAction = new AdminAction({
+        adminEmail,
+        targetEmail: email,
+        action,
+        details
+      });
+      await adminAction.save();
+      adminAction = {
+        ...adminAction.toObject(),
+        timestamp: adminAction.timestamp.toISOString()
+      };
+    } else {
+      adminAction = await fallbackAuth.logAdminAction(adminEmail, email, action, details);
+    }
+    
+    res.json({ 
+      success: true,
+      message: `Fetch Usage reset for ${email}`,
+      user: {
+        email: user.email,
+        dailyUsageCount: user.dailyUsageCount,
+        lastUsageDate: user.lastUsageDate
+      }
+    });
+  } catch (error) {
+    console.error('Reset user usage error:', error);
+    res.status(500).json({ error: 'Failed to reset user usage' });
+  }
+});
+
 // Debug endpoint to check user data (temporary)
 router.get('/user-data/:email', authenticateToken, async (req, res) => {
   try {

@@ -1007,7 +1007,7 @@
 
                 // Create users table
                 html += '<table class="actions-table"><thead><tr>';
-                html += '<th>Email</th><th>Premium</th><th>Daily Usage</th><th>Total Fetches</th><th>Listening Time</th><th>Member Since</th>';
+                html += '<th>Email</th><th>Premium</th><th>Daily Usage</th><th>Total Fetches</th><th>Listening Time</th><th>Member Since</th><th>Actions</th>';
                 html += '</tr></thead><tbody>';
 
                 users.forEach(user => {
@@ -1025,6 +1025,7 @@
                     html += `<td>${user.totalFetches}</td>`;
                     html += `<td>${formatTime(user.totalListeningTime)}</td>`;
                     html += `<td>${formatDate(user.createdAt)}</td>`;
+                    html += `<td><button class="btn-secondary" onclick="resetUserUsage('${user.email}')" style="padding: 6px 12px; font-size: 0.85em;">Reset Usage</button></td>`;
                     html += '</tr>';
                 });
 
@@ -1048,6 +1049,32 @@
             if (!dateString) return '-';
             const date = new Date(dateString);
             return date.toLocaleDateString();
+        }
+
+        async function resetUserUsage(email) {
+            if (!confirm(`Are you sure you want to reset Fetch Usage for ${email}? This will set their daily usage count to 0 for today.`)) {
+                return;
+            }
+
+            try {
+                const result = await fetchWithAuth(`/api/admin/users/${encodeURIComponent(email)}/reset-usage`, {
+                    method: 'POST'
+                });
+
+                showSuccess(`Fetch Usage reset successfully for ${email}. Daily usage count is now 0.`);
+                
+                // Reload users list to show updated data
+                await loadUsers();
+                
+                // Also reload admin actions to show the logged action
+                await loadActions();
+            } catch (error) {
+                if (error.message.includes('Authentication failed') || error.message.includes('No authentication token')) {
+                    showError('Authentication failed. Please refresh the page and enter your JWT token again.');
+                } else {
+                    showError('Failed to reset Fetch Usage: ' + error.message);
+                }
+            }
         }
 
         function switchPage(page) {
