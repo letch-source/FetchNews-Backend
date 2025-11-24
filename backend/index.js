@@ -622,7 +622,8 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [])
     description: article.description,
     url: article.url,
     publishedAt: article.published_at,
-    source: { id: article.source, name: article.source }
+    source: { id: article.source, name: article.source },
+    urlToImage: article.image || "" // Mediastack uses 'image' field
   }));
   
   // Removed source printing log
@@ -761,7 +762,8 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
     description: article.description,
     url: article.url,
     publishedAt: article.published_at,
-    source: { id: article.source, name: article.source }
+    source: { id: article.source, name: article.source },
+    urlToImage: article.image || "" // Mediastack uses 'image' field
   }));
   
   // Removed source printing log
@@ -871,7 +873,8 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
       description: article.description,
       url: article.url,
       publishedAt: article.published_at,
-      source: { id: article.source, name: article.source }
+      source: { id: article.source, name: article.source },
+      urlToImage: article.image || "" // Mediastack uses 'image' field
     }));
     } catch (error) {
       console.error(`Error fetching general news:`, error);
@@ -955,6 +958,13 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
     articles = await fetchArticlesEverything(queryParts, pageSize, selectedSources);
   }
 
+  // Debug: Check original articles from news API
+  if (articles.length > 0) {
+    console.log(`🔍 [fetchArticlesForTopic] Received ${articles.length} articles from news API`);
+    console.log(`🔍 [fetchArticlesForTopic] First article urlToImage:`, articles[0].urlToImage);
+    console.log(`🔍 [fetchArticlesForTopic] First article keys:`, Object.keys(articles[0]));
+  }
+  
   const normalized = articles.map((a) => ({
     title: a.title || "",
     description: a.description || "",
@@ -963,6 +973,11 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
     publishedAt: a.publishedAt || "",
     urlToImage: a.urlToImage || "",
   }));
+  
+  // Debug: Check normalized articles
+  if (normalized.length > 0) {
+    console.log(`🔍 [fetchArticlesForTopic] Normalized ${normalized.length} articles. First urlToImage:`, normalized[0].urlToImage);
+  }
 
   const result = { articles: normalized };
   
@@ -1647,6 +1662,12 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
 
         const summary = await summarizeArticles(topic, geoData, relevant, wordCount, goodNewsOnly, req.user);
 
+        // Debug: Check if articles have urlToImage
+        if (relevant.length > 0) {
+          console.log(`🔍 [${topic}] First article urlToImage:`, relevant[0].urlToImage);
+          console.log(`🔍 [${topic}] First article keys:`, Object.keys(relevant[0]));
+        }
+        
         const sourceItems = relevant.map((a, idx) => ({
           id: `${topic}-${idx}-${Date.now()}`,
           title: a.title || "",
@@ -1951,6 +1972,11 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
             const summary = await summarizeArticles(topic, { country: location }, relevant, wordCount, goodNewsOnly, req.user);
             // Track summaries with their topics for transition generation
             if (summary) summariesWithTopics.push({ summary: summary, topic: topic });
+
+            // Debug: Check if articles have urlToImage
+            if (relevant.length > 0) {
+              console.log(`🔍 [BATCH ${topic}] First article urlToImage:`, relevant[0].urlToImage);
+            }
 
             const sourceItems = relevant.map((a, idx) => ({
               id: `${topic}-${idx}-${Date.now()}`,
