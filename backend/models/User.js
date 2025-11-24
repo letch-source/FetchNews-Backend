@@ -188,15 +188,22 @@ userSchema.methods.canFetchNews = async function() {
   // Get today's date string in PST timezone (resets at midnight PST)
   const now = new Date();
   const today = getDateStringInPST(now);
-  const lastUsageDate = this.lastUsageDate ? getDateStringInPST(new Date(this.lastUsageDate)) : today;
+  
+  // Handle null/undefined lastUsageDate - treat as needing reset
+  let lastUsageDateStr = today;
+  if (this.lastUsageDate) {
+    lastUsageDateStr = getDateStringInPST(new Date(this.lastUsageDate));
+  }
   
   // Reset daily count if it's a new day (resets at midnight PST)
   // The date string comparison ensures reset happens when date changes in PST
-  if (lastUsageDate !== today) {
+  if (lastUsageDateStr !== today) {
+    console.log(`[USAGE] Resetting daily count for user ${this.email}: lastUsageDate=${lastUsageDateStr}, today=${today}, oldCount=${this.dailyUsageCount}`);
     this.dailyUsageCount = 0;
     this.lastUsageDate = now;
     // Await the save to ensure the reset is persisted before checking
     await this.save();
+    console.log(`[USAGE] Reset complete: newCount=${this.dailyUsageCount}`);
   }
   
   // Define limits
@@ -206,6 +213,7 @@ userSchema.methods.canFetchNews = async function() {
   // Premium users limited to 20 summaries per day
   if (this.isPremium) {
     if (this.dailyUsageCount >= premiumUserLimit) {
+      console.log(`[USAGE] Premium user ${this.email} reached limit: ${this.dailyUsageCount}/${premiumUserLimit}`);
       return { allowed: false, reason: 'daily_limit_reached', dailyCount: this.dailyUsageCount, limit: premiumUserLimit };
     }
     return { allowed: true, reason: 'premium', dailyCount: this.dailyUsageCount, limit: premiumUserLimit };
@@ -213,6 +221,7 @@ userSchema.methods.canFetchNews = async function() {
   
   // Free users limited to 3 summaries per day
   if (this.dailyUsageCount >= freeUserLimit) {
+    console.log(`[USAGE] Free user ${this.email} reached limit: ${this.dailyUsageCount}/${freeUserLimit}`);
     return { allowed: false, reason: 'daily_limit_reached', dailyCount: this.dailyUsageCount, limit: freeUserLimit };
   }
   

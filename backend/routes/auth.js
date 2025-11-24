@@ -537,22 +537,43 @@ router.get('/usage', authenticateToken, async (req, res) => {
     let usageCheck;
     
     if (isDatabaseAvailable()) {
-      usageCheck = await user.canFetchNews();
+      // Reload user from database to ensure we have latest data
+      const freshUser = await User.findById(user._id || user.id);
+      if (freshUser) {
+        usageCheck = await freshUser.canFetchNews();
+        // Include diagnostic info for debugging
+        res.json({
+          userId: freshUser._id || freshUser.id,
+          isPremium: freshUser.isPremium,
+          dailyCount: usageCheck.dailyCount || freshUser.dailyUsageCount || 0,
+          dailyLimit: usageCheck.limit || (freshUser.isPremium ? 20 : 3),
+          canFetch: usageCheck.allowed,
+          reason: usageCheck.reason,
+          lastUsageDate: freshUser.lastUsageDate,
+          // Diagnostic info
+          _diagnostic: {
+            rawDailyCount: freshUser.dailyUsageCount,
+            rawLastUsageDate: freshUser.lastUsageDate
+          }
+        });
+      } else {
+        throw new Error('User not found');
+      }
     } else {
       usageCheck = fallbackAuth.canFetchNews(user);
+      res.json({
+        userId: user._id || user.id,
+        isPremium: user.isPremium,
+        dailyCount: usageCheck.dailyCount || user.dailyUsageCount || 0,
+        dailyLimit: usageCheck.limit || (user.isPremium ? 20 : 3),
+        canFetch: usageCheck.allowed,
+        reason: usageCheck.reason,
+        lastUsageDate: user.lastUsageDate
+      });
     }
-
-    res.json({
-      userId: user._id,
-      isPremium: user.isPremium,
-      dailyCount: usageCheck.dailyCount || user.dailyUsageCount || 0,
-      dailyLimit: usageCheck.limit || (user.isPremium ? 20 : 3),
-      canFetch: usageCheck.allowed,
-      reason: usageCheck.reason
-    });
   } catch (error) {
     console.error('Usage check error:', error);
-    res.status(500).json({ error: 'Failed to check usage' });
+    res.status(500).json({ error: 'Failed to check usage', details: error.message });
   }
 });
 
