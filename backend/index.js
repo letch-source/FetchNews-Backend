@@ -3483,10 +3483,11 @@ async function updateTrendingTopics() {
       return;
     }
     
-    // Define high-quality news sources to pull from
+    // Define high-quality U.S.-based news sources to pull from
     const newsSources = [
-      'cnn', 'bbc-news', 'reuters', 'nbc-news', 'associated-press', 
-      'bloomberg', 'the-new-york-times', 'usa-today', 'npr'
+      'cnn', 'nbc-news', 'associated-press', 'bloomberg', 
+      'the-new-york-times', 'usa-today', 'npr', 'abc-news', 
+      'cbs-news', 'washington-post'
     ];
     
     console.log('[TRENDING] Fetching top articles from major news sources...');
