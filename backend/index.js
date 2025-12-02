@@ -601,6 +601,12 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [])
         if (data.data && data.data.length > 0) {
           articles = data.data;
           console.log(`[SEARCH] Found ${articles.length} articles with current strategy`);
+          // Debug: Check how many articles have images
+          const articlesWithImages = articles.filter(a => a.image).length;
+          console.log(`[SEARCH] Articles with images: ${articlesWithImages} out of ${articles.length}`);
+          if (articles.length > 0 && !articles[0].image) {
+            console.log(`[SEARCH] Sample article keys:`, Object.keys(articles[0]));
+          }
           break;
         }
       } else {
@@ -617,14 +623,21 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [])
   }
   
   // Map Mediastack response to match expected format
-  const mappedArticles = articles.map(article => ({
-    title: article.title,
-    description: article.description,
-    url: article.url,
-    publishedAt: article.published_at,
-    source: { id: article.source, name: article.source },
-    urlToImage: article.image || "" // Mediastack uses 'image' field
-  }));
+  const mappedArticles = articles.map(article => {
+    // Debug: Log image-related fields for troubleshooting
+    if (!article.image) {
+      console.log(`[MEDIASTACK] Article "${article.title?.substring(0, 50)}" has no image field. Available fields:`, Object.keys(article));
+    }
+    
+    return {
+      title: article.title,
+      description: article.description,
+      url: article.url,
+      publishedAt: article.published_at,
+      source: { id: article.source, name: article.source },
+      urlToImage: article.image || "" // Mediastack uses 'image' field
+    };
+  });
   
   // Removed source printing log
   return mappedArticles;
@@ -756,15 +769,31 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
   console.log(`[DEBUG] Mediastack category response:`, JSON.stringify(data, null, 2));
   console.log(`Mediastack returned ${data.data?.length || 0} articles`);
   
+  // Debug: Check how many articles have images
+  if (data.data && data.data.length > 0) {
+    const articlesWithImages = data.data.filter(a => a.image).length;
+    console.log(`[DEBUG] Articles with images: ${articlesWithImages} out of ${data.data.length}`);
+    if (!data.data[0].image && data.data.length > 0) {
+      console.log(`[DEBUG] Sample article keys:`, Object.keys(data.data[0]));
+    }
+  }
+  
   // Map Mediastack response to match expected format
-  const articles = (data.data || []).map(article => ({
-    title: article.title,
-    description: article.description,
-    url: article.url,
-    publishedAt: article.published_at,
-    source: { id: article.source, name: article.source },
-    urlToImage: article.image || "" // Mediastack uses 'image' field
-  }));
+  const articles = (data.data || []).map(article => {
+    // Debug: Log image-related fields for troubleshooting
+    if (!article.image) {
+      console.log(`[MEDIASTACK] Article "${article.title?.substring(0, 50)}" has no image field. Available fields:`, Object.keys(article));
+    }
+    
+    return {
+      title: article.title,
+      description: article.description,
+      url: article.url,
+      publishedAt: article.published_at,
+      source: { id: article.source, name: article.source },
+      urlToImage: article.image || "" // Mediastack uses 'image' field
+    };
+  });
   
   // Removed source printing log
   return articles;
@@ -1207,8 +1236,21 @@ function addIntroAndOutro(summary, topics, goodNewsOnly = false, user = null) {
     firstName = nameParts[0] || null;
   }
   
-  // Format topics for the intro
-  const topicsText = Array.isArray(topics) ? topics.join(", ") : topics;
+  // Format topics for the intro with "and" before the last topic
+  let topicsText;
+  if (Array.isArray(topics)) {
+    if (topics.length === 0) {
+      topicsText = "";
+    } else if (topics.length === 1) {
+      topicsText = topics[0];
+    } else if (topics.length === 2) {
+      topicsText = `${topics[0]} and ${topics[1]}`;
+    } else {
+      topicsText = `${topics.slice(0, -1).join(", ")}, and ${topics[topics.length - 1]}`;
+    }
+  } else {
+    topicsText = topics;
+  }
   const upliftingPrefix = goodNewsOnly ? "uplifting " : "";
   
   // Add personalized greeting with first name if available
