@@ -4,6 +4,7 @@ const { authenticateToken } = require('../middleware/auth');
 const AdminAction = require('../models/AdminAction');
 const fallbackAuth = require('../utils/fallbackAuth');
 const User = require('../models/User');
+const GlobalSettings = require('../models/GlobalSettings');
 
 const router = express.Router();
 
@@ -415,6 +416,80 @@ router.get('/user-data/:email', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Get user data error:', error);
     res.status(500).json({ error: 'Failed to get user data' });
+  }
+});
+
+// Get global news sources setting
+router.get('/global-news-sources', authenticateToken, async (req, res) => {
+  try {
+    if (!isDatabaseAvailable()) {
+      return res.status(503).json({ error: 'Database not available' });
+    }
+
+    const settings = await GlobalSettings.getOrCreate();
+    
+    res.json({
+      sources: settings.globalNewsSources || [],
+      enabled: settings.globalNewsSourcesEnabled || false
+    });
+  } catch (error) {
+    console.error('Get global news sources error:', error);
+    res.status(500).json({ error: 'Failed to get global news sources' });
+  }
+});
+
+// Set global news sources
+router.post('/global-news-sources', authenticateToken, async (req, res) => {
+  try {
+    if (!isDatabaseAvailable()) {
+      return res.status(503).json({ error: 'Database not available' });
+    }
+
+    const { sources, enabled } = req.body;
+    const adminUser = req.user;
+    
+    if (!Array.isArray(sources)) {
+      return res.status(400).json({ error: 'sources must be an array' });
+    }
+
+    const settings = await GlobalSettings.getOrCreate();
+    await settings.updateGlobalNewsSources(sources, enabled !== false);
+
+    // Log the admin action
+    const adminEmail = adminUser.email || adminUser.id || 'unknown';
+    const action = enabled !== false ? 'Set Global News Sources' : 'Disabled Global News Sources';
+    const details = enabled !== false 
+      ? `Set ${sources.length} global news sources: ${sources.join(', ')}`
+      : 'Disabled global news sources (all sources will be used)';
+    
+    let adminAction;
+    if (isDatabaseAvailable()) {
+      adminAction = new AdminAction({
+        adminEmail,
+        targetEmail: 'system',
+        action,
+        details
+      });
+      await adminAction.save();
+      adminAction = {
+        ...adminAction.toObject(),
+        timestamp: adminAction.timestamp.toISOString()
+      };
+    } else {
+      adminAction = await fallbackAuth.logAdminAction(adminEmail, 'system', action, details);
+    }
+
+    res.json({
+      success: true,
+      message: enabled !== false 
+        ? `Global news sources updated (${sources.length} sources)`
+        : 'Global news sources disabled',
+      sources: settings.globalNewsSources,
+      enabled: settings.globalNewsSourcesEnabled
+    });
+  } catch (error) {
+    console.error('Set global news sources error:', error);
+    res.status(500).json({ error: 'Failed to set global news sources' });
   }
 });
 

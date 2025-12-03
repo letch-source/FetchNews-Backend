@@ -1570,28 +1570,37 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       return res.status(400).json({ error: "topics must be an array" });
     }
 
-    // Get user's selected news sources (if authenticated and premium)
+    // Check for global news sources first (admin override)
     let selectedSources = [];
-    if (req.user && req.user.isPremium) {
-      const user = await User.findById(req.user.id);
-      if (user) {
-        const preferences = user.getPreferences();
-        selectedSources = preferences.selectedNewsSources || [];
-        
-        console.log(`Premium user ${req.user.id} has ${selectedSources.length} sources selected:`, selectedSources);
-        
-        // If user has made selections but has less than 5 sources, return error
-        if (selectedSources.length > 0 && selectedSources.length < 5) {
-          return res.status(400).json({
-            error: "Insufficient news sources",
-            message: `Please select at least 5 news sources. You currently have ${selectedSources.length} selected.`,
-            selectedCount: selectedSources.length,
-            requiredCount: 5
-          });
-        }
-      }
+    const globalSettings = await GlobalSettings.getOrCreate();
+    
+    if (globalSettings.globalNewsSourcesEnabled && globalSettings.globalNewsSources && globalSettings.globalNewsSources.length > 0) {
+      // Use global sources (override user selections)
+      selectedSources = globalSettings.globalNewsSources;
+      console.log(`[GLOBAL SOURCES] Using ${selectedSources.length} global news sources:`, selectedSources);
     } else {
-      console.log(`Non-premium user, using all sources`);
+      // Get user's selected news sources (if authenticated and premium)
+      if (req.user && req.user.isPremium) {
+        const user = await User.findById(req.user.id);
+        if (user) {
+          const preferences = user.getPreferences();
+          selectedSources = preferences.selectedNewsSources || [];
+          
+          console.log(`Premium user ${req.user.id} has ${selectedSources.length} sources selected:`, selectedSources);
+          
+          // If user has made selections but has less than 5 sources, return error
+          if (selectedSources.length > 0 && selectedSources.length < 5) {
+            return res.status(400).json({
+              error: "Insufficient news sources",
+              message: `Please select at least 5 news sources. You currently have ${selectedSources.length} selected.`,
+              selectedCount: selectedSources.length,
+              requiredCount: 5
+            });
+          }
+        }
+      } else {
+        console.log(`Non-premium user, using all sources`);
+      }
     }
     
     // If no sources selected (or not premium), use all available sources (empty array means no filtering)
@@ -1926,22 +1935,31 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
       return res.status(400).json({ error: "batches must be an array" });
     }
 
-    // Get user's selected news sources (if authenticated and premium)
+    // Check for global news sources first (admin override)
     let selectedSources = [];
-    if (req.user && req.user.isPremium) {
-      const user = await User.findById(req.user.id);
-      if (user) {
-        const preferences = user.getPreferences();
-        selectedSources = preferences.selectedNewsSources || [];
-        
-        // If user has made selections but has less than 5 sources, return error
-        if (selectedSources.length > 0 && selectedSources.length < 5) {
-          return res.status(400).json({
-            error: "Insufficient news sources",
-            message: `Please select at least 5 news sources. You currently have ${selectedSources.length} selected.`,
-            selectedCount: selectedSources.length,
-            requiredCount: 5
-          });
+    const globalSettings = await GlobalSettings.getOrCreate();
+    
+    if (globalSettings.globalNewsSourcesEnabled && globalSettings.globalNewsSources && globalSettings.globalNewsSources.length > 0) {
+      // Use global sources (override user selections)
+      selectedSources = globalSettings.globalNewsSources;
+      console.log(`[GLOBAL SOURCES] Using ${selectedSources.length} global news sources:`, selectedSources);
+    } else {
+      // Get user's selected news sources (if authenticated and premium)
+      if (req.user && req.user.isPremium) {
+        const user = await User.findById(req.user.id);
+        if (user) {
+          const preferences = user.getPreferences();
+          selectedSources = preferences.selectedNewsSources || [];
+          
+          // If user has made selections but has less than 5 sources, return error
+          if (selectedSources.length > 0 && selectedSources.length < 5) {
+            return res.status(400).json({
+              error: "Insufficient news sources",
+              message: `Please select at least 5 news sources. You currently have ${selectedSources.length} selected.`,
+              selectedCount: selectedSources.length,
+              requiredCount: 5
+            });
+          }
         }
       }
     }

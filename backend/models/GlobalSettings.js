@@ -19,6 +19,14 @@ const globalSettingsSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  globalNewsSources: {
+    type: [String],
+    default: []
+  },
+  globalNewsSourcesEnabled: {
+    type: Boolean,
+    default: false
+  },
   updatedAt: {
     type: Date,
     default: Date.now
@@ -41,6 +49,14 @@ globalSettingsSchema.methods.updateTrendingTopics = async function(topics, topic
   this.trendingTopics = topics;
   this.trendingTopicsWithSources = topicsWithSources;
   this.lastTrendingUpdate = new Date();
+  await this.save();
+  return this;
+};
+
+// Update global news sources
+globalSettingsSchema.methods.updateGlobalNewsSources = async function(sources, enabled = true) {
+  this.globalNewsSources = sources || [];
+  this.globalNewsSourcesEnabled = enabled;
   await this.save();
   return this;
 };
