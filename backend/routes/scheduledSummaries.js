@@ -423,10 +423,21 @@ async function executeScheduledSummary(user, summary) {
       return;
     }
     
-    // Get user's selected news sources (if premium)
+    // Check for global news sources first (admin override)
     let selectedSources = [];
-    if (user.isPremium && user.getPreferences) {
-      selectedSources = preferences.selectedNewsSources || [];
+    const GlobalSettings = require('../models/GlobalSettings');
+    const globalSettings = await GlobalSettings.getOrCreate();
+    
+    if (globalSettings.globalNewsSourcesEnabled && globalSettings.globalNewsSources && globalSettings.globalNewsSources.length > 0) {
+      // Use global sources (override user selections)
+      selectedSources = globalSettings.globalNewsSources;
+      console.log(`[SCHEDULER] Using ${selectedSources.length} global news sources for user ${user.email}:`, selectedSources);
+    } else {
+      // Get user's selected news sources (if premium)
+      if (user.isPremium && user.getPreferences) {
+        selectedSources = preferences.selectedNewsSources || [];
+        console.log(`[SCHEDULER] User ${user.email} has ${selectedSources.length} sources selected:`, selectedSources);
+      }
     }
     
     const items = [];

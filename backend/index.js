@@ -3501,14 +3501,25 @@ async function updateTrendingTopics() {
       return;
     }
     
-    // Define high-quality U.S.-based news sources to pull from
-    const newsSources = [
-      'cnn', 'nbc-news', 'associated-press', 'bloomberg', 
-      'the-new-york-times', 'usa-today', 'npr', 'abc-news', 
-      'cbs-news', 'washington-post'
-    ];
+    // Check for global news sources first (admin override)
+    let newsSources = [];
+    const globalSettings = await GlobalSettings.getOrCreate();
     
-    console.log('[TRENDING] Fetching top articles from major news sources...');
+    if (globalSettings.globalNewsSourcesEnabled && globalSettings.globalNewsSources && globalSettings.globalNewsSources.length > 0) {
+      // Use global sources
+      newsSources = globalSettings.globalNewsSources;
+      console.log(`[TRENDING] Using ${newsSources.length} global news sources:`, newsSources);
+    } else {
+      // Fallback to default high-quality U.S.-based news sources
+      newsSources = [
+        'cnn', 'nbc-news', 'associated-press', 'bloomberg', 
+        'the-new-york-times', 'usa-today', 'npr', 'abc-news', 
+        'cbs-news', 'washington-post'
+      ];
+      console.log('[TRENDING] Using default news sources (no global sources configured)');
+    }
+    
+    console.log('[TRENDING] Fetching top articles from news sources...');
     
     // Fetch top articles from each source (increase limit to get more comprehensive coverage)
     const allArticles = [];
