@@ -25,6 +25,7 @@ const trendingAdminRoutes = require("./routes/trendingAdmin");
 const notificationsRoutes = require("./routes/notifications");
 const { sendEngagementReminder } = require("./utils/notifications");
 const fallbackAuth = require("./utils/fallbackAuth");
+const { uploadAudioToB2, isB2Configured } = require("./utils/b2Storage");
 const User = require("./models/User");
 const GlobalSettings = require("./models/GlobalSettings");
 
@@ -353,12 +354,13 @@ app.get("/api/trending-topics", async (req, res) => {
 });
 
 // Manual trending topics update endpoint (for testing)
+// COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
 app.post("/api/trending-topics/update", async (req, res) => {
   try {
-    console.log('[TRENDING] Manual update triggered');
-    await updateTrendingTopics();
+    console.log('[TRENDING] Manual update triggered - DISABLED (auto-generated topics disabled)');
+    // await updateTrendingTopics();
     res.json({ 
-      message: 'Trending topics updated successfully',
+      message: 'Auto-generated trending topics are disabled. Only manual topics are allowed.',
       trendingTopics: trendingTopicsCache,
       lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null
     });
@@ -1565,9 +1567,23 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       }
     }
     
-    const { topics = [], wordCount = 200, location = "", geo = null, goodNewsOnly = false } = req.body || {};
+    const { topics = [], wordCount = 200, location = "", geo = null, goodNewsOnly = false, country = null } = req.body || {};
     if (!Array.isArray(topics)) {
       return res.status(400).json({ error: "topics must be an array" });
+    }
+    
+    // Get user's country preference if not provided in request
+    let userCountry = country;
+    if (!userCountry && req.user) {
+      const user = await User.findById(req.user.id);
+      if (user) {
+        const preferences = user.getPreferences();
+        userCountry = preferences.selectedCountry || 'us';
+      }
+    }
+    // Default to 'us' if no country specified
+    if (!userCountry) {
+      userCountry = 'us';
     }
 
     // Check for global news sources first (admin override)
@@ -1635,8 +1651,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
           geoData = {
             city: geo.city || "",
             region: geo.region || "",
-            country: geo.country || geo.countryCode || "",
-            countryCode: geo.countryCode || geo.country || ""
+            country: geo.country || geo.countryCode || userCountry || "",
+            countryCode: geo.countryCode || geo.country || userCountry || ""
           };
         } else if (location && typeof location === 'string') {
           // Format: "New York" or "Los Angeles, California"
@@ -1674,8 +1690,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
             geoData = {
               city: city,
               region: region,
-              country: "US", // Default to US for now
-              countryCode: "US"
+              country: userCountry.toUpperCase() || "US",
+              countryCode: userCountry.toLowerCase() || "us"
             };
           }
         }
@@ -1991,6 +2007,16 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
           return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
         }
 
+        // Get user's country preference for batch requests
+        let batchCountry = 'us';
+        if (req.user) {
+          const user = await User.findById(req.user.id);
+          if (user) {
+            const preferences = user.getPreferences();
+            batchCountry = preferences.selectedCountry || 'us';
+          }
+        }
+        
         for (const topic of topics) {
           try {
             const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
@@ -1998,9 +2024,14 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
             const geoData = location ? {
               city: "",
               region: "",
-              country: location,
-              countryCode: location
-            } : null;
+              country: batchCountry.toUpperCase(),
+              countryCode: batchCountry.toLowerCase()
+            } : {
+              city: "",
+              region: "",
+              country: batchCountry.toUpperCase(),
+              countryCode: batchCountry.toLowerCase()
+            };
             
             const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
 
@@ -2180,11 +2211,20 @@ app.post("/api/tts", async (req, res) => {
     const disableCache = false;
     
     if (cached && !disableCache) {
-      console.log(`TTS cache hit for ${finalText.substring(0, 50)}... with voice: ${voice}`);
-      // Ensure cached URL is absolute
-      const baseUrl = req.protocol + '://' + req.get('host');
-      const audioUrl = cached.audioUrl.startsWith('http') ? cached.audioUrl : `${baseUrl}${cached.audioUrl}`;
-      return res.json({ audioUrl });
+      // If B2 is configured, only use cached URLs that are B2 URLs
+      // This prevents using stale local file URLs that may have been deleted
+      const isB2Url = cached.audioUrl && cached.audioUrl.includes('backblazeb2.com');
+      const shouldUseCache = !isB2Configured() || isB2Url;
+      
+      if (shouldUseCache) {
+        console.log(`TTS cache hit for ${finalText.substring(0, 50)}... with voice: ${voice}`);
+        // Ensure cached URL is absolute
+        const baseUrl = req.protocol + '://' + req.get('host');
+        const audioUrl = cached.audioUrl.startsWith('http') ? cached.audioUrl : `${baseUrl}${cached.audioUrl}`;
+        return res.json({ audioUrl });
+      } else {
+        console.log(`TTS cache skipped - B2 configured but cached URL is local (may be stale)`);
+      }
     }
     
     console.log(`TTS cache miss - generating new audio with voice: ${voice}`);
@@ -2274,12 +2314,30 @@ app.post("/api/tts", async (req, res) => {
 
     const buffer = Buffer.from(await speech.arrayBuffer());
     const fileBase = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
-    const outPath = path.join(MEDIA_DIR, fileBase);
-    fs.writeFileSync(outPath, buffer);
-
-    // Create absolute URL for the audio file
-    const baseUrl = req.protocol + '://' + req.get('host');
-    const audioUrl = `${baseUrl}/media/${fileBase}`;
+    
+    let audioUrl;
+    
+    // Upload to B2 if configured, otherwise save locally
+    if (isB2Configured()) {
+      try {
+        console.log('📤 Uploading audio to Backblaze B2...');
+        audioUrl = await uploadAudioToB2(buffer, fileBase);
+        console.log('✅ Audio uploaded to B2 successfully');
+      } catch (b2Error) {
+        console.error('❌ B2 upload failed, falling back to local storage:', b2Error);
+        // Fallback to local storage
+        const outPath = path.join(MEDIA_DIR, fileBase);
+        fs.writeFileSync(outPath, buffer);
+        const baseUrl = req.protocol + '://' + req.get('host');
+        audioUrl = `${baseUrl}/media/${fileBase}`;
+      }
+    } else {
+      console.log('⚠️  B2 not configured, using local storage');
+      const outPath = path.join(MEDIA_DIR, fileBase);
+      fs.writeFileSync(outPath, buffer);
+      const baseUrl = req.protocol + '://' + req.get('host');
+      audioUrl = `${baseUrl}/media/${fileBase}`;
+    }
     
     // Cache the TTS result for 24 hours
     await cache.set(cacheKey, { audioUrl }, 86400);
@@ -3069,13 +3127,14 @@ async function loadTrendingTopics() {
   }
   
   // If trending topics are still empty after trying all sources, trigger an update
-  if (trendingTopicsCache.length === 0) {
-    console.log('[TRENDING] No trending topics found, triggering automatic update...');
-    // Trigger update asynchronously (don't await to avoid blocking startup)
-    updateTrendingTopics().catch(error => {
-      console.error('[TRENDING] Failed to auto-update trending topics:', error);
-    });
-  }
+  // COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+  // if (trendingTopicsCache.length === 0) {
+  //   console.log('[TRENDING] No trending topics found, triggering automatic update...');
+  //   // Trigger update asynchronously (don't await to avoid blocking startup)
+  //   updateTrendingTopics().catch(error => {
+  //     console.error('[TRENDING] Failed to auto-update trending topics:', error);
+  //   });
+  // }
 }
 
 // Save trending topics to MongoDB (with file backup)
@@ -3131,26 +3190,29 @@ mongoose.connection.on('connected', () => {
   console.log('[TRENDING] MongoDB connected, loading trending topics...');
   loadTrendingTopics().then(() => {
     // After loading, check if we still have empty trending topics and trigger update if needed
-    if (trendingTopicsCache.length === 0) {
-      console.log('[TRENDING] Trending topics still empty after MongoDB connection, triggering update...');
-      updateTrendingTopics().catch(error => {
-        console.error('[TRENDING] Failed to auto-update trending topics after MongoDB connection:', error);
-      });
-    }
+    // COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+    // if (trendingTopicsCache.length === 0) {
+    //   console.log('[TRENDING] Trending topics still empty after MongoDB connection, triggering update...');
+    //   updateTrendingTopics().catch(error => {
+    //     console.error('[TRENDING] Failed to auto-update trending topics after MongoDB connection:', error);
+    //   });
+    // }
   }).catch(error => {
     console.error('[TRENDING] Failed to load trending topics after MongoDB connection:', error);
     // Even if load failed, try to update if cache is empty
-    if (trendingTopicsCache.length === 0) {
-      console.log('[TRENDING] Triggering update after failed load...');
-      updateTrendingTopics().catch(updateError => {
-        console.error('[TRENDING] Failed to auto-update trending topics:', updateError);
-      });
-    }
+    // COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+    // if (trendingTopicsCache.length === 0) {
+    //   console.log('[TRENDING] Triggering update after failed load...');
+    //   updateTrendingTopics().catch(updateError => {
+    //     console.error('[TRENDING] Failed to auto-update trending topics:', updateError);
+    //   });
+    // }
   });
 });
 
 // Extract trending topics using ChatGPT analysis of news articles
-async function extractTrendingTopicsWithChatGPT(articles, initialTopics = []) {
+// COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+/*async function extractTrendingTopicsWithChatGPT(articles, initialTopics = []) {
   try {
     if (!OPENAI_API_KEY) {
       console.log('[TRENDING] OpenAI API key not configured, skipping ChatGPT analysis');
@@ -3489,9 +3551,10 @@ ${articlesText}${initialTopicsText}`;
     console.error('[TRENDING] Error in ChatGPT analysis:', error);
     return [];
   }
-}
+}*/
 
-async function updateTrendingTopics() {
+// COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+/*async function updateTrendingTopics() {
   try {
     console.log('[TRENDING] Updating trending topics...');
     
@@ -3585,10 +3648,11 @@ async function updateTrendingTopics() {
     console.error('[TRENDING] Error updating trending topics:', error);
     await updateTrendingTopicsFallback();
   }
-}
+}*/
 
 // Fallback method using the old approach
-async function updateTrendingTopicsFallback() {
+// COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+/*async function updateTrendingTopicsFallback() {
   try {
     const categories = ['general', 'business', 'technology', 'sports', 'entertainment', 'health', 'science'];
     const randomCategory = categories[Math.floor(Math.random() * categories.length)];
@@ -3618,11 +3682,12 @@ async function updateTrendingTopicsFallback() {
   } catch (error) {
     console.error('[TRENDING] Fallback method failed:', error);
   }
-}
+}*/
 
 // --- Daily Trending Topics Update Scheduler ---
+// COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
 // Update trending topics every morning at 5 AM PST
-let trendingTopicsUpdateTimeout = null;
+/*let trendingTopicsUpdateTimeout = null;
 let trendingTopicsUpdateRunning = false;
 
 // Function to update trending topics (wrapper to prevent concurrent runs)
@@ -3727,11 +3792,13 @@ function scheduleTrendingTopicsUpdate() {
       scheduleTrendingTopicsUpdate();
     });
   }, msUntilNextUpdate);
-}
+}*/
 
 // Start the daily trending topics update scheduler
-console.log(`[TRENDING] Daily trending topics update scheduler ENABLED - will update every morning at 5:00 AM PST`);
-scheduleTrendingTopicsUpdate();
+// COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+// console.log(`[TRENDING] Daily trending topics update scheduler ENABLED - will update every morning at 5:00 AM PST`);
+// scheduleTrendingTopicsUpdate();
+console.log(`[TRENDING] Daily trending topics update scheduler DISABLED - only manual topics allowed`);
 
 // --- Deployment Protection ---
 const DEPLOYMENT_MODE = process.env.DEPLOYMENT_MODE || 'development';
