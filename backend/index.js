@@ -3326,7 +3326,9 @@ ${articlesText}${initialTopicsText}`;
     // Clean up topics: remove leading numbers, periods, and other formatting
     topics = topics.map(topic => {
       // Remove leading numbers and punctuation (e.g., "1. Topic" -> "Topic")
-      return topic.replace(/^\d+[\.\)]\s*/, '').trim();
+      // Match: one or more digits followed by either a period or closing parenthesis, then optional whitespace
+      const regex = new RegExp('^\\d+[.)]\\s*');
+      return topic.replace(regex, '').trim();
     }).filter(topic => topic.length > 0);
     
     // Filter out fragmented topics and person names
