@@ -12,7 +12,7 @@ const adminActionSchema = new mongoose.Schema({
   action: {
     type: String,
     required: true,
-    enum: ['set_premium', 'set_free', 'reset_password', 'delete_user']
+    enum: ['set_premium', 'set_free', 'reset_password', 'delete_user', 'reset_usage']
   },
   details: {
     type: String,
