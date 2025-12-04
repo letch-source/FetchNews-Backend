@@ -23,7 +23,7 @@ const preferencesRoutes = require("./routes/preferences");
 const newsSourcesRoutes = require("./routes/newsSources");
 const trendingAdminRoutes = require("./routes/trendingAdmin");
 const notificationsRoutes = require("./routes/notifications");
-const { sendEngagementReminder } = require("./utils/notifications");
+const { sendEngagementReminder, sendFetchReadyNotification } = require("./utils/notifications");
 const fallbackAuth = require("./utils/fallbackAuth");
 const { uploadAudioToB2, isB2Configured } = require("./utils/b2Storage");
 const User = require("./models/User");
@@ -1592,40 +1592,33 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       userCountry = 'us';
     }
 
-    // Check for global news sources first (admin override)
-    let selectedSources = [];
+    // Check for global excluded news sources first (admin override)
+    let excludedSources = [];
     const globalSettings = await GlobalSettings.getOrCreate();
     
-    if (globalSettings.globalNewsSourcesEnabled && globalSettings.globalNewsSources && globalSettings.globalNewsSources.length > 0) {
-      // Use global sources (override user selections)
-      selectedSources = globalSettings.globalNewsSources;
-      console.log(`[GLOBAL SOURCES] Using ${selectedSources.length} global news sources:`, selectedSources);
+    if (globalSettings.excludedNewsSourcesEnabled && globalSettings.excludedNewsSources && globalSettings.excludedNewsSources.length > 0) {
+      // Use global excluded sources (override user exclusions)
+      excludedSources = globalSettings.excludedNewsSources;
+      console.log(`[GLOBAL SOURCES] Excluding ${excludedSources.length} global news sources:`, excludedSources);
     } else {
-      // Get user's selected news sources (if authenticated and premium)
+      // Get user's excluded news sources (if authenticated and premium)
       if (req.user && req.user.isPremium) {
         const user = await User.findById(req.user.id);
         if (user) {
           const preferences = user.getPreferences();
-          selectedSources = preferences.selectedNewsSources || [];
+          excludedSources = preferences.excludedNewsSources || [];
           
-          console.log(`Premium user ${req.user.id} has ${selectedSources.length} sources selected:`, selectedSources);
-          
-          // If user has made selections but has less than 5 sources, return error
-          if (selectedSources.length > 0 && selectedSources.length < 5) {
-            return res.status(400).json({
-              error: "Insufficient news sources",
-              message: `Please select at least 5 news sources. You currently have ${selectedSources.length} selected.`,
-              selectedCount: selectedSources.length,
-              requiredCount: 5
-            });
-          }
+          console.log(`Premium user ${req.user.id} has ${excludedSources.length} sources excluded:`, excludedSources);
         }
       } else {
-        console.log(`Non-premium user, using all sources`);
+        console.log(`Non-premium user, using all sources (no exclusions)`);
       }
     }
     
-    // If no sources selected (or not premium), use all available sources (empty array means no filtering)
+    // Convert excluded sources to selected sources (for API filtering)
+    // We'll filter articles after fetching, so pass empty array to use all sources from API
+    // The filtering will happen in post-processing
+    let selectedSources = []; // Empty means use all sources from API, then filter
 
     const items = [];
     const summariesWithTopics = [];
@@ -1725,6 +1718,16 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         const isCore = CORE_CATEGORIES.has(topicLower);
         const isLocal = topicLower === "local";
 
+        // Filter out excluded sources
+        if (excludedSources && excludedSources.length > 0) {
+          const excludedSet = new Set(excludedSources.map(s => s.toLowerCase()));
+          articles = articles.filter(article => {
+            const articleSource = (article.source || '').toLowerCase();
+            return !excludedSet.has(articleSource);
+          });
+          console.log(`[FILTER] Filtered out excluded sources, ${articles.length} articles remaining`);
+        }
+        
         // Filter relevant articles
         let relevant = filterRelevantArticles(topic, geoData, articles, perTopic);
         
@@ -1889,6 +1892,33 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       title = "Mixed Summary";
     }
 
+    // Send notification if user is not in app and has device token
+    // Check appInForeground from query params or body (defaults to true for backward compatibility)
+    const appInForeground = req.query.appInForeground !== 'false' && req.body.appInForeground !== false;
+    
+    if (!appInForeground && req.user) {
+      try {
+        // Reload user to get latest device token
+        let userWithToken;
+        if (mongoose.connection.readyState === 1) {
+          userWithToken = await User.findById(req.user._id || req.user.id);
+        } else {
+          userWithToken = req.user;
+        }
+        
+        if (userWithToken && userWithToken.deviceToken) {
+          // Send notification asynchronously (don't wait for it)
+          sendFetchReadyNotification(userWithToken.deviceToken, title).catch(err => {
+            console.error('[NOTIFICATIONS] Failed to send Fetch-ready notification:', err);
+          });
+          console.log(`[NOTIFICATIONS] Sent Fetch-ready notification to user ${userWithToken.email}`);
+        }
+      } catch (notifError) {
+        // Don't fail the request if notification fails
+        console.error('[NOTIFICATIONS] Error sending Fetch-ready notification:', notifError);
+      }
+    }
+
     return res.json({
       items,
       combined: {
@@ -1957,36 +1987,33 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
       return res.status(400).json({ error: "batches must be an array" });
     }
 
-    // Check for global news sources first (admin override)
-    let selectedSources = [];
+    // Check for global excluded news sources first (admin override)
+    let excludedSources = [];
     const globalSettings = await GlobalSettings.getOrCreate();
     
-    if (globalSettings.globalNewsSourcesEnabled && globalSettings.globalNewsSources && globalSettings.globalNewsSources.length > 0) {
-      // Use global sources (override user selections)
-      selectedSources = globalSettings.globalNewsSources;
-      console.log(`[GLOBAL SOURCES] Using ${selectedSources.length} global news sources:`, selectedSources);
+    if (globalSettings.excludedNewsSourcesEnabled && globalSettings.excludedNewsSources && globalSettings.excludedNewsSources.length > 0) {
+      // Use global excluded sources (override user exclusions)
+      excludedSources = globalSettings.excludedNewsSources;
+      console.log(`[GLOBAL SOURCES] Excluding ${excludedSources.length} global news sources:`, excludedSources);
     } else {
-      // Get user's selected news sources (if authenticated and premium)
+      // Get user's excluded news sources (if authenticated and premium)
       if (req.user && req.user.isPremium) {
         const user = await User.findById(req.user.id);
         if (user) {
           const preferences = user.getPreferences();
-          selectedSources = preferences.selectedNewsSources || [];
+          excludedSources = preferences.excludedNewsSources || [];
           
-          // If user has made selections but has less than 5 sources, return error
-          if (selectedSources.length > 0 && selectedSources.length < 5) {
-            return res.status(400).json({
-              error: "Insufficient news sources",
-              message: `Please select at least 5 news sources. You currently have ${selectedSources.length} selected.`,
-              selectedCount: selectedSources.length,
-              requiredCount: 5
-            });
-          }
+          console.log(`Premium user ${req.user.id} has ${excludedSources.length} sources excluded:`, excludedSources);
         }
+      } else {
+        console.log(`Non-premium user, using all sources (no exclusions)`);
       }
     }
     
-    // If no sources selected (or not premium), use all available sources (empty array means no filtering)
+    // Convert excluded sources to selected sources (for API filtering)
+    // We'll filter articles after fetching, so pass empty array to use all sources from API
+    // The filtering will happen in post-processing
+    let selectedSources = []; // Empty means use all sources from API, then filter
 
     const results = await Promise.all(
       batches.map(async (b) => {
@@ -2039,7 +2066,16 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
               countryCode: batchCountry.toLowerCase()
             };
             
-            const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
+            let { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
+            
+            // Filter out excluded sources
+            if (excludedSources && excludedSources.length > 0) {
+              const excludedSet = new Set(excludedSources.map(s => s.toLowerCase()));
+              articles = articles.filter(article => {
+                const articleSource = (article.source || '').toLowerCase();
+                return !excludedSet.has(articleSource);
+              });
+            }
 
             for (let idx = 0; idx < articles.length; idx++) {
               const a = articles[idx];
@@ -2158,6 +2194,43 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
       } catch (incrementError) {
         console.error(`[BATCH_SUMMARIZE] Error incrementing usage:`, incrementError);
         // Don't fail the request if increment fails, but log it
+      }
+    }
+
+    // Send notification if user is not in app and has device token
+    // Check appInForeground from first batch (all batches should have same value)
+    const appInForeground = batches.length > 0 && batches[0].appInForeground !== false;
+    
+    if (!appInForeground && req.user) {
+      try {
+        // Reload user to get latest device token
+        let userWithToken;
+        if (mongoose.connection.readyState === 1) {
+          userWithToken = await User.findById(req.user._id || req.user.id);
+        } else {
+          userWithToken = req.user;
+        }
+        
+        if (userWithToken && userWithToken.deviceToken) {
+          // Generate title from first batch topics
+          const firstBatch = batches[0];
+          const firstTopics = Array.isArray(firstBatch.topics) ? firstBatch.topics : [];
+          let title = "Summary";
+          if (firstTopics.length === 1) {
+            title = `${firstTopics[0].charAt(0).toUpperCase() + firstTopics[0].slice(1)} Summary`;
+          } else if (firstTopics.length > 1) {
+            title = "Mixed Summary";
+          }
+          
+          // Send notification asynchronously (don't wait for it)
+          sendFetchReadyNotification(userWithToken.deviceToken, title).catch(err => {
+            console.error('[NOTIFICATIONS] Failed to send Fetch-ready notification:', err);
+          });
+          console.log(`[NOTIFICATIONS] Sent Fetch-ready notification to user ${userWithToken.email} (batch)`);
+        }
+      } catch (notifError) {
+        // Don't fail the request if notification fails
+        console.error('[NOTIFICATIONS] Error sending Fetch-ready notification:', notifError);
       }
     }
 
@@ -3572,17 +3645,18 @@ ${articlesText}${initialTopicsText}`;
       return;
     }
     
-    // Check for global news sources first (admin override)
-    let newsSources = [];
+    // Check for global excluded news sources first (admin override)
+    let excludedSources = [];
     const globalSettings = await GlobalSettings.getOrCreate();
     
-    if (globalSettings.globalNewsSourcesEnabled && globalSettings.globalNewsSources && globalSettings.globalNewsSources.length > 0) {
-      // Use global sources
-      newsSources = globalSettings.globalNewsSources;
-      console.log(`[TRENDING] Using ${newsSources.length} global news sources:`, newsSources);
-    } else {
-      // Fallback to default high-quality U.S.-based news sources
-      newsSources = [
+    if (globalSettings.excludedNewsSourcesEnabled && globalSettings.excludedNewsSources && globalSettings.excludedNewsSources.length > 0) {
+      // Get excluded sources, then filter them out from default list
+      excludedSources = globalSettings.excludedNewsSources;
+      console.log(`[TRENDING] Excluding ${excludedSources.length} global news sources:`, excludedSources);
+    }
+    
+    // Default high-quality U.S.-based news sources
+    let newsSources = [
         'cnn', 'nbc-news', 'associated-press', 'bloomberg', 
         'the-new-york-times', 'usa-today', 'npr', 'abc-news', 
         'cbs-news', 'washington-post'

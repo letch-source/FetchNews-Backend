@@ -157,6 +157,23 @@ async function sendEngagementReminder(deviceToken, message = null) {
 }
 
 /**
+ * Send notification when a Fetch is ready and user is not in app
+ * @param {string} deviceToken - The device token
+ * @param {string} fetchTitle - Title of the Fetch
+ */
+async function sendFetchReadyNotification(deviceToken, fetchTitle) {
+  return await sendPushNotification(
+    deviceToken,
+    'Your Fetch is Ready! 🐕📰',
+    `${fetchTitle} is ready to view.`,
+    {
+      notificationType: 'fetchReady',
+      action: 'openFetch'
+    }
+  );
+}
+
+/**
  * Shutdown APNs provider (call on app shutdown)
  */
 function shutdown() {
@@ -170,6 +187,7 @@ module.exports = {
   sendPushNotification,
   sendScheduledSummaryNotification,
   sendEngagementReminder,
+  sendFetchReadyNotification,
   initializeAPNs,
   shutdown
 };
