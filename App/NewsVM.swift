@@ -221,6 +221,7 @@ final class NewsVM: ObservableObject {
     }
 
     func setLength(_ l: ApiClient.Length) { 
+        print("📝 setLength called: \(l.label) (\(l.rawValue))")
         length = l // This will trigger didSet and debouncedSaveSettings()
         isDirty = true 
     }
@@ -306,6 +307,9 @@ final class NewsVM: ObservableObject {
         if let savedLength = defaults.object(forKey: "FetchNews_length") as? Int,
            let lengthValue = ApiClient.Length(rawValue: savedLength) {
             length = lengthValue
+            print("✅ Loaded length from UserDefaults: \(lengthValue.label) (\(savedLength))")
+        } else {
+            print("⚠️ No saved length found in UserDefaults, using default: Short")
         }
         
         upliftingNewsOnly = defaults.bool(forKey: "FetchNews_upliftingNewsOnly")
@@ -361,10 +365,50 @@ final class NewsVM: ObservableObject {
             // Update uplifting news only from backend
             upliftingNewsOnly = preferences.upliftingNewsOnly
             
-            // Update length from backend
+            // Update length from backend, but preserve local value if backend has default
+            // This ensures user's preference is preserved if backend hasn't been updated yet
+            let currentLocalLength = length
+            var lengthUpdated = false
+            
             if let lengthInt = Int(preferences.length),
                let lengthValue = ApiClient.Length(rawValue: lengthInt) {
-                length = lengthValue
+                // Backend default is '200' (short). If backend has default and we have a different
+                // local value, keep the local value and sync it to backend.
+                // Otherwise, use the backend value (which may be default or user's preference)
+                if lengthInt == 200 && currentLocalLength != .short {
+                    // Backend has default but user has a different preference locally
+                    // Keep local value (don't update length) and sync it to backend
+                    // The length property already has the correct local value
+                    print("🔄 Backend has default length (200), preserving local value: \(currentLocalLength.label) (\(currentLocalLength.rawValue))")
+                    // Save the local preference to backend to sync it
+                    Task {
+                        await saveRemoteSettings()
+                    }
+                    lengthUpdated = false // We're preserving, not updating
+                } else {
+                    // Backend has a non-default value, or local is also default - use backend value
+                    length = lengthValue
+                    lengthUpdated = true
+                    print("✅ Updated length from backend: \(lengthValue.label) (\(lengthInt))")
+                }
+            } else {
+                // Backend returned invalid length - keep local value and try to sync it
+                print("⚠️ Backend returned invalid length: '\(preferences.length)', keeping local value: \(currentLocalLength.label)")
+                if currentLocalLength != .short {
+                    Task {
+                        await saveRemoteSettings()
+                    }
+                }
+                lengthUpdated = false // We're preserving, not updating
+            }
+            
+            // If we preserved the local value, ensure it's explicitly saved to UserDefaults
+            // This guarantees persistence even if backend sync hasn't completed yet
+            if !lengthUpdated && currentLocalLength != .short {
+                // Explicitly save the preserved local value to ensure it persists
+                let defaults = UserDefaults.standard
+                defaults.set(currentLocalLength.rawValue, forKey: "FetchNews_length")
+                print("💾 Explicitly saved preserved length to UserDefaults: \(currentLocalLength.label) (\(currentLocalLength.rawValue))")
             }
             
             // Update country from backend
@@ -428,6 +472,7 @@ final class NewsVM: ObservableObject {
         defaults.set(validVoice, forKey: "FetchNews_selectedVoice")
         defaults.set(upliftingNewsOnly, forKey: "FetchNews_upliftingNewsOnly")
         defaults.set(length.rawValue, forKey: "FetchNews_length")
+        print("💾 Saved length to UserDefaults: \(length.label) (\(length.rawValue))")
         defaults.set(Array(lastFetchedTopics), forKey: "FetchNews_lastFetchedTopics")
         defaults.set(Array(selectedTopics), forKey: "FetchNews_selectedTopics")
         defaults.set(Array(excludedNewsSources), forKey: "FetchNews_excludedNewsSources")
@@ -1203,12 +1248,52 @@ final class NewsVM: ObservableObject {
                 return // No history
             }
             
-            // IMPORTANT: Always update lastFetchedTopics from the most recent history entry
-            // This ensures recent topics are always available even if we don't load a new summary
+            // IMPORTANT: Update lastFetchedTopics from all history entries within the last 48 hours
+            // This ensures recent topics from multiple fetches are available
             await MainActor.run {
-                if !mostRecent.topics.isEmpty {
-                    lastFetchedTopics = Set(mostRecent.topics)
-                    print("✅ Updated lastFetchedTopics from history: \(mostRecent.topics.joined(separator: ", "))")
+                let now = Date()
+                let fortyEightHoursAgo = now.addingTimeInterval(-48 * 60 * 60) // 48 hours ago
+                
+                // Parse timestamp helper
+                func parseTimestamp(_ timestampString: String) -> Date? {
+                    let formatter = ISO8601DateFormatter()
+                    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                    if let date = formatter.date(from: timestampString) {
+                        return date
+                    }
+                    // Fallback to standard ISO8601
+                    let fallbackFormatter = ISO8601DateFormatter()
+                    return fallbackFormatter.date(from: timestampString)
+                }
+                
+                // Collect topics from all entries within the last 48 hours
+                var recentTopics: Set<String> = []
+                for entry in history {
+                    // Parse timestamp string to Date
+                    if let entryDate = parseTimestamp(entry.timestamp) {
+                        // Only include entries from the last 48 hours
+                        if entryDate >= fortyEightHoursAgo {
+                            recentTopics.formUnion(Set(entry.topics))
+                            let dateFormatter = DateFormatter()
+                            dateFormatter.dateStyle = .short
+                            dateFormatter.timeStyle = .short
+                            print("📅 Including topics from '\(entry.title)' (\(dateFormatter.string(from: entryDate))): \(entry.topics.joined(separator: ", "))")
+                        }
+                    } else {
+                        print("⚠️ Could not parse timestamp for entry '\(entry.title)': \(entry.timestamp)")
+                    }
+                }
+                
+                // Update lastFetchedTopics with all recent topics
+                if !recentTopics.isEmpty {
+                    lastFetchedTopics.formUnion(recentTopics)
+                    print("✅ Updated lastFetchedTopics from last 48 hours (\(recentTopics.count) topics): \(recentTopics.joined(separator: ", "))")
+                } else {
+                    // Fallback: if no entries in last 48 hours, use most recent entry
+                    if !mostRecent.topics.isEmpty {
+                        lastFetchedTopics.formUnion(Set(mostRecent.topics))
+                        print("⚠️ No entries in last 48 hours, using most recent: \(mostRecent.topics.joined(separator: ", "))")
+                    }
                 }
             }
             

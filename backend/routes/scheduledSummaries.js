@@ -66,39 +66,93 @@ async function saveUserWithRetry(user, retries = 3) {
         const changesToPreserve = {};
         
         // Store all modified values - deep clone to avoid reference issues
+        // Use a more robust method to get values that handles all field types
         for (const path of modifiedPaths) {
-          const value = currentUser.get(path);
-          if (value !== undefined && value !== null) {
-            // Deep clone objects and arrays to avoid reference issues
-            if (typeof value === 'object' && value !== null && !(value instanceof Date)) {
-              changesToPreserve[path] = JSON.parse(JSON.stringify(value));
-            } else {
-              changesToPreserve[path] = value;
+          try {
+            // Try to get the value using get() first
+            let value = currentUser.get(path);
+            
+            // If get() returns undefined, try accessing directly
+            if (value === undefined) {
+              const pathParts = path.split('.');
+              let obj = currentUser;
+              for (const part of pathParts) {
+                if (obj && typeof obj === 'object' && part in obj) {
+                  obj = obj[part];
+                } else {
+                  obj = undefined;
+                  break;
+                }
+              }
+              value = obj;
             }
+            
+            // Preserve the value if it's not undefined (null is valid)
+            if (value !== undefined) {
+              // Deep clone objects and arrays to avoid reference issues
+              if (typeof value === 'object' && value !== null && !(value instanceof Date) && !(value instanceof mongoose.Types.ObjectId)) {
+                try {
+                  changesToPreserve[path] = JSON.parse(JSON.stringify(value));
+                } catch (cloneError) {
+                  // If deep clone fails, use the value directly
+                  changesToPreserve[path] = value;
+                }
+              } else {
+                changesToPreserve[path] = value;
+              }
+            }
+          } catch (getError) {
+            // If we can't get the value, skip this path
+            console.warn(`[SCHEDULED_SUMMARY] Could not preserve path ${path}:`, getError.message);
           }
         }
         
         // Explicitly check for common fields that might have been modified
-        if (currentUser.isModified('scheduledSummaries')) {
-          changesToPreserve['scheduledSummaries'] = JSON.parse(JSON.stringify(currentUser.scheduledSummaries || []));
-        }
-        if (currentUser.isModified('summaryHistory')) {
-          changesToPreserve['summaryHistory'] = JSON.parse(JSON.stringify(currentUser.summaryHistory || []));
-        }
-        if (currentUser.isModified('dailyUsageCount')) {
-          changesToPreserve['dailyUsageCount'] = currentUser.dailyUsageCount;
-        }
-        if (currentUser.isModified('lastUsageDate')) {
-          changesToPreserve['lastUsageDate'] = currentUser.lastUsageDate;
-        }
-        if (currentUser.isModified('preferences')) {
-          changesToPreserve['preferences'] = JSON.parse(JSON.stringify(currentUser.preferences || {}));
+        // This ensures we don't miss any fields even if modifiedPaths() doesn't catch them
+        const fieldsToCheck = [
+          'scheduledSummaries',
+          'summaryHistory',
+          'dailyUsageCount',
+          'lastUsageDate',
+          'preferences',
+          'resetPasswordToken',
+          'resetPasswordExpires',
+          'emailVerificationToken',
+          'emailVerificationExpires',
+          'selectedVoice',
+          'playbackRate',
+          'upliftingNewsOnly',
+          'lastFetchedTopics',
+          'selectedTopics',
+          'excludedNewsSources',
+          'selectedCountry'
+        ];
+        
+        for (const field of fieldsToCheck) {
+          if (currentUser.isModified(field)) {
+            const value = currentUser[field];
+            if (value !== undefined) {
+              if (typeof value === 'object' && value !== null && !(value instanceof Date) && !(value instanceof mongoose.Types.ObjectId)) {
+                try {
+                  changesToPreserve[field] = JSON.parse(JSON.stringify(value));
+                } catch (cloneError) {
+                  changesToPreserve[field] = value;
+                }
+              } else {
+                changesToPreserve[field] = value;
+              }
+            }
+          }
         }
         
         // Apply our preserved changes to the fresh user
         for (const [path, value] of Object.entries(changesToPreserve)) {
-          freshUser.set(path, value);
-          freshUser.markModified(path);
+          try {
+            freshUser.set(path, value);
+            freshUser.markModified(path);
+          } catch (setError) {
+            console.warn(`[SCHEDULED_SUMMARY] Could not set path ${path}:`, setError.message);
+          }
         }
         
         // Update currentUser to freshUser and continue the loop to retry the save
@@ -109,6 +163,14 @@ async function saveUserWithRetry(user, retries = 3) {
         // Continue the while loop to retry the save
         continue;
       } else {
+        // Log the error details for debugging
+        if (error.name === 'VersionError') {
+          console.error(`[SCHEDULED_SUMMARY] VersionError after ${retries} retries:`, {
+            userId: currentUser._id,
+            version: error.version,
+            modifiedPaths: error.modifiedPaths || []
+          });
+        }
         throw error;
       }
     }
@@ -245,6 +307,15 @@ router.post('/', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error('Create/Update scheduled fetch error:', error);
+    // Log detailed error information for version conflicts
+    if (error.name === 'VersionError') {
+      console.error('[SCHEDULED_SUMMARY] VersionError details:', {
+        userId: req.user._id,
+        version: error.version,
+        modifiedPaths: error.modifiedPaths || [],
+        message: error.message
+      });
+    }
     res.status(500).json({ error: 'Failed to save scheduled fetch' });
   }
 });
@@ -335,6 +406,15 @@ router.put('/:id', authenticateToken, async (req, res) => {
     res.json(updatedSummary);
   } catch (error) {
     console.error('Update scheduled fetch error:', error);
+    // Log detailed error information for version conflicts
+    if (error.name === 'VersionError') {
+      console.error('[SCHEDULED_SUMMARY] VersionError details:', {
+        userId: req.user._id,
+        version: error.version,
+        modifiedPaths: error.modifiedPaths || [],
+        message: error.message
+      });
+    }
     res.status(500).json({ error: 'Failed to update scheduled fetch' });
   }
 });
