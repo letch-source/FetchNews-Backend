@@ -1,7 +1,8 @@
 const apn = require('apn');
 
-// Initialize APNs provider
-let apnProvider = null;
+// Initialize APNs providers for both environments
+let apnProviderProduction = null;
+let apnProviderDevelopment = null;
 
 function initializeAPNs() {
   // Check if APNs is configured via environment variables
@@ -32,18 +33,31 @@ function initializeAPNs() {
       return null;
     }
 
-    const options = {
+    // Create production provider
+    const optionsProduction = {
       token: {
         key: keyContent,
         keyId: apnKeyId,
         teamId: apnTeamId
       },
-      production: apnProduction
+      production: true
     };
+    apnProviderProduction = new apn.Provider(optionsProduction);
 
-    apnProvider = new apn.Provider(options);
-    console.log(`[NOTIFICATIONS] APNs initialized (${apnProduction ? 'production' : 'development'})`);
-    return apnProvider;
+    // Create development provider
+    const optionsDevelopment = {
+      token: {
+        key: keyContent,
+        keyId: apnKeyId,
+        teamId: apnTeamId
+      },
+      production: false
+    };
+    apnProviderDevelopment = new apn.Provider(optionsDevelopment);
+
+    console.log(`[NOTIFICATIONS] APNs initialized for both environments (production and development)`);
+    console.log(`[NOTIFICATIONS] Primary environment: ${apnProduction ? 'production' : 'development'}`);
+    return true;
   } catch (error) {
     console.error('[NOTIFICATIONS] Failed to initialize APNs:', error);
     return null;
@@ -66,9 +80,9 @@ async function sendPushNotification(deviceToken, title, body, data = {}) {
   console.log(`[NOTIFICATIONS]   - Title: "${title}"`);
   console.log(`[NOTIFICATIONS]   - Body: "${body}"`);
   console.log(`[NOTIFICATIONS]   - Device token: ${deviceToken ? `${deviceToken.substring(0, 8)}...` : 'MISSING'}`);
-  console.log(`[NOTIFICATIONS]   - APNs provider: ${apnProvider ? 'configured' : 'NOT configured'}`);
+  console.log(`[NOTIFICATIONS]   - APNs providers: production=${!!apnProviderProduction}, development=${!!apnProviderDevelopment}`);
   
-  if (!apnProvider) {
+  if (!apnProviderProduction && !apnProviderDevelopment) {
     console.log('[NOTIFICATIONS] ❌ APNs not configured, skipping notification');
     console.log('[NOTIFICATIONS]   Check APN_KEY_ID, APN_TEAM_ID, and APN_KEY_CONTENT environment variables');
     return false;
@@ -98,17 +112,68 @@ async function sendPushNotification(deviceToken, title, body, data = {}) {
       notificationType: data.notificationType || 'general'
     };
 
-    console.log(`[NOTIFICATIONS] Sending notification via APNs...`);
-    // Send notification
-    const result = await apnProvider.send(notification, deviceToken);
-    
-    if (result.failed && result.failed.length > 0) {
-      console.error('[NOTIFICATIONS] ❌ Failed to send notification:', JSON.stringify(result.failed, null, 2));
+    // Determine primary provider based on NODE_ENV
+    const primaryProvider = process.env.NODE_ENV === 'production' ? apnProviderProduction : apnProviderDevelopment;
+    const fallbackProvider = process.env.NODE_ENV === 'production' ? apnProviderDevelopment : apnProviderProduction;
+    const primaryEnv = process.env.NODE_ENV === 'production' ? 'production' : 'development';
+    const fallbackEnv = process.env.NODE_ENV === 'production' ? 'development' : 'production';
+
+    // Ensure we have at least one provider
+    if (!primaryProvider && !fallbackProvider) {
+      console.log('[NOTIFICATIONS] ❌ No APNs providers available');
+      return false;
+    }
+
+    // Try primary environment first (if available)
+    let result;
+    if (primaryProvider) {
+      console.log(`[NOTIFICATIONS] Sending notification via APNs (${primaryEnv})...`);
+      result = await primaryProvider.send(notification, deviceToken);
+    } else {
+      // If primary not available, use fallback
+      console.log(`[NOTIFICATIONS] Primary provider not available, using ${fallbackEnv}...`);
+      result = await fallbackProvider.send(notification, deviceToken);
+      if (result.sent && result.sent.length > 0) {
+        console.log(`[NOTIFICATIONS] ✅ Successfully sent notification to ${deviceToken.substring(0, 8)}... (using ${fallbackEnv} environment)`);
+        return true;
+      }
+      if (result.failed && result.failed.length > 0) {
+        console.error(`[NOTIFICATIONS] ❌ Failed to send notification (${fallbackEnv}):`, JSON.stringify(result.failed, null, 2));
+        return false;
+      }
       return false;
     }
     
+    // Check for BadEnvironmentKeyInToken error
+    if (result.failed && result.failed.length > 0) {
+      const badEnvError = result.failed.find(f => 
+        f.response && f.response.reason === 'BadEnvironmentKeyInToken'
+      );
+      
+      if (badEnvError && fallbackProvider) {
+        console.log(`[NOTIFICATIONS] Environment mismatch detected (token is ${fallbackEnv}, server using ${primaryEnv}), retrying with ${fallbackEnv}...`);
+        
+        // Retry with the other environment
+        result = await fallbackProvider.send(notification, deviceToken);
+        
+        if (result.failed && result.failed.length > 0) {
+          console.error(`[NOTIFICATIONS] ❌ Failed to send notification (${fallbackEnv}):`, JSON.stringify(result.failed, null, 2));
+          return false;
+        }
+        
+        if (result.sent && result.sent.length > 0) {
+          console.log(`[NOTIFICATIONS] ✅ Successfully sent notification to ${deviceToken.substring(0, 8)}... (using ${fallbackEnv} environment)`);
+          return true;
+        }
+      } else {
+        // Other error, log and return
+        console.error(`[NOTIFICATIONS] ❌ Failed to send notification (${primaryEnv}):`, JSON.stringify(result.failed, null, 2));
+        return false;
+      }
+    }
+    
     if (result.sent && result.sent.length > 0) {
-      console.log(`[NOTIFICATIONS] ✅ Successfully sent notification to ${deviceToken.substring(0, 8)}...`);
+      console.log(`[NOTIFICATIONS] ✅ Successfully sent notification to ${deviceToken.substring(0, 8)}... (using ${primaryEnv} environment)`);
       return true;
     }
     
