@@ -423,22 +423,25 @@ async function executeScheduledSummary(user, summary) {
       return;
     }
     
-    // Check for global news sources first (admin override)
-    let selectedSources = [];
+    // Check for global excluded news sources first (admin override)
+    let excludedSources = [];
     const GlobalSettings = require('../models/GlobalSettings');
     const globalSettings = await GlobalSettings.getOrCreate();
     
-    if (globalSettings.globalNewsSourcesEnabled && globalSettings.globalNewsSources && globalSettings.globalNewsSources.length > 0) {
-      // Use global sources (override user selections)
-      selectedSources = globalSettings.globalNewsSources;
-      console.log(`[SCHEDULER] Using ${selectedSources.length} global news sources for user ${user.email}:`, selectedSources);
+    if (globalSettings.excludedNewsSourcesEnabled && globalSettings.excludedNewsSources && globalSettings.excludedNewsSources.length > 0) {
+      // Use global excluded sources (override user exclusions)
+      excludedSources = globalSettings.excludedNewsSources;
+      console.log(`[SCHEDULER] Excluding ${excludedSources.length} global news sources for user ${user.email}:`, excludedSources);
     } else {
-      // Get user's selected news sources (if premium)
+      // Get user's excluded news sources (if premium)
       if (user.isPremium && user.getPreferences) {
-        selectedSources = preferences.selectedNewsSources || [];
-        console.log(`[SCHEDULER] User ${user.email} has ${selectedSources.length} sources selected:`, selectedSources);
+        excludedSources = preferences.excludedNewsSources || [];
+        console.log(`[SCHEDULER] User ${user.email} has ${excludedSources.length} sources excluded:`, excludedSources);
       }
     }
+    
+    // Convert to selectedSources for API (empty means use all, then filter)
+    let selectedSources = [];
     
     const items = [];
     const summariesWithTopics = [];
@@ -686,6 +689,10 @@ async function executeScheduledSummary(user, summary) {
     const notificationPrefs = user.notificationPreferences || {};
     const notificationsEnabled = notificationPrefs.scheduledSummaryNotifications !== false;
     
+    console.log(`[SCHEDULER] Notification check for user ${user.email}:`);
+    console.log(`[SCHEDULER]   - Notifications enabled: ${notificationsEnabled}`);
+    console.log(`[SCHEDULER]   - Notification prefs:`, JSON.stringify(notificationPrefs));
+    
     if (notificationsEnabled) {
       try {
         let deviceToken = null;
@@ -696,15 +703,19 @@ async function executeScheduledSummary(user, summary) {
           deviceToken = user.preferences?.deviceToken || null;
         }
         
+        console.log(`[SCHEDULER]   - Device token: ${deviceToken ? `${deviceToken.substring(0, 8)}...` : 'NOT FOUND'}`);
+        
         if (deviceToken) {
+          console.log(`[SCHEDULER]   - Sending notification for "${title}"...`);
           await sendScheduledSummaryNotification(deviceToken, title, summaryData.id);
-          console.log(`[SCHEDULER] ✅ Sent push notification for scheduled summary "${title}" to user ${user.email}`);
+          console.log(`[SCHEDULER] ✅ Successfully sent push notification for scheduled summary "${title}" to user ${user.email}`);
         } else {
           console.log(`[SCHEDULER] ⚠️  No device token found for user ${user.email}, skipping push notification`);
         }
       } catch (notificationError) {
         // Don't fail the entire operation if notification fails
         console.error(`[SCHEDULER] ❌ Failed to send push notification for user ${user.email}:`, notificationError);
+        console.error(`[SCHEDULER] ❌ Error stack:`, notificationError.stack);
       }
     } else {
       console.log(`[SCHEDULER] ℹ️  Scheduled summary notifications disabled for user ${user.email}`);

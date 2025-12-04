@@ -1909,6 +1909,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
 
     // Send notification asynchronously after response (don't wait for it)
     if (!appInForeground && req.user) {
+      console.log(`[NOTIFICATIONS] User ${req.user.email} not in foreground, will send notification`);
       setImmediate(async () => {
         try {
           // Reload user to get latest device token
@@ -1920,14 +1921,23 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
           }
           
           if (userWithToken && userWithToken.deviceToken) {
+            console.log(`[NOTIFICATIONS] Sending Fetch-ready notification to user ${userWithToken.email} with token ${userWithToken.deviceToken.substring(0, 8)}...`);
             await sendFetchReadyNotification(userWithToken.deviceToken, title);
-            console.log(`[NOTIFICATIONS] Sent Fetch-ready notification to user ${userWithToken.email}`);
+            console.log(`[NOTIFICATIONS] ✅ Successfully sent Fetch-ready notification to user ${userWithToken.email}`);
+          } else {
+            console.log(`[NOTIFICATIONS] ⚠️  No device token found for user ${userWithToken?.email || req.user.email}, skipping notification`);
           }
         } catch (notifError) {
           // Don't fail the request if notification fails
-          console.error('[NOTIFICATIONS] Error sending Fetch-ready notification:', notifError);
+          console.error('[NOTIFICATIONS] ❌ Error sending Fetch-ready notification:', notifError);
         }
       });
+    } else {
+      if (req.user) {
+        console.log(`[NOTIFICATIONS] User ${req.user.email} is in foreground (appInForeground=${appInForeground}), skipping notification`);
+      } else {
+        console.log(`[NOTIFICATIONS] No authenticated user, skipping notification`);
+      }
     }
   } catch (e) {
     console.error("Summarize endpoint error:", e);

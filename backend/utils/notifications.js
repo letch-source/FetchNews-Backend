@@ -62,13 +62,20 @@ initializeAPNs();
  * @returns {Promise<boolean>} - Success status
  */
 async function sendPushNotification(deviceToken, title, body, data = {}) {
+  console.log(`[NOTIFICATIONS] Attempting to send notification:`);
+  console.log(`[NOTIFICATIONS]   - Title: "${title}"`);
+  console.log(`[NOTIFICATIONS]   - Body: "${body}"`);
+  console.log(`[NOTIFICATIONS]   - Device token: ${deviceToken ? `${deviceToken.substring(0, 8)}...` : 'MISSING'}`);
+  console.log(`[NOTIFICATIONS]   - APNs provider: ${apnProvider ? 'configured' : 'NOT configured'}`);
+  
   if (!apnProvider) {
-    console.log('[NOTIFICATIONS] APNs not configured, skipping notification');
+    console.log('[NOTIFICATIONS] ❌ APNs not configured, skipping notification');
+    console.log('[NOTIFICATIONS]   Check APN_KEY_ID, APN_TEAM_ID, and APN_KEY_CONTENT environment variables');
     return false;
   }
 
   if (!deviceToken) {
-    console.log('[NOTIFICATIONS] No device token provided');
+    console.log('[NOTIFICATIONS] ❌ No device token provided');
     return false;
   }
 
@@ -91,22 +98,25 @@ async function sendPushNotification(deviceToken, title, body, data = {}) {
       notificationType: data.notificationType || 'general'
     };
 
+    console.log(`[NOTIFICATIONS] Sending notification via APNs...`);
     // Send notification
     const result = await apnProvider.send(notification, deviceToken);
     
     if (result.failed && result.failed.length > 0) {
-      console.error('[NOTIFICATIONS] Failed to send notification:', result.failed);
+      console.error('[NOTIFICATIONS] ❌ Failed to send notification:', JSON.stringify(result.failed, null, 2));
       return false;
     }
     
     if (result.sent && result.sent.length > 0) {
-      console.log(`[NOTIFICATIONS] Successfully sent notification to ${deviceToken.substring(0, 8)}...`);
+      console.log(`[NOTIFICATIONS] ✅ Successfully sent notification to ${deviceToken.substring(0, 8)}...`);
       return true;
     }
     
+    console.log(`[NOTIFICATIONS] ⚠️  No notification sent (no sent or failed results)`);
     return false;
   } catch (error) {
-    console.error('[NOTIFICATIONS] Error sending push notification:', error);
+    console.error('[NOTIFICATIONS] ❌ Error sending push notification:', error);
+    console.error('[NOTIFICATIONS] ❌ Error stack:', error.stack);
     return false;
   }
 }
