@@ -572,22 +572,27 @@ const CORE_CATEGORIES = new Set([
   "world", // not a NewsAPI category; fallback to q=world
 ]);
 
-async function fetchArticlesEverything(qParts, maxResults, selectedSources = []) {
+async function fetchArticlesEverything(qParts, maxResults, selectedSources = [], countryCode = null) {
   const q = encodeURIComponent(qParts.filter(Boolean).join(" "));
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
   // Extend to 7 days for more variety (24 hours was too restrictive)
   const from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   
+  // Build country parameter if provided
+  const countryParam = countryCode ? `&countries=${String(countryCode).toLowerCase()}` : '';
+  
   // Try multiple search strategies for better coverage
   const searchStrategies = [
     // Strategy 1: Exact phrase search
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`,
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${pageSize}&date=${from}${countryParam}`,
     // Strategy 2: Individual keywords
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`,
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}${countryParam}`,
     // Strategy 3: Broader search without date restriction
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}`,
-    // Strategy 4: Search without keywords (general news)
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}`
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}${countryParam}`,
+    // Strategy 4: Search without keywords (general news) - only add country if provided
+    countryCode 
+      ? `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}${countryParam}`
+      : `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}`
   ];
   
   let articles = [];
@@ -836,7 +841,7 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
       
       try {
         // Use the existing logic to fetch additional articles
-        const additionalResult = await fetchArticlesEverything(queryParts, additionalNeeded, selectedSources);
+        const additionalResult = await fetchArticlesEverything(queryParts, additionalNeeded, selectedSources, countryCode);
         additionalArticles = additionalResult.map(article => ({
           title: article.title || "",
           description: article.description || "",
@@ -889,7 +894,8 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   if (isGeneral) {
   // For general news, use a simple approach without date filtering
   try {
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}`;
+    const countryParam = countryCode ? `&countries=${String(countryCode).toLowerCase()}` : '';
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}${countryParam}`;
     const resp = await fetch(url);
     
     if (!resp.ok) {
@@ -925,16 +931,16 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
     if (city) {
       promises.push(
         fetchTopHeadlinesByCategory("general", countryCode, Math.ceil(pageSize/3), `"${city}"`, selectedSources),
-        fetchArticlesEverything([`title:${city}`], Math.ceil(pageSize/3)),
-        fetchArticlesEverything([city], Math.ceil(pageSize/3))
+        fetchArticlesEverything([`title:${city}`], Math.ceil(pageSize/3), selectedSources, countryCode),
+        fetchArticlesEverything([city], Math.ceil(pageSize/3), selectedSources, countryCode)
       );
     }
     
     if (region) {
       promises.push(
         fetchTopHeadlinesByCategory("general", countryCode, Math.ceil(pageSize/3), `"${region}"`, selectedSources),
-        fetchArticlesEverything([`title:${region}`], Math.ceil(pageSize/3)),
-        fetchArticlesEverything([region], Math.ceil(pageSize/3))
+        fetchArticlesEverything([`title:${region}`], Math.ceil(pageSize/3), selectedSources, countryCode),
+        fetchArticlesEverything([region], Math.ceil(pageSize/3), selectedSources, countryCode)
       );
     }
     
@@ -944,9 +950,9 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
       );
     }
     
-    // Fallback to general news
+    // Fallback to general news (use countryCode if available)
     promises.push(
-      fetchTopHeadlinesByCategory("general", "", Math.ceil(pageSize/2), undefined, selectedSources)
+      fetchTopHeadlinesByCategory("general", countryCode || "", Math.ceil(pageSize/2), undefined, selectedSources)
     );
     
     try {
@@ -982,11 +988,11 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
     }
     
     if ((articles?.length || 0) < Math.min(5, pageSize) && (city || region)) {
-      const extra = await fetchArticlesEverything([normalizedTopic, bias], pageSize - (articles?.length || 0), selectedSources);
+      const extra = await fetchArticlesEverything([normalizedTopic, bias], pageSize - (articles?.length || 0), selectedSources, countryCode);
       articles = [...articles, ...extra];
     }
   } else {
-    articles = await fetchArticlesEverything(queryParts, pageSize, selectedSources);
+    articles = await fetchArticlesEverything(queryParts, pageSize, selectedSources, countryCode);
   }
 
   // Debug: Check original articles from news API
