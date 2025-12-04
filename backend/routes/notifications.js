@@ -172,6 +172,49 @@ router.post('/test', authenticateToken, async (req, res) => {
   }
 });
 
+// Send notification for Fetch ready (called from iOS after Fetch completes)
+router.post('/fetch-ready', authenticateToken, async (req, res) => {
+  try {
+    const { fetchTitle } = req.body;
+    const user = req.user;
+
+    if (!fetchTitle) {
+      return res.status(400).json({ error: 'fetchTitle is required' });
+    }
+
+    let deviceToken = null;
+    if (mongoose.connection.readyState === 1) {
+      // Reload user to get latest device token
+      const freshUser = await User.findById(user._id || user.id);
+      deviceToken = freshUser?.deviceToken;
+    } else {
+      deviceToken = user.preferences?.deviceToken || null;
+    }
+
+    if (!deviceToken) {
+      console.log(`[NOTIFICATIONS] No device token found for user ${user.email}, skipping notification`);
+      return res.json({ 
+        success: false, 
+        message: 'No device token registered' 
+      });
+    }
+
+    const { sendFetchReadyNotification } = require('../utils/notifications');
+    const success = await sendFetchReadyNotification(deviceToken, fetchTitle);
+    
+    if (success) {
+      console.log(`[NOTIFICATIONS] ✅ Sent Fetch-ready notification to user ${user.email}`);
+      return res.json({ success: true, message: 'Notification sent' });
+    } else {
+      console.log(`[NOTIFICATIONS] ⚠️  Failed to send notification to user ${user.email}`);
+      return res.json({ success: false, message: 'Failed to send notification' });
+    }
+  } catch (error) {
+    console.error('Send Fetch-ready notification error:', error);
+    res.status(500).json({ error: 'Failed to send notification' });
+  }
+});
+
 // Diagnostic endpoint to check notification configuration status
 router.get('/diagnostics', authenticateToken, async (req, res) => {
   try {

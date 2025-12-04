@@ -9,6 +9,8 @@ import Foundation
 
 // Notification for token expiration
 extension Notification.Name {
+    static let userDidLogout = Notification.Name("userDidLogout")
+    static let userDidLogin = Notification.Name("userDidLogin")
     static let tokenExpired = Notification.Name("tokenExpired")
 }
 
@@ -546,7 +548,7 @@ final class ApiClient {
         }
     }
 
-    static func summarize(topics: [String], wordCount: Int, skipTTS: Bool = true, goodNewsOnly: Bool = false) async throws -> SummarizeResponse {
+    static func summarize(topics: [String], wordCount: Int, skipTTS: Bool = true, goodNewsOnly: Bool = false, country: String? = nil) async throws -> SummarizeResponse {
         let endpoint = topics.count == 1 ? "/api/summarize" : "/api/summarize/batch"
         var comps = URLComponents(url: base.appendingPathComponent(endpoint), resolvingAgainstBaseURL: false)!
         if skipTTS { comps.queryItems = [URLQueryItem(name: "noTts", value: "1")] }
@@ -564,10 +566,18 @@ final class ApiClient {
         let body: [String: Any]
         if topics.count == 1 {
             // Single topic - send directly
-            body = ["topics": topics, "wordCount": wordCount, "goodNewsOnly": goodNewsOnly]
+            var singleBody: [String: Any] = ["topics": topics, "wordCount": wordCount, "goodNewsOnly": goodNewsOnly]
+            if let country = country {
+                singleBody["country"] = country
+            }
+            body = singleBody
         } else {
             // Multi-topic - wrap in batches array
-            body = ["batches": [["topics": topics, "wordCount": wordCount, "goodNewsOnly": goodNewsOnly]]]
+            var batchBody: [String: Any] = ["topics": topics, "wordCount": wordCount, "goodNewsOnly": goodNewsOnly]
+            if let country = country {
+                batchBody["country"] = country
+            }
+            body = ["batches": [batchBody]]
         }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         
@@ -940,13 +950,13 @@ final class ApiClient {
         }
     }
     
-    static func getSelectedNewsSources() async throws -> [String] {
-        // Get selected news sources from user preferences
+    static func getExcludedNewsSources() async throws -> [String] {
+        // Get excluded news sources from user preferences
         let preferences = try await getUserPreferences()
-        return preferences.selectedNewsSources
+        return preferences.excludedNewsSources
     }
     
-    static func updateSelectedNewsSources(_ sources: [String]) async throws -> [String] {
+    static func updateExcludedNewsSources(_ sources: [String]) async throws -> [String] {
         let endpoint = "/api/news-sources"
         var req = URLRequest(url: base.appendingPathComponent(endpoint))
         req.httpMethod = "PUT"
@@ -956,7 +966,7 @@ final class ApiClient {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         
-        let body = ["selectedSources": sources]
+        let body = ["excludedSources": sources]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         
         let (data, response) = try await session.data(for: req)
@@ -967,7 +977,7 @@ final class ApiClient {
         
         if httpResponse.statusCode == 200 {
             let response = try JSONDecoder().decode([String: [String]].self, from: data)
-            return response["selectedSources"] ?? []
+            return response["excludedSources"] ?? []
         } else {
             let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
             throw NetworkError.serverError(errorResponse?.error ?? "Failed to update selected news sources")
@@ -1072,5 +1082,39 @@ final class ApiClient {
                 throw NetworkError.serverError(errorResponse?.error ?? "Failed to trigger scheduled summaries")
             }
         }
+    
+    // MARK: - Notifications
+    
+    static func sendFetchReadyNotification(fetchTitle: String) async throws {
+        guard isAuthenticated else {
+            print("[NOTIFICATIONS] Not authenticated, skipping notification")
+            return
+        }
+        
+        let endpoint = "/api/notifications/fetch-ready"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let body = ["fetchTitle": fetchTitle]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await session.data(for: req)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            print("[NOTIFICATIONS] Successfully requested notification for: \(fetchTitle)")
+        } else {
+            let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            print("[NOTIFICATIONS] Failed to send notification: \(errorResponse?.error ?? "Unknown error")")
+            // Don't throw - notification failure shouldn't break the app
+        }
+    }
     
 }
