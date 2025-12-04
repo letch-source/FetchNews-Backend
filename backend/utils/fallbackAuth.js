@@ -369,8 +369,15 @@ const fallbackAuth = {
   },
   
   getPreferences(user) {
+    // Capitalize voice name to match frontend expectations (Alloy, Echo, etc.)
+    const capitalizeVoice = (voice) => {
+      if (!voice) return 'Alloy';
+      // Convert lowercase to capitalized (alloy -> Alloy)
+      return voice.charAt(0).toUpperCase() + voice.slice(1).toLowerCase();
+    };
+    
     return {
-      selectedVoice: user.selectedVoice || 'alloy',
+      selectedVoice: capitalizeVoice(user.selectedVoice) || 'Alloy',
       playbackRate: user.playbackRate || 1.0,
       upliftingNewsOnly: user.upliftingNewsOnly || false,
       length: user.preferences?.length || '200',
@@ -389,7 +396,9 @@ const fallbackAuth = {
     
     // Update string/number values (only if provided)
     if (preferences.selectedVoice !== undefined) {
-      user.selectedVoice = preferences.selectedVoice;
+      // Store voice in lowercase for consistency, but frontend sends capitalized
+      // Convert to lowercase for storage (Alloy -> alloy)
+      user.selectedVoice = preferences.selectedVoice.toLowerCase();
     }
     if (preferences.playbackRate !== undefined) {
       user.playbackRate = preferences.playbackRate;

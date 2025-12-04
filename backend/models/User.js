@@ -122,7 +122,7 @@ const userSchema = new mongoose.Schema({
   },
   preferences: {
     type: Object,
-    default: {}
+    default: () => ({ length: '200' }) // Initialize with default length
   },
   deviceToken: {
     type: String,
@@ -371,8 +371,15 @@ userSchema.methods.verifyEmail = function() {
 
 // Preferences management
 userSchema.methods.getPreferences = function() {
+  // Capitalize voice name to match frontend expectations (Alloy, Echo, etc.)
+  const capitalizeVoice = (voice) => {
+    if (!voice) return 'Alloy';
+    // Convert lowercase to capitalized (alloy -> Alloy)
+    return voice.charAt(0).toUpperCase() + voice.slice(1).toLowerCase();
+  };
+  
   return {
-    selectedVoice: this.selectedVoice || 'alloy',
+    selectedVoice: capitalizeVoice(this.selectedVoice) || 'Alloy',
     playbackRate: this.playbackRate || 1.0,
     upliftingNewsOnly: this.upliftingNewsOnly || false,
     length: this.preferences?.length || '200',
@@ -387,7 +394,9 @@ userSchema.methods.getPreferences = function() {
 userSchema.methods.updatePreferences = async function(preferences) {
   // Update string/number values (only if provided)
   if (preferences.selectedVoice !== undefined) {
-    this.selectedVoice = preferences.selectedVoice;
+    // Store voice in lowercase for consistency, but frontend sends capitalized
+    // Convert to lowercase for storage (Alloy -> alloy)
+    this.selectedVoice = preferences.selectedVoice.toLowerCase();
   }
   if (preferences.playbackRate !== undefined) {
     this.playbackRate = preferences.playbackRate;
@@ -433,7 +442,8 @@ userSchema.methods.updatePreferences = async function(preferences) {
         if (freshUser) {
           // Update the fresh document with our changes (merge, don't overwrite)
           if (preferences.selectedVoice !== undefined) {
-            freshUser.selectedVoice = preferences.selectedVoice;
+            // Store voice in lowercase for consistency
+            freshUser.selectedVoice = preferences.selectedVoice.toLowerCase();
           }
           if (preferences.playbackRate !== undefined) {
             freshUser.playbackRate = preferences.playbackRate;
