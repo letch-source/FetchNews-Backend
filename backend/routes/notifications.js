@@ -2,7 +2,8 @@ const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 const mongoose = require('mongoose');
 const fallbackAuth = require('../utils/fallbackAuth');
-const { sendPushNotification, sendScheduledSummaryNotification, sendEngagementReminder } = require('../utils/notifications');
+const { sendPushNotification, sendScheduledSummaryNotification, sendEngagementReminder, sendFetchReadyNotification } = require('../utils/notifications');
+const User = require('../models/User');
 
 const router = express.Router();
 
