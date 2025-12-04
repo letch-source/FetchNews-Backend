@@ -345,7 +345,7 @@ router.post('/users/:email/reset-usage', authenticateToken, async (req, res) => 
     
     // Log the admin action
     const adminEmail = adminUser.email || adminUser.id || 'unknown';
-    const action = 'Reset Fetch Usage';
+    const action = 'reset_usage';
     const details = `Reset daily usage count from ${oldCount} to 0 for ${email}`;
     
     let adminAction;
