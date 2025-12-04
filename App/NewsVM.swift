@@ -611,9 +611,13 @@ final class NewsVM: ObservableObject {
         // Cancel any existing request
         currentTask?.cancel()
         
+        // Immediately show Fetch Screen with animation
+        shouldShowFetchScreen = true
+        isBusy = true
+        phase = .gather
+        
         currentTask = Task {
-            isBusy = true; phase = .gather
-            combined = nil; items = []; fetchCreatedAt = nil; shouldShowFetchScreen = false
+            combined = nil; items = []; fetchCreatedAt = nil
             resetPlayerState()
             lastError = nil // Clear previous errors
             isDirty = false // Reset dirty flag at start to allow retries

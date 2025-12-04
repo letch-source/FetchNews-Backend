@@ -49,31 +49,84 @@ final class AuthVM: ObservableObject {
         do {
             // Configure Google Sign-In if not already configured
             if GIDSignIn.sharedInstance.configuration == nil {
-                guard let path = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist"),
-                      let plist = NSDictionary(contentsOfFile: path),
-                      let clientId = plist["CLIENT_ID"] as? String else {
-                    errorMessage = "Google Sign-In configuration not found. Please add GoogleService-Info.plist to your project."
+                print("🔧 Configuring Google Sign-In...")
+                
+                guard let path = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") else {
+                    let errorMsg = "GoogleService-Info.plist not found in bundle. Please ensure it's added to your Xcode project target."
+                    print("❌ \(errorMsg)")
+                    errorMessage = errorMsg
                     isLoading = false
                     return
                 }
                 
+                print("✅ Found GoogleService-Info.plist at: \(path)")
+                
+                guard let plist = NSDictionary(contentsOfFile: path) else {
+                    let errorMsg = "Failed to read GoogleService-Info.plist. File may be corrupted."
+                    print("❌ \(errorMsg)")
+                    errorMessage = errorMsg
+                    isLoading = false
+                    return
+                }
+                
+                guard let clientId = plist["CLIENT_ID"] as? String, !clientId.isEmpty else {
+                    let errorMsg = "CLIENT_ID not found in GoogleService-Info.plist or is empty."
+                    print("❌ \(errorMsg)")
+                    errorMessage = errorMsg
+                    isLoading = false
+                    return
+                }
+                
+                print("✅ Found CLIENT_ID: \(clientId.prefix(20))...")
+                
                 let config = GIDConfiguration(clientID: clientId)
                 GIDSignIn.sharedInstance.configuration = config
+                print("✅ Google Sign-In configured successfully")
+            } else {
+                print("✅ Google Sign-In already configured")
             }
             
             // Get the root view controller using modern API
-            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                  let rootViewController = windowScene.windows.first?.rootViewController else {
-                errorMessage = "Unable to present Google Sign-In"
+            // Try multiple approaches to get the root view controller
+            var rootViewController: UIViewController?
+            
+            // Method 1: Try getting from window scene (iOS 13+)
+            if let windowScene = UIApplication.shared.connectedScenes
+                .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+               let window = windowScene.windows.first(where: { $0.isKeyWindow }) ?? windowScene.windows.first {
+                rootViewController = window.rootViewController
+                print("✅ Found root view controller from window scene")
+            }
+            
+            // Method 2: Try any foreground window scene
+            if rootViewController == nil {
+                for scene in UIApplication.shared.connectedScenes {
+                    if let windowScene = scene as? UIWindowScene,
+                       let window = windowScene.windows.first {
+                        rootViewController = window.rootViewController
+                        print("✅ Found root view controller from any window scene")
+                        break
+                    }
+                }
+            }
+            
+            guard let presentingViewController = rootViewController else {
+                let errorMsg = "Unable to get root view controller. Please try again."
+                print("❌ \(errorMsg)")
+                print("❌ Connected scenes count: \(UIApplication.shared.connectedScenes.count)")
+                errorMessage = errorMsg
                 isLoading = false
                 return
             }
             
             // Sign in with Google
-            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: rootViewController)
+            print("🔐 Starting Google Sign-In flow...")
+            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presentingViewController)
             
             guard let idToken = result.user.idToken?.tokenString else {
-                errorMessage = "Failed to get ID token from Google"
+                let errorMsg = "Failed to get ID token from Google. Please try again."
+                print("❌ \(errorMsg)")
+                errorMessage = errorMsg
                 isLoading = false
                 return
             }
@@ -100,8 +153,23 @@ final class AuthVM: ObservableObject {
                 showTopicOnboarding = false
             }
         } catch {
-            print("❌ Google Sign-In failed: \(error.localizedDescription)")
-            errorMessage = error.localizedDescription
+            let errorDescription = error.localizedDescription
+            print("❌ Google Sign-In failed: \(errorDescription)")
+            print("❌ Error type: \(type(of: error))")
+            if let nsError = error as NSError? {
+                print("❌ Error domain: \(nsError.domain)")
+                print("❌ Error code: \(nsError.code)")
+                print("❌ Error userInfo: \(nsError.userInfo)")
+            }
+            
+            // Provide user-friendly error message
+            if errorDescription.contains("network") || errorDescription.contains("connection") {
+                errorMessage = "Network error. Please check your internet connection and try again."
+            } else if errorDescription.contains("cancel") {
+                errorMessage = "Sign-in was cancelled."
+            } else {
+                errorMessage = "Sign-in failed: \(errorDescription)"
+            }
         }
         
         isLoading = false
@@ -116,6 +184,9 @@ final class AuthVM: ObservableObject {
         
         // Sign out from Google
         GIDSignIn.sharedInstance.signOut()
+        
+        // Notify that user has logged out so NewsVM can clear user-specific state
+        NotificationCenter.default.post(name: .userDidLogout, object: nil)
     }
     
     private func handleTokenExpiration() {
@@ -147,6 +218,9 @@ final class AuthVM: ObservableObject {
         
         // Set user's timezone automatically
         await setUserTimezone()
+        
+        // Notify that user has logged in so NewsVM can load their data
+        NotificationCenter.default.post(name: .userDidLogin, object: nil)
         
         print("💾 Auth data saved, isAuthenticated: \(isAuthenticated)")
     }
@@ -210,6 +284,9 @@ final class AuthVM: ObservableObject {
                     
                     // Set user's timezone automatically
                     await setUserTimezone()
+                    
+                    // Notify that user session was restored so NewsVM can load their data
+                    NotificationCenter.default.post(name: .userDidLogin, object: nil)
                     
                     // Check if onboarding is needed based on latest user data
                     // Check both selectedTopics and customTopics - if user has topics in "My Topics", skip onboarding

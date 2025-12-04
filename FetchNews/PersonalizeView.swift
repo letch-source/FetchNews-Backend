@@ -58,13 +58,14 @@ struct PersonalizeView: View {
             ScrollView {
                 VStack(spacing: 24) {
                     
-                    // Sub-header
+                    // Title
                     Text("Customize")
                         .font(.title3)
                         .fontWeight(.semibold)
                         .foregroundColor(.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 8)
+                        .padding(.horizontal, 20)
                     
                     // Morning Summary Section - Hidden for now
                     // MorningSummarySection()
@@ -81,7 +82,7 @@ struct PersonalizeView: View {
                         // Content Filter Section
                         ContentFilterSection()
                         
-                        // Scheduled Fetch Section - Available for everyone
+                        // Daily Fetch Section - Available for everyone
                         DailyFetchSection(
                             scheduledTime: $scheduledTime,
                             scheduledEnabled: $scheduledEnabled,
@@ -90,19 +91,22 @@ struct PersonalizeView: View {
                             showingTopics: $showingScheduledTopics
                         )
                         
-                        // Bottom spacing to ensure full scroll (account for audio player when present)
-                        Spacer(minLength: vm.canPlay ? 180 : 100)
+                        // Small bottom spacer
+                        Spacer(minLength: 8)
                     }
-                    .padding(.horizontal, 20)
                     .padding(.vertical, 16)
                 }
             }
             // Adjust scroll content insets when audio player is visible
+            // This prevents scrolling too far and ensures content stops just above the audio bar
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if vm.canPlay {
-                    // Spacer that matches the audio player height (~100px for bubble + 80px bottom padding = 180px)
-                    // This allows content to scroll above the audio player
-                    Color.clear.frame(height: 180)
+                    // Spacer that matches the compact audio player height (~60px for bubble + 60px bottom padding = 120px)
+                    // This prevents content from scrolling behind the audio player
+                    Color.clear.frame(height: 120)
+                } else {
+                    // Small bottom padding when no audio player
+                    Color.clear.frame(height: 20)
                 }
             }
             .sheet(isPresented: $showingScheduledTopics) {
@@ -378,7 +382,7 @@ struct PersonalizeView: View {
     }
 }
 
-// MARK: - Scheduled Fetch Section
+// MARK: - Daily Fetch Section
 
 struct DailyFetchSection: View {
     @Binding var scheduledTime: Date
@@ -437,6 +441,7 @@ struct DailyFetchSection: View {
                 .cornerRadius(12)
             }
         }
+        .padding(.horizontal, 20)
     }
 }
 
@@ -501,7 +506,7 @@ struct ScheduledTopicsSelectorView: View {
                     }
                 }
                 
-                Section(footer: Text("Select at least one topic for your scheduled fetch.")) {
+                Section(footer: Text("Select at least one topic for your daily fetch.")) {
                     EmptyView()
                 }
             }
@@ -644,7 +649,7 @@ struct MorningSummarySection: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Scheduled Fetch")
+            Text("Daily Fetch")
                 .font(.headline)
                 .fontWeight(.semibold)
                 .foregroundColor(.primary)
@@ -697,6 +702,7 @@ struct PlaybackSpeedSection: View {
             .background(Color(.systemGray6))
             .cornerRadius(12)
         }
+        .padding(.horizontal, 20)
     }
 }
 
@@ -757,6 +763,7 @@ struct VoiceSection: View {
             .background(Color(.systemGray6))
             .cornerRadius(12)
         }
+        .padding(.horizontal, 20)
     }
 }
 
@@ -786,7 +793,7 @@ struct SummaryLengthSection: View {
             VStack(spacing: 12) {
                 ForEach(ApiClient.Length.allCases, id: \.self) { length in
                     Button(action: {
-                        vm.length = length
+                        vm.setLength(length)
                     }) {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
@@ -818,6 +825,7 @@ struct SummaryLengthSection: View {
                 }
             }
         }
+        .padding(.horizontal, 20)
     }
 }
 
@@ -853,6 +861,7 @@ struct ContentFilterSection: View {
             .background(Color(.systemGray6))
             .cornerRadius(12)
         }
+        .padding(.horizontal, 20)
     }
 }
 

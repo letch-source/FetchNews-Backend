@@ -56,14 +56,14 @@ struct SummaryHistoryView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
-                        // History Title
+                        // Title
                         Text("History")
                             .font(.title3)
                             .fontWeight(.semibold)
                             .foregroundColor(.primary)
-                            .padding(.horizontal, 20)
-                            .padding(.top, 16)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 8)
+                            .padding(.horizontal, 20)
                         
                         VStack(spacing: 0) {
                             ForEach(Array(summaryHistory.enumerated()), id: \.element.id) { index, entry in
@@ -81,19 +81,23 @@ struct SummaryHistoryView: View {
                                 }
                             }
                         }
+                        .padding(.horizontal, 20)
                         
-                        // Bottom spacing to ensure full scroll (account for audio player when present)
-                        Spacer(minLength: vm.canPlay ? 180 : 100)
+                        // Small bottom spacer
+                        Spacer(minLength: 8)
                     }
-                    .padding(.horizontal, 12)
                     .padding(.vertical, 16)
                 }
                 // Adjust scroll content insets when audio player is visible
+                // This prevents scrolling too far and ensures content stops just above the audio bar
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     if vm.canPlay {
-                        // Spacer that matches the audio player height (~100px for bubble + 80px bottom padding = 180px)
-                        // This allows content to scroll above the audio player
-                        Color.clear.frame(height: 180)
+                        // Spacer that matches the compact audio player height (~60px for bubble + 60px bottom padding = 120px)
+                        // This prevents content from scrolling behind the audio player
+                        Color.clear.frame(height: 120)
+                    } else {
+                        // Small bottom padding when no audio player
+                        Color.clear.frame(height: 20)
                     }
                 }
             }
@@ -104,6 +108,7 @@ struct SummaryHistoryView: View {
         }
         .sheet(item: $selectedSummary) { summary in
             SummaryDetailView(entry: summary)
+                .environmentObject(vm)
         }
         .alert("Error", isPresented: .constant(errorMessage != nil)) {
             Button("OK") {
@@ -270,6 +275,7 @@ struct SummaryHistoryRow: View {
 struct SummaryDetailView: View {
     let entry: SummaryHistoryEntry
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var vm: NewsVM
     
     var body: some View {
         NavigationView {
@@ -281,9 +287,30 @@ struct SummaryDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     // Header
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(entry.title)
-                            .font(.title2)
-                            .fontWeight(.bold)
+                        HStack(alignment: .top, spacing: 12) {
+                            Text(entry.title)
+                                .font(.title2)
+                                .fontWeight(.bold)
+                            
+                            Spacer()
+                            
+                            // Audio play button - only show if audio is available
+                            if let audioUrl = entry.audioUrl, !audioUrl.isEmpty {
+                                Button(action: {
+                                    Task {
+                                        await vm.loadSummaryFromHistory(entry)
+                                        // Small delay to ensure audio is prepared before playing
+                                        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                                        vm.playPause()
+                                    }
+                                }) {
+                                    Image(systemName: vm.canPlay && vm.combined?.id == entry.id && vm.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                                        .font(.system(size: 28))
+                                        .foregroundColor(.blue)
+                                }
+                                .disabled(vm.canPlay && vm.combined?.id == entry.id && vm.isPlaying)
+                            }
+                        }
                         
                         HStack {
                             Text(formatTimestamp(entry.timestamp))
@@ -298,7 +325,11 @@ struct SummaryDetailView: View {
                     if !entry.topics.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Topics")
-                                .font(.headline)
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 8)
                             
                             LazyVGrid(columns: [
                                 GridItem(.adaptive(minimum: 80), spacing: 8)
@@ -316,20 +347,14 @@ struct SummaryDetailView: View {
                         }
                     }
                     
-                    // Audio Player
-                    if let audioUrl = entry.audioUrl, !audioUrl.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Audio")
-                                .font(.headline)
-                            
-                            AudioPlayerView(audioUrl: audioUrl)
-                        }
-                    }
-                    
                     // Summary
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Summary")
-                            .font(.headline)
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 8)
                         
                         Text(entry.summary)
                             .font(.body)
@@ -338,13 +363,22 @@ struct SummaryDetailView: View {
                     
                     // Sources
                     if let sources = entry.sources, !sources.isEmpty {
-                        // Filter out sources with empty source names
-                        let validSources = sources.filter { !$0.source.isEmpty }
+                        // Filter to show sources that have at least title, source name, or URL
+                        let validSources = sources.filter { sourceItem in
+                            let hasTitle = sourceItem.title != nil && !sourceItem.title!.isEmpty
+                            let hasSource = !sourceItem.source.isEmpty
+                            let hasUrl = sourceItem.url != nil && !sourceItem.url!.isEmpty
+                            return hasTitle || hasSource || hasUrl
+                        }
                         
                         if !validSources.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Sources")
-                                    .font(.headline)
+                                    .font(.title3)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.top, 8)
                                 
                                 ForEach(Array(validSources.enumerated()), id: \.offset) { index, sourceItem in
                                     HStack {
@@ -352,7 +386,11 @@ struct SummaryDetailView: View {
                                             .font(.caption)
                                             .foregroundColor(.blue)
                                         
-                                        Text(sourceItem.title ?? sourceItem.source)
+                                        Text(
+                                            (sourceItem.title != nil && !sourceItem.title!.isEmpty) 
+                                                ? sourceItem.title! 
+                                                : (!sourceItem.source.isEmpty ? sourceItem.source : "Article")
+                                        )
                                             .font(.body)
                                             .foregroundColor(.blue)
                                         
@@ -369,15 +407,11 @@ struct SummaryDetailView: View {
                                     .padding(.vertical, 2)
                                 }
                             }
-                        } else {
-                            Text("Sources (empty)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .padding(.vertical, 8)
                         }
                     }
                 }
-                .padding()
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
                 }
             }
             .navigationTitle("Fetch Details")

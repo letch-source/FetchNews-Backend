@@ -9,6 +9,7 @@ import SwiftUI
 
 @main
 struct FetchNewsApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var vm = NewsVM()
     @StateObject private var authVM = AuthVM()
     @Environment(\.scenePhase) var scenePhase

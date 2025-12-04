@@ -108,6 +108,11 @@ const userSchema = new mongoose.Schema({
     type: [String],
     default: []
   },
+  excludedNewsSources: {
+    type: [String],
+    default: []
+  },
+  // Legacy field for migration (deprecated)
   selectedNewsSources: {
     type: [String],
     default: []
@@ -385,7 +390,9 @@ userSchema.methods.getPreferences = function() {
     length: this.preferences?.length || '200',
     lastFetchedTopics: this.lastFetchedTopics || [],
     selectedTopics: this.selectedTopics || [],
-    selectedNewsSources: this.selectedNewsSources || [],
+    excludedNewsSources: this.excludedNewsSources || [],
+    // Legacy field for migration
+    selectedNewsSources: this.excludedNewsSources || [],
     selectedCountry: this.selectedCountry || 'us',
     scheduledSummaries: this.scheduledSummaries || []
   };
@@ -414,8 +421,13 @@ userSchema.methods.updatePreferences = async function(preferences) {
   if (preferences.selectedTopics !== undefined) {
     this.selectedTopics = preferences.selectedTopics;
   }
+  if (preferences.excludedNewsSources !== undefined) {
+    this.excludedNewsSources = preferences.excludedNewsSources;
+  }
+  // Legacy field support for migration
   if (preferences.selectedNewsSources !== undefined) {
-    this.selectedNewsSources = preferences.selectedNewsSources;
+    // Migrate old allowlist to new blocklist
+    this.excludedNewsSources = preferences.selectedNewsSources;
   }
   // Do NOT update scheduledSummaries via updatePreferences - it's managed separately via /api/scheduled-summaries
   // This prevents version conflicts when both routes try to save at the same time
@@ -461,8 +473,12 @@ userSchema.methods.updatePreferences = async function(preferences) {
           if (preferences.selectedTopics !== undefined) {
             freshUser.selectedTopics = preferences.selectedTopics;
           }
+          if (preferences.excludedNewsSources !== undefined) {
+            freshUser.excludedNewsSources = preferences.excludedNewsSources;
+          }
+          // Legacy field support for migration
           if (preferences.selectedNewsSources !== undefined) {
-            freshUser.selectedNewsSources = preferences.selectedNewsSources;
+            freshUser.excludedNewsSources = preferences.selectedNewsSources;
           }
           if (preferences.selectedCountry !== undefined) {
             freshUser.selectedCountry = preferences.selectedCountry || 'us';

@@ -419,7 +419,7 @@ router.get('/user-data/:email', authenticateToken, async (req, res) => {
   }
 });
 
-// Get global news sources setting
+// Get excluded news sources setting (blocklist approach)
 router.get('/global-news-sources', authenticateToken, async (req, res) => {
   try {
     if (!isDatabaseAvailable()) {
@@ -429,16 +429,16 @@ router.get('/global-news-sources', authenticateToken, async (req, res) => {
     const settings = await GlobalSettings.getOrCreate();
     
     res.json({
-      sources: settings.globalNewsSources || [],
-      enabled: settings.globalNewsSourcesEnabled || false
+      sources: settings.excludedNewsSources || [],
+      enabled: settings.excludedNewsSourcesEnabled || false
     });
   } catch (error) {
-    console.error('Get global news sources error:', error);
-    res.status(500).json({ error: 'Failed to get global news sources' });
+    console.error('Get excluded news sources error:', error);
+    res.status(500).json({ error: 'Failed to get excluded news sources' });
   }
 });
 
-// Set global news sources
+// Set excluded news sources (blocklist approach)
 router.post('/global-news-sources', authenticateToken, async (req, res) => {
   try {
     if (!isDatabaseAvailable()) {
@@ -453,14 +453,14 @@ router.post('/global-news-sources', authenticateToken, async (req, res) => {
     }
 
     const settings = await GlobalSettings.getOrCreate();
-    await settings.updateGlobalNewsSources(sources, enabled !== false);
+    await settings.updateExcludedNewsSources(sources, enabled !== false);
 
     // Log the admin action
     const adminEmail = adminUser.email || adminUser.id || 'unknown';
-    const action = enabled !== false ? 'Set Global News Sources' : 'Disabled Global News Sources';
+    const action = enabled !== false ? 'Set Excluded News Sources' : 'Disabled Excluded News Sources';
     const details = enabled !== false 
-      ? `Set ${sources.length} global news sources: ${sources.join(', ')}`
-      : 'Disabled global news sources (all sources will be used)';
+      ? `Excluded ${sources.length} news sources: ${sources.join(', ')}`
+      : 'Disabled excluded news sources (all sources will be used)';
     
     let adminAction;
     if (isDatabaseAvailable()) {
@@ -482,14 +482,14 @@ router.post('/global-news-sources', authenticateToken, async (req, res) => {
     res.json({
       success: true,
       message: enabled !== false 
-        ? `Global news sources updated (${sources.length} sources)`
-        : 'Global news sources disabled',
-      sources: settings.globalNewsSources,
-      enabled: settings.globalNewsSourcesEnabled
+        ? `Excluded news sources updated (${sources.length} sources excluded)`
+        : 'Excluded news sources disabled (all sources will be used)',
+      sources: settings.excludedNewsSources,
+      enabled: settings.excludedNewsSourcesEnabled
     });
   } catch (error) {
-    console.error('Set global news sources error:', error);
-    res.status(500).json({ error: 'Failed to set global news sources' });
+    console.error('Set excluded news sources error:', error);
+    res.status(500).json({ error: 'Failed to set excluded news sources' });
   }
 });
 

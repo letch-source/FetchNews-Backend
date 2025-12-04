@@ -1650,16 +1650,22 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       try {
         const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
         
-        // Handle different location formats
-        let geoData = null;
+        // Always initialize geoData with userCountry (which is always set, defaults to 'us')
+        // Then enhance it with geo or location if provided
+        let geoData = {
+          city: "",
+          region: "",
+          country: userCountry.toUpperCase() || "US",
+          countryCode: userCountry.toLowerCase() || "us"
+        };
+        
         if (geo && typeof geo === 'object') {
           // Format: { city: "Los Angeles", region: "California", country: "US" }
-          geoData = {
-            city: geo.city || "",
-            region: geo.region || "",
-            country: geo.country || geo.countryCode || userCountry || "",
-            countryCode: geo.countryCode || geo.country || userCountry || ""
-          };
+          // Enhance geoData with geo object values
+          geoData.city = geo.city || geoData.city;
+          geoData.region = geo.region || geoData.region;
+          geoData.country = geo.country || geo.countryCode || geoData.country;
+          geoData.countryCode = geo.countryCode || geo.country || geoData.countryCode;
         } else if (location && typeof location === 'string') {
           // Format: "New York" or "Los Angeles, California"
           const locationStr = String(location).trim();
@@ -1693,12 +1699,10 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
               }
             }
             
-            geoData = {
-              city: city,
-              region: region,
-              country: userCountry.toUpperCase() || "US",
-              countryCode: userCountry.toLowerCase() || "us"
-            };
+            // Enhance geoData with parsed location
+            geoData.city = city;
+            geoData.region = region;
+            // Keep userCountry for country/countryCode since location string doesn't include country
           }
         }
         

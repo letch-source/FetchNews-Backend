@@ -46,17 +46,21 @@ struct HomeView: View {
     /// Title uses last fetched topics, not live selected topics.
     private var fetchedTitle: String { userNewsTitle(from: vm.lastFetchedTopics) }
 
-    /// Only show items that actually have previewable text.
-    private var displayableItems: [Item] {
-        vm.items.filter { !$0.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             header
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 24, pinnedViews: [.sectionHeaders]) {
+                VStack(alignment: .leading, spacing: 24) {
+                    
+                    // Title
+                    Text("Topics")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 24)
+                        .padding(.horizontal, 20)
                     
                     // Selected Topics Section
                     SelectedTopicsSection(
@@ -90,6 +94,15 @@ struct HomeView: View {
                         showAll: $showAllCustom,
                         vm: vm
                     )
+
+                    // Fetch Button Section
+                    DynamicFetchButton(state: vm.fetchButtonState) {
+                        Task { await vm.fetch() }
+                    }
+                    .disabled(vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty)
+                    .opacity((vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty) ? 0.6 : 1.0)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
 
                     // Reset Button (if topics are selected)
                     if !vm.selectedTopics.isEmpty {
@@ -143,52 +156,8 @@ struct HomeView: View {
                         .padding(.horizontal)
                     }
 
-                    // Main summary
-                    if let c = vm.combined {
-                        SummaryCard(
-                            title: fetchedTitle,
-                            fullText: c.summary,
-                            isExpanded: expandSummary,
-                            canPlay: vm.canPlay,
-                            isPlaying: vm.isPlaying,
-                            onToggle: { withAnimation(.easeInOut) { expandSummary.toggle() } },
-                            onPlayPause: { vm.playPause() }
-                        )
-                        .padding(.horizontal)
-                    }
-
-                    // Articles
-                    if !displayableItems.isEmpty {
-                        Section {
-                            LazyVStack(spacing: 12) {
-                                ForEach(displayableItems) { it in
-                                    SourceCard(item: it)
-                                        .padding(.horizontal)
-                                }
-                            }
-                            .padding(.top, 16)
-                        } header: {
-                            VStack(spacing: 6) {
-                                HStack {
-                                    Spacer()
-                                    Text("Articles")
-                                        .font(.title3.weight(.semibold))
-                                    Spacer()
-                                }
-                                Rectangle()
-                                    .fill(Color.darkGreyBackground)
-                                    .frame(height: 12)
-                                    .accessibilityHidden(true)
-                            }
-                            .padding(.horizontal)
-                            .padding(.top, 2)
-                            .background(Color.darkGreyBackground)
-                            .zIndex(1)
-                        }
-                    }
-                    
-                    // Empty state - show when no summary and no articles
-                    if vm.combined == nil && displayableItems.isEmpty && !vm.isBusy && vm.phase == .idle {
+                    // Empty state - show when no summary
+                    if vm.combined == nil && !vm.isBusy && vm.phase == .idle {
                         VStack(spacing: 20) {
                             VStack(spacing: 8) {
                                 Text("No News Yet")
@@ -208,15 +177,15 @@ struct HomeView: View {
                     }
 
                     // Add extra bottom padding when audio player is visible so content can scroll above it
-                    Spacer(minLength: vm.canPlay ? 150 : 100) // Extra space for audio player + navigation
+                    Spacer(minLength: vm.canPlay ? 100 : 60) // Extra space for compact audio player + navigation
                 }
             }
             // Adjust scroll content insets when audio player is visible
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if vm.canPlay {
-                    // Spacer that matches the audio player height (~100px for bubble + 80px bottom padding = 180px)
+                    // Spacer that matches the compact audio player height (~60px for bubble + 60px bottom padding = 120px)
                     // This allows content to scroll above the audio player
-                    Color.clear.frame(height: 180)
+                    Color.clear.frame(height: 120)
                 }
             }
         }
@@ -414,7 +383,7 @@ struct TrendingTopicsSection: View {
                 ], alignment: .leading, spacing: 10) {
                     ForEach(trendingTopics, id: \.self) { topic in
                         TopicChip(
-                            title: topic,
+                            title: topic.capitalized,
                             isActive: selectedTopics.contains(topic.lowercased()),
                             minWidth: 140
                         ) { onTopicToggle(topic.lowercased()) }
@@ -427,7 +396,7 @@ struct TrendingTopicsSection: View {
                     HStack(spacing: 10) {
                         ForEach(trendingTopics, id: \.self) { topic in
                             TopicChip(
-                                title: topic,
+                                title: topic.capitalized,
                                 isActive: selectedTopics.contains(topic.lowercased()),
                                 minWidth: 140
                             ) { onTopicToggle(topic.lowercased()) }

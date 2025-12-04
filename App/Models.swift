@@ -360,8 +360,9 @@ struct UserPreferences: Codable {
     let length: String
     let lastFetchedTopics: [String]
     let selectedTopics: [String]?
-    let selectedNewsSources: [String]
+    let excludedNewsSources: [String]
     let scheduledSummaries: [ScheduledSummary]
+    let selectedCountry: String?
     
     enum CodingKeys: String, CodingKey {
         case selectedVoice
@@ -370,8 +371,56 @@ struct UserPreferences: Codable {
         case length
         case lastFetchedTopics
         case selectedTopics
-        case selectedNewsSources
+        case excludedNewsSources
+        case selectedNewsSources // Legacy key for migration
         case scheduledSummaries
+        case selectedCountry
+    }
+    
+    init(selectedVoice: String, playbackRate: Double, upliftingNewsOnly: Bool, length: String, lastFetchedTopics: [String], selectedTopics: [String]?, excludedNewsSources: [String], scheduledSummaries: [ScheduledSummary], selectedCountry: String? = nil) {
+        self.selectedVoice = selectedVoice
+        self.playbackRate = playbackRate
+        self.upliftingNewsOnly = upliftingNewsOnly
+        self.length = length
+        self.lastFetchedTopics = lastFetchedTopics
+        self.selectedTopics = selectedTopics
+        self.excludedNewsSources = excludedNewsSources
+        self.scheduledSummaries = scheduledSummaries
+        self.selectedCountry = selectedCountry
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.selectedVoice = try container.decode(String.self, forKey: .selectedVoice)
+        self.playbackRate = try container.decode(Double.self, forKey: .playbackRate)
+        self.upliftingNewsOnly = try container.decode(Bool.self, forKey: .upliftingNewsOnly)
+        self.length = try container.decode(String.self, forKey: .length)
+        self.lastFetchedTopics = try container.decode([String].self, forKey: .lastFetchedTopics)
+        self.selectedTopics = try container.decodeIfPresent([String].self, forKey: .selectedTopics)
+        // Support both new and legacy field names for migration
+        if let excluded = try? container.decode([String].self, forKey: .excludedNewsSources) {
+            self.excludedNewsSources = excluded
+        } else if let selected = try? container.decode([String].self, forKey: .selectedNewsSources) {
+            // Migrate old allowlist to new blocklist
+            self.excludedNewsSources = selected
+        } else {
+            self.excludedNewsSources = []
+        }
+        self.scheduledSummaries = try container.decodeIfPresent([ScheduledSummary].self, forKey: .scheduledSummaries) ?? []
+        self.selectedCountry = try container.decodeIfPresent(String.self, forKey: .selectedCountry)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(selectedVoice, forKey: .selectedVoice)
+        try container.encode(playbackRate, forKey: .playbackRate)
+        try container.encode(upliftingNewsOnly, forKey: .upliftingNewsOnly)
+        try container.encode(length, forKey: .length)
+        try container.encode(lastFetchedTopics, forKey: .lastFetchedTopics)
+        try container.encodeIfPresent(selectedTopics, forKey: .selectedTopics)
+        try container.encode(excludedNewsSources, forKey: .excludedNewsSources)
+        try container.encode(scheduledSummaries, forKey: .scheduledSummaries)
+        try container.encodeIfPresent(selectedCountry, forKey: .selectedCountry)
     }
 }
 

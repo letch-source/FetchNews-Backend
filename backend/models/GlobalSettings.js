@@ -19,6 +19,15 @@ const globalSettingsSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  excludedNewsSources: {
+    type: [String],
+    default: []
+  },
+  excludedNewsSourcesEnabled: {
+    type: Boolean,
+    default: false
+  },
+  // Legacy field for migration (deprecated)
   globalNewsSources: {
     type: [String],
     default: []
@@ -53,10 +62,22 @@ globalSettingsSchema.methods.updateTrendingTopics = async function(topics, topic
   return this;
 };
 
-// Update global news sources
+// Update excluded news sources (blocklist approach)
+globalSettingsSchema.methods.updateExcludedNewsSources = async function(sources, enabled = true) {
+  this.excludedNewsSources = sources || [];
+  this.excludedNewsSourcesEnabled = enabled;
+  await this.save();
+  return this;
+};
+
+// Legacy method for migration (deprecated)
 globalSettingsSchema.methods.updateGlobalNewsSources = async function(sources, enabled = true) {
-  this.globalNewsSources = sources || [];
-  this.globalNewsSourcesEnabled = enabled;
+  // Migrate old allowlist to new blocklist: if old system had sources, exclude everything else
+  // For now, just disable it and use excluded sources instead
+  this.globalNewsSources = [];
+  this.globalNewsSourcesEnabled = false;
+  this.excludedNewsSources = sources || [];
+  this.excludedNewsSourcesEnabled = enabled;
   await this.save();
   return this;
 };

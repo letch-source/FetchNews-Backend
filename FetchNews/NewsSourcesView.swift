@@ -46,7 +46,7 @@ struct NewsSourcesView: View {
                             .font(.title2)
                             .fontWeight(.bold)
                         
-                        Text("News source selection is only available for premium users. Upgrade to customize which news sources FetchNews uses for your summaries.")
+                        Text("News source exclusion is only available for premium users. Upgrade to customize which news sources FetchNews excludes from your summaries.")
                             .multilineTextAlignment(.center)
                             .foregroundColor(.secondary)
                         
@@ -121,7 +121,7 @@ struct NewsSourcesView: View {
                         } else {
                             List {
                                 Section {
-                                    Text("Selected \(vm.selectedNewsSources.count) of \(vm.availableNewsSources.count) sources")
+                                    Text("Excluded \(vm.excludedNewsSources.count) of \(vm.availableNewsSources.count) sources")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
@@ -129,7 +129,7 @@ struct NewsSourcesView: View {
                                 ForEach(filteredSources) { source in
                                     NewsSourceRow(
                                         source: source,
-                                        isSelected: vm.selectedNewsSources.contains(source.id),
+                                        isSelected: vm.excludedNewsSources.contains(source.id),
                                         onToggle: {
                                             vm.toggleNewsSource(source.id)
                                         }
@@ -141,7 +141,7 @@ struct NewsSourcesView: View {
                     }
                 }
             }
-            .navigationTitle("News Sources")
+            .navigationTitle("Exclude News Sources")
             .navigationBarTitleDisplayMode(.large)
             .onAppear {
                 if (authVM.currentUser?.isPremium == true) && vm.availableNewsSources.isEmpty {
@@ -153,9 +153,9 @@ struct NewsSourcesView: View {
                 }
             }
             .onDisappear {
-                // Save news source preferences when leaving the view
+                // Save excluded news source preferences when leaving the view
                 Task {
-                    await vm.updateSelectedNewsSources(Array(vm.selectedNewsSources))
+                    await vm.updateExcludedNewsSources(Array(vm.excludedNewsSources))
                 }
             }
             .alert("Error", isPresented: $showingError) {

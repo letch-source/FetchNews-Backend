@@ -13,6 +13,7 @@ struct MainTabView: View {
     @State private var selectedTab = 0
     @State private var isScrubbing = false
     @State private var scrubValue: Double = 0
+    @State private var showingFetchScreen = false
     
     var body: some View {
         ZStack {
@@ -41,18 +42,46 @@ struct MainTabView: View {
                         .environmentObject(authVM)
                 }
             }
+            .overlay(alignment: .bottom) {
+                // Gradient fade effect - starts higher, ends higher, then solid below
+                if vm.canPlay {
+                    VStack(spacing: 0) {
+                        Spacer()
+                        // Gradient fade that reaches 100% opacity earlier
+                        LinearGradient(
+                            gradient: Gradient(stops: [
+                                .init(color: Color.darkGreyBackground.opacity(0), location: 0.0),
+                                .init(color: Color.darkGreyBackground.opacity(0), location: 0.3),
+                                .init(color: Color.darkGreyBackground.opacity(0.4), location: 0.6),
+                                .init(color: Color.darkGreyBackground.opacity(1.0), location: 0.85) // Reaches 100% at 85%
+                            ]),
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 70)
+                        
+                        // Solid dark background below gradient to hide everything
+                        Color.darkGreyBackground
+                            .frame(height: 60) // Extends well below to ensure nothing is visible
+                    }
+                    .ignoresSafeArea(edges: .bottom)
+                    .allowsHitTesting(false)
+                }
+            }
             
-            // Custom bottom navigation
+            // Custom bottom navigation - positioned at absolute bottom
             VStack {
                 Spacer()
                 CustomBottomNavigation(selectedTab: $selectedTab, vm: vm)
+                    .ignoresSafeArea(edges: .bottom)
             }
             
             // Now-playing bubble - persistent across all tabs
             VStack {
                 Spacer()
-                if vm.canPlay {
-                    NowPlayingBubble(
+                // Show audio bar when there's content or when fetching
+                if vm.canPlay || vm.combined != nil || !vm.lastFetchedTopics.isEmpty || vm.isBusy || vm.shouldShowFetchScreen {
+                    CompactNowPlayingBubble(
                         title: vm.nowPlayingTitle.isEmpty ? userNewsTitle(from: vm.lastFetchedTopics) : vm.nowPlayingTitle,
                         isPlaying: vm.isPlaying,
                         current: isScrubbing ? scrubValue : vm.currentTime,
@@ -65,16 +94,30 @@ struct MainTabView: View {
                         onScrubEdit: { editing in
                             isScrubbing = editing
                             if !editing { vm.seek(to: scrubValue) }
+                        },
+                        onTap: {
+                            showingFetchScreen = true
                         }
                     )
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .padding(.bottom, 80) // Space above navigation bar
+                    .padding(.bottom, 80)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
         }
+        .ignoresSafeArea(edges: .bottom)
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .fullScreenCover(isPresented: $showingFetchScreen) {
+            FetchScreen()
+                .environmentObject(vm)
+                .environmentObject(authVM)
+        }
+        .onChange(of: vm.shouldShowFetchScreen) { _, newValue in
+            if newValue {
+                showingFetchScreen = true
+                vm.shouldShowFetchScreen = false // Reset the flag
+            }
+        }
     }
 }
 
@@ -89,53 +132,43 @@ struct CustomBottomNavigation: View {
                 // Home Tab
                 Button(action: { selectedTab = 0 }) {
                     Image(systemName: selectedTab == 0 ? "house.fill" : "house")
-                        .font(.system(size: 20))
-                        .foregroundColor(selectedTab == 0 ? .blue : .gray)
+                        .font(.system(size: 26))
+                        .foregroundColor(selectedTab == 0 ? .blue : .white.opacity(0.6))
                 }
                 .frame(maxWidth: .infinity)
                 
                 // Personalize Tab
                 Button(action: { selectedTab = 1 }) {
                     Image(systemName: selectedTab == 1 ? "chart.bar.fill" : "chart.bar")
-                        .font(.system(size: 20))
-                        .foregroundColor(selectedTab == 1 ? .blue : .gray)
+                        .font(.system(size: 26))
+                        .foregroundColor(selectedTab == 1 ? .blue : .white.opacity(0.6))
                 }
                 .frame(maxWidth: .infinity)
-                
-                // Spacer for center button
-                Spacer()
-                    .frame(width: 80) // Space for floating button + 10px spacing on each side
                 
                 // History Tab
                 Button(action: { selectedTab = 2 }) {
                     Image(systemName: selectedTab == 2 ? "clock.fill" : "clock")
-                        .font(.system(size: 20))
-                        .foregroundColor(selectedTab == 2 ? .blue : .gray)
+                        .font(.system(size: 26))
+                        .foregroundColor(selectedTab == 2 ? .blue : .white.opacity(0.6))
                 }
                 .frame(maxWidth: .infinity)
                 
                 // Account Tab
                 Button(action: { selectedTab = 3 }) {
                     Image(systemName: selectedTab == 3 ? "person.fill" : "person")
-                        .font(.system(size: 20))
-                        .foregroundColor(selectedTab == 3 ? .blue : .gray)
+                        .font(.system(size: 26))
+                        .foregroundColor(selectedTab == 3 ? .blue : .white.opacity(0.6))
                 }
                 .frame(maxWidth: .infinity)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .padding(.bottom, 11) // Moved down 3 pixels (8 + 3 = 11)
-            .background(Color(.systemBackground))
+            .padding(.vertical, 16)
+            .background(Color.clear)
             .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: -2)
-            
-            // Floating Fetch News Button (Center) - positioned over the navigation bar
-            DynamicFetchButton(state: vm.fetchButtonState) {
-                Task { await vm.fetch() }
-            }
-            .disabled(vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty)
-            .opacity((vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty) ? 0.6 : 1.0)
-            .offset(y: -15) // Positioned above the navigation bar
+            .offset(y: -2) // Moved up by 10px (was 8, now -2)
         }
+        .contentShape(Rectangle()) // Ensure entire nav bar area is tappable
+        .offset(y: -20) // Moved up higher (more negative = higher) - applied to entire ZStack
     }
 }
 
@@ -170,88 +203,154 @@ struct AccountView: View {
             .background(Color.darkGreyBackground)
             
             // Account Content
-            VStack(spacing: 24) {
-                if let user = authVM.currentUser {
-                    // Account Information
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Account Information")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.primary)
-                        
-                        VStack(spacing: 16) {
-                            // Name field
-                            NameInputField(authVM: authVM)
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Title
+                    Text("Account")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 8)
+                        .padding(.horizontal, 20)
+                    
+                    if let user = authVM.currentUser {
+                        // Account Information
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Account Information")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
                             
-                            HStack {
-                                Text("Email")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Text(user.email)
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            HStack {
-                                Text("Status")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Text(user.isPremium ? "Premium" : "Free")
-                                    .font(.subheadline)
-                                    .foregroundColor(user.isPremium ? .yellow : .secondary)
-                            }
-                            
-                            if !user.isPremium {
+                            VStack(spacing: 16) {
+                                // Name field
+                                NameInputField(authVM: authVM)
+                                
                                 HStack {
-                                    Text("Daily Usage")
+                                    Text("Email")
                                         .font(.subheadline)
                                         .fontWeight(.medium)
                                         .foregroundColor(.primary)
                                     Spacer()
-                                    Text("\(user.dailyUsageCount)/3 Fetches")
+                                    Text(user.email)
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
                                 }
+                                
+                                HStack {
+                                    Text("Status")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    Text(user.isPremium ? "Premium" : "Free")
+                                        .font(.subheadline)
+                                        .foregroundColor(user.isPremium ? .yellow : .secondary)
+                                }
+                                
+                                if !user.isPremium {
+                                    HStack {
+                                        Text("Daily Usage")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.primary)
+                                        Spacer()
+                                        Text("\(user.dailyUsageCount)/3 Fetches")
+                                            .font(.subheadline)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                
+                                // Country picker
+                                CountryPickerField(vm: vm)
                             }
-                        }
-                        .padding()
-                        .background(Color(.systemGray6))
-                        .cornerRadius(12)
-                    }
-                    
-                    // Account Actions
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Account")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.primary)
-                        
-                        VStack(spacing: 12) {
-                            Button("Sign Out") {
-                                authVM.logout()
-                            }
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(.red)
                             .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(Color.red.opacity(0.1))
+                            .background(Color(.systemGray6))
                             .cornerRadius(12)
                         }
+                        .padding(.horizontal, 20)
+                        
+                        // Sign Out Button - free floating, no box
+                        Button("Sign Out") {
+                            authVM.logout()
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.red)
                         .padding()
-                        .background(Color(.systemGray6))
+                        .frame(maxWidth: .infinity)
+                        .background(Color.red.opacity(0.1))
                         .cornerRadius(12)
+                        .padding(.horizontal, 20)
                     }
+                    
+                    // Bottom spacing
+                    Spacer(minLength: vm.canPlay ? 120 : 60)
                 }
+                .padding(.vertical, 16)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .background(Color.darkGreyBackground)
+    }
+}
+
+// Country Picker Field Component
+struct CountryPickerField: View {
+    @ObservedObject var vm: NewsVM
+    
+    // Common countries with ISO codes
+    let countries: [(code: String, name: String)] = [
+        ("us", "United States"),
+        ("gb", "United Kingdom"),
+        ("ca", "Canada"),
+        ("au", "Australia"),
+        ("de", "Germany"),
+        ("fr", "France"),
+        ("it", "Italy"),
+        ("es", "Spain"),
+        ("nl", "Netherlands"),
+        ("be", "Belgium"),
+        ("ch", "Switzerland"),
+        ("at", "Austria"),
+        ("se", "Sweden"),
+        ("no", "Norway"),
+        ("dk", "Denmark"),
+        ("fi", "Finland"),
+        ("ie", "Ireland"),
+        ("nz", "New Zealand"),
+        ("jp", "Japan"),
+        ("kr", "South Korea"),
+        ("cn", "China"),
+        ("in", "India"),
+        ("br", "Brazil"),
+        ("mx", "Mexico"),
+        ("ar", "Argentina"),
+        ("za", "South Africa"),
+        ("eg", "Egypt"),
+        ("ae", "United Arab Emirates"),
+        ("sa", "Saudi Arabia"),
+        ("il", "Israel"),
+        ("tr", "Turkey"),
+        ("ru", "Russia"),
+        ("pl", "Poland"),
+        ("pt", "Portugal"),
+        ("gr", "Greece")
+    ]
+    
+    var body: some View {
+        HStack {
+            Text("Country")
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(.primary)
+            Spacer()
+            Picker("Country", selection: $vm.selectedCountry) {
+                ForEach(countries, id: \.code) { country in
+                    Text(country.name).tag(country.code)
+                }
+            }
+            .pickerStyle(.menu)
+            .font(.subheadline)
+        }
     }
 }
 

@@ -421,6 +421,7 @@ struct NowPlayingBubble: View {
     let onPlayPause: () -> Void
     let onScrubChange: (Double) -> Void
     let onScrubEdit: (Bool) -> Void
+    var onTap: (() -> Void)? = nil
 
     private var displayTitle: String {
         title.isEmpty ? "Summary" : title
@@ -472,11 +473,90 @@ struct NowPlayingBubble: View {
                     }
                 }
             }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onTap?()
+            }
         }
         .padding(12)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 4)
+    }
+}
+
+// MARK: - Compact Now Playing Bubble (smaller, closer to nav bar)
+
+struct CompactNowPlayingBubble: View {
+    let title: String
+    let isPlaying: Bool
+    let current: Double
+    let duration: Double
+    let onPlayPause: () -> Void
+    let onScrubChange: (Double) -> Void
+    let onScrubEdit: (Bool) -> Void
+    var onTap: (() -> Void)? = nil
+
+    private var displayTitle: String {
+        title.isEmpty ? "Summary" : title
+    }
+
+    private func format(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let s = Int(seconds.rounded())
+        let m = s / 60
+        let r = s % 60
+        return String(format: "%d:%02d", m, r)
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button { onPlayPause() } label: {
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .frame(width: 28, height: 28)
+                    .background(Color.black)
+                    .foregroundColor(.white)
+                    .cornerRadius(6)
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color(.systemGray4), lineWidth: 0.5)
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(displayTitle)
+                    .font(.caption).bold()
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                HStack(spacing: 6) {
+                    Slider(
+                        value: Binding(
+                            get: { min(current, duration > 0 ? duration : 0) },
+                            set: { newVal in onScrubChange(newVal) }
+                        ),
+                        in: 0...(duration > 0 ? duration : 1),
+                        step: 0.5,
+                        onEditingChanged: { editing in onScrubEdit(editing) }
+                    )
+                    HStack(spacing: 4) {
+                        Text(format(current)).font(.caption2).foregroundColor(.secondary)
+                        Text("/").font(.caption2).foregroundColor(.secondary)
+                        Text(format(duration)).font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onTap?()
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 2)
     }
 }
 
@@ -716,15 +796,15 @@ struct SettingsView: View {
                                     .foregroundColor(.blue)
                                     .frame(width: 24)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("News Sources")
+                                    Text("Excluded Sources")
                                         .font(.body)
-                                    Text("Choose which news sources to use")
+                                    Text("Choose which news sources to exclude")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
                                 Spacer()
-                                if !vm.selectedNewsSources.isEmpty {
-                                    Text("\(vm.selectedNewsSources.count) selected")
+                                if !vm.excludedNewsSources.isEmpty {
+                                    Text("\(vm.excludedNewsSources.count) excluded")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }

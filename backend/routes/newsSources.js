@@ -227,17 +227,18 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Update user's selected news sources
+// Update user's excluded news sources (blocklist approach)
 router.put('/', authenticateToken, async (req, res) => {
   try {
-    const { selectedSources } = req.body;
+    // Support both old and new field names for migration
+    const excludedSources = req.body.excludedSources || req.body.selectedSources;
     const user = req.user;
     
-    if (!Array.isArray(selectedSources)) {
-      return res.status(400).json({ error: 'selectedSources must be an array' });
+    if (!Array.isArray(excludedSources)) {
+      return res.status(400).json({ error: 'excludedSources must be an array' });
     }
     
-    // Update user preferences with selected sources
+    // Update user preferences with excluded sources
     const User = require('../models/User');
     const userDoc = await User.findById(user.id);
     
@@ -245,17 +246,17 @@ router.put('/', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    // Update the user's selected news sources
-    userDoc.selectedNewsSources = selectedSources;
+    // Update the user's excluded news sources
+    userDoc.excludedNewsSources = excludedSources;
     await userDoc.save();
     
     res.json({ 
-      message: 'News sources updated successfully',
-      selectedSources: selectedSources 
+      message: 'Excluded news sources updated successfully',
+      excludedSources: excludedSources 
     });
   } catch (error) {
-    console.error('Update news sources error:', error);
-    res.status(500).json({ error: 'Failed to update news sources' });
+    console.error('Update excluded news sources error:', error);
+    res.status(500).json({ error: 'Failed to update excluded news sources' });
   }
 });
 

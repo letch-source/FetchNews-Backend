@@ -507,7 +507,7 @@
 
         <div class="trending-section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2>📰 Global News Sources Management</h2>
+                <h2>📰 Global Excluded News Sources Management</h2>
                 <button class="refresh-btn" onclick="loadGlobalNewsSources()">📥 Reload</button>
             </div>
             
@@ -522,18 +522,18 @@
                 <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 20px;">
                     <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #333;">
                         <input type="checkbox" id="global-sources-enabled" onchange="toggleGlobalSourcesEnabled()" style="margin-right: 8px;">
-                        Enable Global News Sources (when enabled, all users will use these sources instead of their own selections)
+                        Enable Global Excluded News Sources (when enabled, these sources will be excluded for all users)
                     </label>
                 </div>
 
                 <div class="topics-input-container">
-                    <label for="sources-input">Select News Sources (select at least 5):</label>
+                    <label for="sources-input">Exclude News Sources (select sources to exclude from all fetches):</label>
                     <div id="available-sources-list" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; padding: 15px; background: white; margin-bottom: 15px;">
                         <div class="loading">Loading available sources...</div>
                     </div>
                     <div class="button-group">
-                        <button class="btn-primary" onclick="saveGlobalNewsSources()">💾 Save Global Sources</button>
-                        <button class="btn-danger" onclick="clearGlobalSources()">🗑️ Clear Global Sources</button>
+                        <button class="btn-primary" onclick="saveGlobalNewsSources()">💾 Save Excluded Sources</button>
+                        <button class="btn-danger" onclick="clearGlobalSources()">🗑️ Clear Excluded Sources</button>
                     </div>
                 </div>
             </div>
@@ -1000,7 +1000,7 @@
             const sourcesContainer = document.getElementById('global-sources-container');
             
             try {
-                infoContainer.innerHTML = '<div class="loading">Loading global news sources...</div>';
+                infoContainer.innerHTML = '<div class="loading">Loading excluded news sources...</div>';
                 
                 // Get current global sources setting
                 const globalData = await fetchWithAuth('/api/admin/global-news-sources');
@@ -1019,24 +1019,24 @@
                 let infoHtml = `<div class="trending-info">`;
                 infoHtml += `<span class="trending-badge ${isEnabled ? 'override' : 'auto'}">${isEnabled ? '✅ Enabled' : '❌ Disabled'}</span>`;
                 if (isEnabled && sources.length > 0) {
-                    infoHtml += ` | ${sources.length} sources selected`;
+                    infoHtml += ` | ${sources.length} sources excluded`;
                 } else if (isEnabled) {
-                    infoHtml += ` | No sources selected (will use all sources)`;
+                    infoHtml += ` | No sources excluded (all sources will be used)`;
                 } else {
-                    infoHtml += ` | Users will use their own source selections`;
+                    infoHtml += ` | Users will use their own source exclusions`;
                 }
                 infoHtml += `</div>`;
 
                 document.getElementById('current-global-sources-info').innerHTML = infoHtml;
 
-                // Display selected sources
+                // Display excluded sources
                 let sourcesHtml = '<div class="topics-list">';
                 if (sources.length > 0) {
                     sources.forEach(source => {
                         sourcesHtml += `<span class="topic-tag">${source}</span>`;
                     });
                 } else {
-                    sourcesHtml += '<span style="color: #999;">No sources selected</span>';
+                    sourcesHtml += '<span style="color: #999;">No sources excluded</span>';
                 }
                 sourcesHtml += '</div>';
                 document.getElementById('current-sources-display').innerHTML = sourcesHtml;
@@ -1049,7 +1049,7 @@
 
                 infoContainer.innerHTML = '';
             } catch (error) {
-                infoContainer.innerHTML = `<div class="error">Failed to load global news sources: ${error.message}</div>`;
+                infoContainer.innerHTML = `<div class="error">Failed to load excluded news sources: ${error.message}</div>`;
                 sourcesContainer.style.display = 'none';
             }
         }
@@ -1109,10 +1109,7 @@
         async function saveGlobalNewsSources() {
             const enabled = document.getElementById('global-sources-enabled').checked;
             
-            if (enabled && selectedGlobalSources.length > 0 && selectedGlobalSources.length < 5) {
-                showError('Please select at least 5 news sources when enabling global sources');
-                return;
-            }
+            // No minimum requirement for excluded sources - can exclude any number
 
             try {
                 const result = await fetchWithAuth('/api/admin/global-news-sources', {
@@ -1124,20 +1121,20 @@
                 });
 
                 showSuccess(enabled 
-                    ? `Global news sources saved successfully! (${selectedGlobalSources.length} sources)` 
-                    : 'Global news sources disabled. Users will use their own selections.');
+                    ? `Excluded news sources saved successfully! (${selectedGlobalSources.length} sources excluded)` 
+                    : 'Excluded news sources disabled. All sources will be used.');
                 await loadGlobalNewsSources();
             } catch (error) {
                 if (error.message.includes('Authentication failed') || error.message.includes('No authentication token')) {
                     showError('Authentication failed. Please refresh the page and enter your JWT token again.');
                 } else {
-                    showError('Failed to save global news sources: ' + error.message);
+                    showError('Failed to save excluded news sources: ' + error.message);
                 }
             }
         }
 
         async function clearGlobalSources() {
-            if (!confirm('Are you sure you want to clear global news sources? This will disable the global override and users will use their own source selections.')) {
+            if (!confirm('Are you sure you want to clear excluded news sources? This will disable the global exclusion and all sources will be used.')) {
                 return;
             }
 
@@ -1151,7 +1148,7 @@
                 });
 
                 selectedGlobalSources = [];
-                showSuccess('Global news sources cleared! Users will now use their own source selections.');
+                showSuccess('Excluded news sources cleared! All sources will now be used.');
                 await loadGlobalNewsSources();
             } catch (error) {
                 if (error.message.includes('Authentication failed') || error.message.includes('No authentication token')) {

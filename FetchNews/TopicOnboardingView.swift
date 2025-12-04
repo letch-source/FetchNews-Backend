@@ -146,7 +146,7 @@ struct TopicOnboardingView: View {
                     length: String(vm.length.rawValue),
                     lastFetchedTopics: Array(vm.lastFetchedTopics),
                     selectedTopics: Array(selectedTopics), // Save the selected topics
-                    selectedNewsSources: Array(vm.selectedNewsSources),
+                    excludedNewsSources: Array(vm.excludedNewsSources),
                     scheduledSummaries: []
                 )
                 _ = try await ApiClient.updateUserPreferences(preferences)
