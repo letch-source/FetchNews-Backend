@@ -1892,34 +1892,12 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       title = "Mixed Summary";
     }
 
-    // Send notification if user is not in app and has device token
+    // Send notification if user is not in app and has device token (after response is sent)
     // Check appInForeground from query params or body (defaults to true for backward compatibility)
     const appInForeground = req.query.appInForeground !== 'false' && req.body.appInForeground !== false;
     
-    if (!appInForeground && req.user) {
-      try {
-        // Reload user to get latest device token
-        let userWithToken;
-        if (mongoose.connection.readyState === 1) {
-          userWithToken = await User.findById(req.user._id || req.user.id);
-        } else {
-          userWithToken = req.user;
-        }
-        
-        if (userWithToken && userWithToken.deviceToken) {
-          // Send notification asynchronously (don't wait for it)
-          sendFetchReadyNotification(userWithToken.deviceToken, title).catch(err => {
-            console.error('[NOTIFICATIONS] Failed to send Fetch-ready notification:', err);
-          });
-          console.log(`[NOTIFICATIONS] Sent Fetch-ready notification to user ${userWithToken.email}`);
-        }
-      } catch (notifError) {
-        // Don't fail the request if notification fails
-        console.error('[NOTIFICATIONS] Error sending Fetch-ready notification:', notifError);
-      }
-    }
-
-    return res.json({
+    // Send response first
+    res.json({
       items,
       combined: {
         id: `combined-${Date.now()}`,
@@ -1928,6 +1906,29 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         audioUrl: null,
       },
     });
+
+    // Send notification asynchronously after response (don't wait for it)
+    if (!appInForeground && req.user) {
+      setImmediate(async () => {
+        try {
+          // Reload user to get latest device token
+          let userWithToken;
+          if (mongoose.connection.readyState === 1) {
+            userWithToken = await User.findById(req.user._id || req.user.id);
+          } else {
+            userWithToken = req.user;
+          }
+          
+          if (userWithToken && userWithToken.deviceToken) {
+            await sendFetchReadyNotification(userWithToken.deviceToken, title);
+            console.log(`[NOTIFICATIONS] Sent Fetch-ready notification to user ${userWithToken.email}`);
+          }
+        } catch (notifError) {
+          // Don't fail the request if notification fails
+          console.error('[NOTIFICATIONS] Error sending Fetch-ready notification:', notifError);
+        }
+      });
+    }
   } catch (e) {
     console.error("Summarize endpoint error:", e);
     console.error("Error stack:", e.stack);
@@ -2197,44 +2198,45 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
       }
     }
 
-    // Send notification if user is not in app and has device token
+    // Send notification if user is not in app and has device token (after response is sent)
     // Check appInForeground from first batch (all batches should have same value)
     const appInForeground = batches.length > 0 && batches[0].appInForeground !== false;
     
+    // Send response first
+    res.json({ results, batches: results });
+
+    // Send notification asynchronously after response (don't wait for it)
     if (!appInForeground && req.user) {
-      try {
-        // Reload user to get latest device token
-        let userWithToken;
-        if (mongoose.connection.readyState === 1) {
-          userWithToken = await User.findById(req.user._id || req.user.id);
-        } else {
-          userWithToken = req.user;
-        }
-        
-        if (userWithToken && userWithToken.deviceToken) {
-          // Generate title from first batch topics
-          const firstBatch = batches[0];
-          const firstTopics = Array.isArray(firstBatch.topics) ? firstBatch.topics : [];
-          let title = "Summary";
-          if (firstTopics.length === 1) {
-            title = `${firstTopics[0].charAt(0).toUpperCase() + firstTopics[0].slice(1)} Summary`;
-          } else if (firstTopics.length > 1) {
-            title = "Mixed Summary";
+      setImmediate(async () => {
+        try {
+          // Reload user to get latest device token
+          let userWithToken;
+          if (mongoose.connection.readyState === 1) {
+            userWithToken = await User.findById(req.user._id || req.user.id);
+          } else {
+            userWithToken = req.user;
           }
           
-          // Send notification asynchronously (don't wait for it)
-          sendFetchReadyNotification(userWithToken.deviceToken, title).catch(err => {
-            console.error('[NOTIFICATIONS] Failed to send Fetch-ready notification:', err);
-          });
-          console.log(`[NOTIFICATIONS] Sent Fetch-ready notification to user ${userWithToken.email} (batch)`);
+          if (userWithToken && userWithToken.deviceToken) {
+            // Generate title from first batch topics
+            const firstBatch = batches[0];
+            const firstTopics = Array.isArray(firstBatch.topics) ? firstBatch.topics : [];
+            let title = "Summary";
+            if (firstTopics.length === 1) {
+              title = `${firstTopics[0].charAt(0).toUpperCase() + firstTopics[0].slice(1)} Summary`;
+            } else if (firstTopics.length > 1) {
+              title = "Mixed Summary";
+            }
+            
+            await sendFetchReadyNotification(userWithToken.deviceToken, title);
+            console.log(`[NOTIFICATIONS] Sent Fetch-ready notification to user ${userWithToken.email} (batch)`);
+          }
+        } catch (notifError) {
+          // Don't fail the request if notification fails
+          console.error('[NOTIFICATIONS] Error sending Fetch-ready notification:', notifError);
         }
-      } catch (notifError) {
-        // Don't fail the request if notification fails
-        console.error('[NOTIFICATIONS] Error sending Fetch-ready notification:', notifError);
-      }
+      });
     }
-
-    res.json({ results, batches: results });
   } catch (e) {
     console.error("Batch summarize endpoint error:", e);
     console.error("Error stack:", e.stack);
