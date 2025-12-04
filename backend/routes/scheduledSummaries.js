@@ -411,6 +411,8 @@ async function executeScheduledSummary(user, summary) {
     const location = user.location || '';
     const selectedVoice = user.selectedVoice || 'alloy';
     const playbackRate = user.playbackRate || 1.0;
+    // Get user's country preference (default to 'us' if not set)
+    const userCountry = preferences.selectedCountry || 'us';
     
     // Combine regular topics and custom topics
     const allTopics = [...(summary.topics || []), ...(summary.customTopics || [])];
@@ -451,7 +453,7 @@ async function executeScheduledSummary(user, summary) {
       try {
         const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
         
-        // Handle location
+        // Handle location and country preference
         let geoData = null;
         if (location && typeof location === 'string') {
           const locationStr = String(location).trim();
@@ -460,11 +462,22 @@ async function executeScheduledSummary(user, summary) {
             geoData = {
               city: parts[0] || "",
               region: parts[1] || "",
-              country: "US",
-              countryCode: "US"
+              country: userCountry.toUpperCase() || "US",
+              countryCode: userCountry.toLowerCase() || "us"
             };
           }
+        } else {
+          // Even without location, use the user's country preference
+          geoData = {
+            city: "",
+            region: "",
+            country: userCountry.toUpperCase() || "US",
+            countryCode: userCountry.toLowerCase() || "us"
+          };
         }
+        
+        // Debug: Log country information for scheduled summaries
+        console.log(`[SCHEDULER] Topic: ${topic}, Country: ${geoData.countryCode || geoData.country || 'none'}, GeoData:`, JSON.stringify(geoData));
         
         // Fetch articles for the topic
         const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);

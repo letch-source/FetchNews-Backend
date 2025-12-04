@@ -758,7 +758,12 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
   } else {
     console.log(`No source filtering applied (using all sources)`);
     if (category) params.set("categories", category);
-    if (countryCode) params.set("countries", String(countryCode).toLowerCase());
+  }
+  
+  // Always apply country filter if countryCode is provided (works with both sources and categories)
+  if (countryCode) {
+    params.set("countries", String(countryCode).toLowerCase());
+    console.log(`Applying country filter: ${String(countryCode).toLowerCase()}`);
   }
   
   if (extraQuery) params.set("keywords", extraQuery);
@@ -833,7 +838,8 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
       
       // Fetch additional articles using the normal process
       const queryParts = [topic];
-      const countryCode = geo?.country || geo?.countryCode || "";
+      // Prefer countryCode (lowercase) over country (uppercase) for API compatibility
+      const countryCode = (geo?.countryCode || geo?.country || "").toLowerCase();
       const region = geo?.region || geo?.state || "";
       const city = geo?.city || "";
       if (region) queryParts.push(region);
@@ -866,7 +872,8 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   }
   
   const queryParts = [topic];
-  const countryCode = geo?.country || geo?.countryCode || "";
+  // Prefer countryCode (lowercase) over country (uppercase) for API compatibility
+  const countryCode = (geo?.countryCode || geo?.country || "").toLowerCase();
   const region = geo?.region || geo?.state || "";
   const city = geo?.city || "";
   if (region) queryParts.push(region);
@@ -1694,6 +1701,9 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
             };
           }
         }
+        
+        // Debug: Log country information
+        console.log(`[COUNTRY FILTER] Topic: ${topic}, Country: ${geoData.countryCode || geoData.country || 'none'}, GeoData:`, JSON.stringify(geoData));
         
         const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
 
