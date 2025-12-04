@@ -2621,13 +2621,16 @@ async function checkScheduledSummaries() {
           
           const lastRunDateStr = dateFormatter.format(lastRun);
           const nowDateStr = dateFormatter.format(now);
-          alreadyRanToday = lastRunDateStr === nowDateStr;
+          const sameDate = lastRunDateStr === nowDateStr;
           
-          // Additional check: if lastRun was less than 23 hours ago, don't execute again
-          // This prevents edge cases around timezone boundaries
-          const hoursSinceLastRun = (now.getTime() - lastRun.getTime()) / (1000 * 60 * 60);
-          if (hoursSinceLastRun < 23) {
-            alreadyRanToday = true;
+          if (sameDate) {
+            // If it ran today, check if it was less than 23 hours ago to prevent duplicate runs
+            // This handles edge cases where the scheduler might check multiple times
+            const hoursSinceLastRun = (now.getTime() - lastRun.getTime()) / (1000 * 60 * 60);
+            alreadyRanToday = hoursSinceLastRun < 23;
+          } else {
+            // Different dates - allow it to run (it ran yesterday or earlier)
+            alreadyRanToday = false;
           }
         }
         
@@ -2666,11 +2669,15 @@ async function checkScheduledSummaries() {
             });
             const freshLastRunDateStr = dateFormatter.format(freshLastRun);
             const nowDateStr = dateFormatter.format(now);
-            freshAlreadyRanToday = freshLastRunDateStr === nowDateStr;
+            const freshSameDate = freshLastRunDateStr === nowDateStr;
             
-            const hoursSinceLastRun = (now.getTime() - freshLastRun.getTime()) / (1000 * 60 * 60);
-            if (hoursSinceLastRun < 23) {
-              freshAlreadyRanToday = true;
+            if (freshSameDate) {
+              // If it ran today, check if it was less than 23 hours ago to prevent duplicate runs
+              const hoursSinceLastRun = (now.getTime() - freshLastRun.getTime()) / (1000 * 60 * 60);
+              freshAlreadyRanToday = hoursSinceLastRun < 23;
+            } else {
+              // Different dates - allow it to run (it ran yesterday or earlier)
+              freshAlreadyRanToday = false;
             }
           }
           
