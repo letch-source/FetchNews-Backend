@@ -34,8 +34,8 @@ async function uploadAudioToB2(fileBuffer, fileName) {
       Key: fileName,
       Body: fileBuffer,
       ContentType: 'audio/mpeg',
-      // Make the file publicly accessible
-      ACL: 'public-read',
+      // Note: B2 doesn't support S3 ACLs - file visibility is controlled by bucket settings
+      // If the bucket is public, files are automatically public
     };
 
     const command = new PutObjectCommand(uploadParams);
