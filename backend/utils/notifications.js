@@ -3,6 +3,7 @@ const apn = require('apn');
 // Initialize APNs providers for both environments
 let apnProviderProduction = null;
 let apnProviderDevelopment = null;
+let apnKeyContent = null;
 
 function initializeAPNs() {
   // Check if APNs is configured via environment variables
@@ -10,7 +11,7 @@ function initializeAPNs() {
   const apnTeamId = process.env.APN_TEAM_ID;
   const apnBundleId = process.env.APN_BUNDLE_ID || 'com.finlaysmith.FetchNews';
   const apnKeyPath = process.env.APN_KEY_PATH;
-  const apnKeyContent = process.env.APN_KEY_CONTENT;
+  const apnKeyContentEnv = process.env.APN_KEY_CONTENT;
   const apnProduction = process.env.NODE_ENV === 'production';
 
   if (!apnKeyId || !apnTeamId) {
@@ -20,7 +21,7 @@ function initializeAPNs() {
   }
 
   try {
-    let keyContent = apnKeyContent;
+    let keyContent = apnKeyContentEnv;
     
     // If key path is provided, read from file
     if (!keyContent && apnKeyPath) {
@@ -32,6 +33,8 @@ function initializeAPNs() {
       console.log('[NOTIFICATIONS] APNs key content not found - notifications will be disabled');
       return null;
     }
+
+    apnKeyContent = keyContent;
 
     // Create production provider
     const optionsProduction = {
@@ -76,20 +79,13 @@ initializeAPNs();
  * @returns {Promise<boolean>} - Success status
  */
 async function sendPushNotification(deviceToken, title, body, data = {}) {
-  console.log(`[NOTIFICATIONS] Attempting to send notification:`);
-  console.log(`[NOTIFICATIONS]   - Title: "${title}"`);
-  console.log(`[NOTIFICATIONS]   - Body: "${body}"`);
-  console.log(`[NOTIFICATIONS]   - Device token: ${deviceToken ? `${deviceToken.substring(0, 8)}...` : 'MISSING'}`);
-  console.log(`[NOTIFICATIONS]   - APNs providers: production=${!!apnProviderProduction}, development=${!!apnProviderDevelopment}`);
-  
   if (!apnProviderProduction && !apnProviderDevelopment) {
-    console.log('[NOTIFICATIONS] ❌ APNs not configured, skipping notification');
-    console.log('[NOTIFICATIONS]   Check APN_KEY_ID, APN_TEAM_ID, and APN_KEY_CONTENT environment variables');
+    console.log('[NOTIFICATIONS] APNs not configured, skipping notification');
     return false;
   }
 
   if (!deviceToken) {
-    console.log('[NOTIFICATIONS] ❌ No device token provided');
+    console.log('[NOTIFICATIONS] No device token provided');
     return false;
   }
 
@@ -120,25 +116,23 @@ async function sendPushNotification(deviceToken, title, body, data = {}) {
 
     // Ensure we have at least one provider
     if (!primaryProvider && !fallbackProvider) {
-      console.log('[NOTIFICATIONS] ❌ No APNs providers available');
+      console.log('[NOTIFICATIONS] No APNs providers available');
       return false;
     }
 
     // Try primary environment first (if available)
     let result;
     if (primaryProvider) {
-      console.log(`[NOTIFICATIONS] Sending notification via APNs (${primaryEnv})...`);
       result = await primaryProvider.send(notification, deviceToken);
     } else {
       // If primary not available, use fallback
-      console.log(`[NOTIFICATIONS] Primary provider not available, using ${fallbackEnv}...`);
       result = await fallbackProvider.send(notification, deviceToken);
       if (result.sent && result.sent.length > 0) {
-        console.log(`[NOTIFICATIONS] ✅ Successfully sent notification to ${deviceToken.substring(0, 8)}... (using ${fallbackEnv} environment)`);
+        console.log(`[NOTIFICATIONS] Successfully sent notification to ${deviceToken.substring(0, 8)}... (using ${fallbackEnv} environment)`);
         return true;
       }
       if (result.failed && result.failed.length > 0) {
-        console.error(`[NOTIFICATIONS] ❌ Failed to send notification (${fallbackEnv}):`, JSON.stringify(result.failed, null, 2));
+        console.error(`[NOTIFICATIONS] Failed to send notification (${fallbackEnv}):`, result.failed);
         return false;
       }
       return false;
@@ -157,49 +151,29 @@ async function sendPushNotification(deviceToken, title, body, data = {}) {
         result = await fallbackProvider.send(notification, deviceToken);
         
         if (result.failed && result.failed.length > 0) {
-          // Check for BadDeviceToken in fallback attempt
-          const badTokenError = result.failed.find(f => 
-            f.response && f.response.reason === 'BadDeviceToken'
-          );
-          if (badTokenError) {
-            console.error(`[NOTIFICATIONS] ❌ Invalid device token detected (${fallbackEnv}), token should be unregistered`);
-            // Return a special value to indicate token should be cleared
-            return 'BAD_TOKEN';
-          }
-          console.error(`[NOTIFICATIONS] ❌ Failed to send notification (${fallbackEnv}):`, JSON.stringify(result.failed, null, 2));
+          console.error(`[NOTIFICATIONS] Failed to send notification (${fallbackEnv}):`, result.failed);
           return false;
         }
         
         if (result.sent && result.sent.length > 0) {
-          console.log(`[NOTIFICATIONS] ✅ Successfully sent notification to ${deviceToken.substring(0, 8)}... (using ${fallbackEnv} environment)`);
+          console.log(`[NOTIFICATIONS] Successfully sent notification to ${deviceToken.substring(0, 8)}... (using ${fallbackEnv} environment)`);
           return true;
         }
       } else {
-        // Check for BadDeviceToken in primary attempt
-        const badTokenError = result.failed.find(f => 
-          f.response && f.response.reason === 'BadDeviceToken'
-        );
-        if (badTokenError) {
-          console.error(`[NOTIFICATIONS] ❌ Invalid device token detected (${primaryEnv}), token should be unregistered`);
-          // Return a special value to indicate token should be cleared
-          return 'BAD_TOKEN';
-        }
         // Other error, log and return
-        console.error(`[NOTIFICATIONS] ❌ Failed to send notification (${primaryEnv}):`, JSON.stringify(result.failed, null, 2));
+        console.error(`[NOTIFICATIONS] Failed to send notification (${primaryEnv}):`, result.failed);
         return false;
       }
     }
     
     if (result.sent && result.sent.length > 0) {
-      console.log(`[NOTIFICATIONS] ✅ Successfully sent notification to ${deviceToken.substring(0, 8)}... (using ${primaryEnv} environment)`);
+      console.log(`[NOTIFICATIONS] Successfully sent notification to ${deviceToken.substring(0, 8)}... (using ${primaryEnv} environment)`);
       return true;
     }
     
-    console.log(`[NOTIFICATIONS] ⚠️  No notification sent (no sent or failed results)`);
     return false;
   } catch (error) {
-    console.error('[NOTIFICATIONS] ❌ Error sending push notification:', error);
-    console.error('[NOTIFICATIONS] ❌ Error stack:', error.stack);
+    console.error('[NOTIFICATIONS] Error sending push notification:', error);
     return false;
   }
 }
@@ -250,29 +224,16 @@ async function sendEngagementReminder(deviceToken, message = null) {
 }
 
 /**
- * Send notification when a Fetch is ready and user is not in app
- * @param {string} deviceToken - The device token
- * @param {string} fetchTitle - Title of the Fetch
- */
-async function sendFetchReadyNotification(deviceToken, fetchTitle) {
-  return await sendPushNotification(
-    deviceToken,
-    'Your Fetch is Ready! 🐕📰',
-    `${fetchTitle} is ready to view.`,
-    {
-      notificationType: 'fetchReady',
-      action: 'openFetch'
-    }
-  );
-}
-
-/**
- * Shutdown APNs provider (call on app shutdown)
+ * Shutdown APNs providers (call on app shutdown)
  */
 function shutdown() {
-  if (apnProvider) {
-    apnProvider.shutdown();
-    console.log('[NOTIFICATIONS] APNs provider shut down');
+  if (apnProviderProduction) {
+    apnProviderProduction.shutdown();
+    console.log('[NOTIFICATIONS] APNs production provider shut down');
+  }
+  if (apnProviderDevelopment) {
+    apnProviderDevelopment.shutdown();
+    console.log('[NOTIFICATIONS] APNs development provider shut down');
   }
 }
 
@@ -280,8 +241,6 @@ module.exports = {
   sendPushNotification,
   sendScheduledSummaryNotification,
   sendEngagementReminder,
-  sendFetchReadyNotification,
   initializeAPNs,
   shutdown
 };
-

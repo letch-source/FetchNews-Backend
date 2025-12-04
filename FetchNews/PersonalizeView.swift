@@ -390,7 +390,7 @@ struct DailyFetchSection: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Scheduled Fetch")
+            Text("Daily Fetch")
                 .font(.headline)
                 .fontWeight(.semibold)
                 .foregroundColor(.primary)
@@ -448,8 +448,6 @@ struct ScheduledTopicsSelectorView: View {
     @EnvironmentObject var vm: NewsVM
     @Environment(\.dismiss) var dismiss
     
-    private let allTopics = ["business", "entertainment", "general", "health", "science", "sports", "technology", "world"]
-    
     var body: some View {
         NavigationView {
             ZStack {
@@ -457,27 +455,6 @@ struct ScheduledTopicsSelectorView: View {
                     .ignoresSafeArea()
                 
                 Form {
-                Section(header: Text("Regular Topics")) {
-                    ForEach(allTopics, id: \.self) { topic in
-                        HStack {
-                            Text(topic.capitalized)
-                            Spacer()
-                            if selectedTopics.contains(topic) {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.blue)
-                            }
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            if selectedTopics.contains(topic) {
-                                selectedTopics.remove(topic)
-                            } else {
-                                selectedTopics.insert(topic)
-                            }
-                        }
-                    }
-                }
-                
                 if !vm.trendingTopics.isEmpty {
                     Section(header: Text("Trending Topics")) {
                         ForEach(vm.trendingTopics, id: \.self) { topic in

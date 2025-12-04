@@ -237,6 +237,8 @@ struct AdminView: View {
             return "Reset Password"
         case "delete_user":
             return "Delete User"
+        case "reset_usage":
+            return "Reset Usage"
         default:
             return action.capitalized
         }

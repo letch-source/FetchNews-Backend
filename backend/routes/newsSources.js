@@ -98,8 +98,12 @@ router.get('/', authenticateToken, async (req, res) => {
               }
             }
           } else {
-            const errorText = await response.text().catch(() => '');
-            console.log(`[NEWS SOURCES] Sources endpoint returned ${response.status}: ${errorText.substring(0, 200)}`);
+            // Only log non-validation errors (validation errors are expected - sources endpoint may not work)
+            if (response.status !== 422) {
+              const errorText = await response.text().catch(() => '');
+              console.log(`[NEWS SOURCES] Sources endpoint returned ${response.status}: ${errorText.substring(0, 200)}`);
+            }
+            // 422 validation errors are expected - Mediastack sources endpoint may require different parameters
           }
         } catch (err) {
           console.warn(`[NEWS SOURCES] Error fetching from sources endpoint:`, err.message);
