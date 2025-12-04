@@ -211,6 +211,7 @@ const fallbackAuth = {
       lastFetchedTopics: [],
       selectedTopics: [],
       selectedNewsSources: [],
+      selectedCountry: 'us',
       scheduledSummaries: [],
       preferences: {},
       createdAt: new Date(),
@@ -376,6 +377,7 @@ const fallbackAuth = {
       lastFetchedTopics: user.lastFetchedTopics || [],
       selectedTopics: user.selectedTopics || [],
       selectedNewsSources: user.selectedNewsSources || [],
+      selectedCountry: user.selectedCountry || 'us',
       scheduledSummaries: user.scheduledSummaries || []
     };
   },
@@ -408,6 +410,9 @@ const fallbackAuth = {
     }
     if (preferences.selectedNewsSources !== undefined) {
       user.selectedNewsSources = preferences.selectedNewsSources;
+    }
+    if (preferences.selectedCountry !== undefined) {
+      user.selectedCountry = preferences.selectedCountry || 'us';
     }
     if (preferences.scheduledSummaries !== undefined) {
       user.scheduledSummaries = preferences.scheduledSummaries;

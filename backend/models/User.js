@@ -112,6 +112,10 @@ const userSchema = new mongoose.Schema({
     type: [String],
     default: []
   },
+  selectedCountry: {
+    type: String,
+    default: 'us'
+  },
   scheduledSummaries: {
     type: [Object],
     default: []
@@ -375,6 +379,7 @@ userSchema.methods.getPreferences = function() {
     lastFetchedTopics: this.lastFetchedTopics || [],
     selectedTopics: this.selectedTopics || [],
     selectedNewsSources: this.selectedNewsSources || [],
+    selectedCountry: this.selectedCountry || 'us',
     scheduledSummaries: this.scheduledSummaries || []
   };
 };
@@ -448,6 +453,9 @@ userSchema.methods.updatePreferences = async function(preferences) {
           }
           if (preferences.selectedNewsSources !== undefined) {
             freshUser.selectedNewsSources = preferences.selectedNewsSources;
+          }
+          if (preferences.selectedCountry !== undefined) {
+            freshUser.selectedCountry = preferences.selectedCountry || 'us';
           }
           // Do NOT update scheduledSummaries via updatePreferences - it's managed separately via /api/scheduled-summaries
           // This prevents version conflicts when both routes try to save at the same time

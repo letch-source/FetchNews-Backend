@@ -25,6 +25,7 @@ const trendingAdminRoutes = require("./routes/trendingAdmin");
 const notificationsRoutes = require("./routes/notifications");
 const { sendEngagementReminder } = require("./utils/notifications");
 const fallbackAuth = require("./utils/fallbackAuth");
+const { uploadAudioToB2, isB2Configured } = require("./utils/b2Storage");
 const User = require("./models/User");
 const GlobalSettings = require("./models/GlobalSettings");
 
@@ -353,12 +354,13 @@ app.get("/api/trending-topics", async (req, res) => {
 });
 
 // Manual trending topics update endpoint (for testing)
+// COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
 app.post("/api/trending-topics/update", async (req, res) => {
   try {
-    console.log('[TRENDING] Manual update triggered');
-    await updateTrendingTopics();
+    console.log('[TRENDING] Manual update triggered - DISABLED (auto-generated topics disabled)');
+    // await updateTrendingTopics();
     res.json({ 
-      message: 'Trending topics updated successfully',
+      message: 'Auto-generated trending topics are disabled. Only manual topics are allowed.',
       trendingTopics: trendingTopicsCache,
       lastUpdated: lastTrendingUpdate ? lastTrendingUpdate.toISOString() : null
     });
@@ -570,22 +572,27 @@ const CORE_CATEGORIES = new Set([
   "world", // not a NewsAPI category; fallback to q=world
 ]);
 
-async function fetchArticlesEverything(qParts, maxResults, selectedSources = []) {
+async function fetchArticlesEverything(qParts, maxResults, selectedSources = [], countryCode = null) {
   const q = encodeURIComponent(qParts.filter(Boolean).join(" "));
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
   // Extend to 7 days for more variety (24 hours was too restrictive)
   const from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   
+  // Build country parameter if provided
+  const countryParam = countryCode ? `&countries=${String(countryCode).toLowerCase()}` : '';
+  
   // Try multiple search strategies for better coverage
   const searchStrategies = [
     // Strategy 1: Exact phrase search
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`,
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${pageSize}&date=${from}${countryParam}`,
     // Strategy 2: Individual keywords
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}`,
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}${countryParam}`,
     // Strategy 3: Broader search without date restriction
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}`,
-    // Strategy 4: Search without keywords (general news)
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}`
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}${countryParam}`,
+    // Strategy 4: Search without keywords (general news) - only add country if provided
+    countryCode 
+      ? `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}${countryParam}`
+      : `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}`
   ];
   
   let articles = [];
@@ -834,7 +841,7 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
       
       try {
         // Use the existing logic to fetch additional articles
-        const additionalResult = await fetchArticlesEverything(queryParts, additionalNeeded, selectedSources);
+        const additionalResult = await fetchArticlesEverything(queryParts, additionalNeeded, selectedSources, countryCode);
         additionalArticles = additionalResult.map(article => ({
           title: article.title || "",
           description: article.description || "",
@@ -887,7 +894,8 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   if (isGeneral) {
   // For general news, use a simple approach without date filtering
   try {
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}`;
+    const countryParam = countryCode ? `&countries=${String(countryCode).toLowerCase()}` : '';
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}${countryParam}`;
     const resp = await fetch(url);
     
     if (!resp.ok) {
@@ -923,16 +931,16 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
     if (city) {
       promises.push(
         fetchTopHeadlinesByCategory("general", countryCode, Math.ceil(pageSize/3), `"${city}"`, selectedSources),
-        fetchArticlesEverything([`title:${city}`], Math.ceil(pageSize/3)),
-        fetchArticlesEverything([city], Math.ceil(pageSize/3))
+        fetchArticlesEverything([`title:${city}`], Math.ceil(pageSize/3), selectedSources, countryCode),
+        fetchArticlesEverything([city], Math.ceil(pageSize/3), selectedSources, countryCode)
       );
     }
     
     if (region) {
       promises.push(
         fetchTopHeadlinesByCategory("general", countryCode, Math.ceil(pageSize/3), `"${region}"`, selectedSources),
-        fetchArticlesEverything([`title:${region}`], Math.ceil(pageSize/3)),
-        fetchArticlesEverything([region], Math.ceil(pageSize/3))
+        fetchArticlesEverything([`title:${region}`], Math.ceil(pageSize/3), selectedSources, countryCode),
+        fetchArticlesEverything([region], Math.ceil(pageSize/3), selectedSources, countryCode)
       );
     }
     
@@ -942,9 +950,9 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
       );
     }
     
-    // Fallback to general news
+    // Fallback to general news (use countryCode if available)
     promises.push(
-      fetchTopHeadlinesByCategory("general", "", Math.ceil(pageSize/2), undefined, selectedSources)
+      fetchTopHeadlinesByCategory("general", countryCode || "", Math.ceil(pageSize/2), undefined, selectedSources)
     );
     
     try {
@@ -980,11 +988,11 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
     }
     
     if ((articles?.length || 0) < Math.min(5, pageSize) && (city || region)) {
-      const extra = await fetchArticlesEverything([normalizedTopic, bias], pageSize - (articles?.length || 0), selectedSources);
+      const extra = await fetchArticlesEverything([normalizedTopic, bias], pageSize - (articles?.length || 0), selectedSources, countryCode);
       articles = [...articles, ...extra];
     }
   } else {
-    articles = await fetchArticlesEverything(queryParts, pageSize, selectedSources);
+    articles = await fetchArticlesEverything(queryParts, pageSize, selectedSources, countryCode);
   }
 
   // Debug: Check original articles from news API
@@ -1565,9 +1573,23 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       }
     }
     
-    const { topics = [], wordCount = 200, location = "", geo = null, goodNewsOnly = false } = req.body || {};
+    const { topics = [], wordCount = 200, location = "", geo = null, goodNewsOnly = false, country = null } = req.body || {};
     if (!Array.isArray(topics)) {
       return res.status(400).json({ error: "topics must be an array" });
+    }
+    
+    // Get user's country preference if not provided in request
+    let userCountry = country;
+    if (!userCountry && req.user) {
+      const user = await User.findById(req.user.id);
+      if (user) {
+        const preferences = user.getPreferences();
+        userCountry = preferences.selectedCountry || 'us';
+      }
+    }
+    // Default to 'us' if no country specified
+    if (!userCountry) {
+      userCountry = 'us';
     }
 
     // Check for global news sources first (admin override)
@@ -1635,8 +1657,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
           geoData = {
             city: geo.city || "",
             region: geo.region || "",
-            country: geo.country || geo.countryCode || "",
-            countryCode: geo.countryCode || geo.country || ""
+            country: geo.country || geo.countryCode || userCountry || "",
+            countryCode: geo.countryCode || geo.country || userCountry || ""
           };
         } else if (location && typeof location === 'string') {
           // Format: "New York" or "Los Angeles, California"
@@ -1674,8 +1696,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
             geoData = {
               city: city,
               region: region,
-              country: "US", // Default to US for now
-              countryCode: "US"
+              country: userCountry.toUpperCase() || "US",
+              countryCode: userCountry.toLowerCase() || "us"
             };
           }
         }
@@ -1991,6 +2013,16 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
           return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
         }
 
+        // Get user's country preference for batch requests
+        let batchCountry = 'us';
+        if (req.user) {
+          const user = await User.findById(req.user.id);
+          if (user) {
+            const preferences = user.getPreferences();
+            batchCountry = preferences.selectedCountry || 'us';
+          }
+        }
+        
         for (const topic of topics) {
           try {
             const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
@@ -1998,9 +2030,14 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
             const geoData = location ? {
               city: "",
               region: "",
-              country: location,
-              countryCode: location
-            } : null;
+              country: batchCountry.toUpperCase(),
+              countryCode: batchCountry.toLowerCase()
+            } : {
+              city: "",
+              region: "",
+              country: batchCountry.toUpperCase(),
+              countryCode: batchCountry.toLowerCase()
+            };
             
             const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
 
@@ -2180,11 +2217,20 @@ app.post("/api/tts", async (req, res) => {
     const disableCache = false;
     
     if (cached && !disableCache) {
-      console.log(`TTS cache hit for ${finalText.substring(0, 50)}... with voice: ${voice}`);
-      // Ensure cached URL is absolute
-      const baseUrl = req.protocol + '://' + req.get('host');
-      const audioUrl = cached.audioUrl.startsWith('http') ? cached.audioUrl : `${baseUrl}${cached.audioUrl}`;
-      return res.json({ audioUrl });
+      // If B2 is configured, only use cached URLs that are B2 URLs
+      // This prevents using stale local file URLs that may have been deleted
+      const isB2Url = cached.audioUrl && cached.audioUrl.includes('backblazeb2.com');
+      const shouldUseCache = !isB2Configured() || isB2Url;
+      
+      if (shouldUseCache) {
+        console.log(`TTS cache hit for ${finalText.substring(0, 50)}... with voice: ${voice}`);
+        // Ensure cached URL is absolute
+        const baseUrl = req.protocol + '://' + req.get('host');
+        const audioUrl = cached.audioUrl.startsWith('http') ? cached.audioUrl : `${baseUrl}${cached.audioUrl}`;
+        return res.json({ audioUrl });
+      } else {
+        console.log(`TTS cache skipped - B2 configured but cached URL is local (may be stale)`);
+      }
     }
     
     console.log(`TTS cache miss - generating new audio with voice: ${voice}`);
@@ -2274,12 +2320,30 @@ app.post("/api/tts", async (req, res) => {
 
     const buffer = Buffer.from(await speech.arrayBuffer());
     const fileBase = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
-    const outPath = path.join(MEDIA_DIR, fileBase);
-    fs.writeFileSync(outPath, buffer);
-
-    // Create absolute URL for the audio file
-    const baseUrl = req.protocol + '://' + req.get('host');
-    const audioUrl = `${baseUrl}/media/${fileBase}`;
+    
+    let audioUrl;
+    
+    // Upload to B2 if configured, otherwise save locally
+    if (isB2Configured()) {
+      try {
+        console.log('📤 Uploading audio to Backblaze B2...');
+        audioUrl = await uploadAudioToB2(buffer, fileBase);
+        console.log('✅ Audio uploaded to B2 successfully');
+      } catch (b2Error) {
+        console.error('❌ B2 upload failed, falling back to local storage:', b2Error);
+        // Fallback to local storage
+        const outPath = path.join(MEDIA_DIR, fileBase);
+        fs.writeFileSync(outPath, buffer);
+        const baseUrl = req.protocol + '://' + req.get('host');
+        audioUrl = `${baseUrl}/media/${fileBase}`;
+      }
+    } else {
+      console.log('⚠️  B2 not configured, using local storage');
+      const outPath = path.join(MEDIA_DIR, fileBase);
+      fs.writeFileSync(outPath, buffer);
+      const baseUrl = req.protocol + '://' + req.get('host');
+      audioUrl = `${baseUrl}/media/${fileBase}`;
+    }
     
     // Cache the TTS result for 24 hours
     await cache.set(cacheKey, { audioUrl }, 86400);
@@ -3069,13 +3133,14 @@ async function loadTrendingTopics() {
   }
   
   // If trending topics are still empty after trying all sources, trigger an update
-  if (trendingTopicsCache.length === 0) {
-    console.log('[TRENDING] No trending topics found, triggering automatic update...');
-    // Trigger update asynchronously (don't await to avoid blocking startup)
-    updateTrendingTopics().catch(error => {
-      console.error('[TRENDING] Failed to auto-update trending topics:', error);
-    });
-  }
+  // COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+  // if (trendingTopicsCache.length === 0) {
+  //   console.log('[TRENDING] No trending topics found, triggering automatic update...');
+  //   // Trigger update asynchronously (don't await to avoid blocking startup)
+  //   updateTrendingTopics().catch(error => {
+  //     console.error('[TRENDING] Failed to auto-update trending topics:', error);
+  //   });
+  // }
 }
 
 // Save trending topics to MongoDB (with file backup)
@@ -3131,26 +3196,29 @@ mongoose.connection.on('connected', () => {
   console.log('[TRENDING] MongoDB connected, loading trending topics...');
   loadTrendingTopics().then(() => {
     // After loading, check if we still have empty trending topics and trigger update if needed
-    if (trendingTopicsCache.length === 0) {
-      console.log('[TRENDING] Trending topics still empty after MongoDB connection, triggering update...');
-      updateTrendingTopics().catch(error => {
-        console.error('[TRENDING] Failed to auto-update trending topics after MongoDB connection:', error);
-      });
-    }
+    // COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+    // if (trendingTopicsCache.length === 0) {
+    //   console.log('[TRENDING] Trending topics still empty after MongoDB connection, triggering update...');
+    //   updateTrendingTopics().catch(error => {
+    //     console.error('[TRENDING] Failed to auto-update trending topics after MongoDB connection:', error);
+    //   });
+    // }
   }).catch(error => {
     console.error('[TRENDING] Failed to load trending topics after MongoDB connection:', error);
     // Even if load failed, try to update if cache is empty
-    if (trendingTopicsCache.length === 0) {
-      console.log('[TRENDING] Triggering update after failed load...');
-      updateTrendingTopics().catch(updateError => {
-        console.error('[TRENDING] Failed to auto-update trending topics:', updateError);
-      });
-    }
+    // COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+    // if (trendingTopicsCache.length === 0) {
+    //   console.log('[TRENDING] Triggering update after failed load...');
+    //   updateTrendingTopics().catch(updateError => {
+    //     console.error('[TRENDING] Failed to auto-update trending topics:', updateError);
+    //   });
+    // }
   });
 });
 
 // Extract trending topics using ChatGPT analysis of news articles
-async function extractTrendingTopicsWithChatGPT(articles, initialTopics = []) {
+// COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+/*async function extractTrendingTopicsWithChatGPT(articles, initialTopics = []) {
   try {
     if (!OPENAI_API_KEY) {
       console.log('[TRENDING] OpenAI API key not configured, skipping ChatGPT analysis');
@@ -3264,7 +3332,9 @@ ${articlesText}${initialTopicsText}`;
     // Clean up topics: remove leading numbers, periods, and other formatting
     topics = topics.map(topic => {
       // Remove leading numbers and punctuation (e.g., "1. Topic" -> "Topic")
-      return topic.replace(/^\d+[\.\)]\s*/, '').trim();
+      // Match: one or more digits followed by either a period or closing parenthesis, then optional whitespace
+      const regex = new RegExp('^\\d+[.)]\\s*');
+      return topic.replace(regex, '').trim();
     }).filter(topic => topic.length > 0);
     
     // Filter out fragmented topics and person names
@@ -3489,9 +3559,10 @@ ${articlesText}${initialTopicsText}`;
     console.error('[TRENDING] Error in ChatGPT analysis:', error);
     return [];
   }
-}
+}*/
 
-async function updateTrendingTopics() {
+// COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+/*async function updateTrendingTopics() {
   try {
     console.log('[TRENDING] Updating trending topics...');
     
@@ -3585,10 +3656,11 @@ async function updateTrendingTopics() {
     console.error('[TRENDING] Error updating trending topics:', error);
     await updateTrendingTopicsFallback();
   }
-}
+}*/
 
 // Fallback method using the old approach
-async function updateTrendingTopicsFallback() {
+// COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+/*async function updateTrendingTopicsFallback() {
   try {
     const categories = ['general', 'business', 'technology', 'sports', 'entertainment', 'health', 'science'];
     const randomCategory = categories[Math.floor(Math.random() * categories.length)];
@@ -3618,11 +3690,12 @@ async function updateTrendingTopicsFallback() {
   } catch (error) {
     console.error('[TRENDING] Fallback method failed:', error);
   }
-}
+}*/
 
 // --- Daily Trending Topics Update Scheduler ---
+// COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
 // Update trending topics every morning at 5 AM PST
-let trendingTopicsUpdateTimeout = null;
+/*let trendingTopicsUpdateTimeout = null;
 let trendingTopicsUpdateRunning = false;
 
 // Function to update trending topics (wrapper to prevent concurrent runs)
@@ -3727,11 +3800,13 @@ function scheduleTrendingTopicsUpdate() {
       scheduleTrendingTopicsUpdate();
     });
   }, msUntilNextUpdate);
-}
+}*/
 
 // Start the daily trending topics update scheduler
-console.log(`[TRENDING] Daily trending topics update scheduler ENABLED - will update every morning at 5:00 AM PST`);
-scheduleTrendingTopicsUpdate();
+// COMMENTED OUT: Auto-generated trending topics disabled - only manual topics allowed
+// console.log(`[TRENDING] Daily trending topics update scheduler ENABLED - will update every morning at 5:00 AM PST`);
+// scheduleTrendingTopicsUpdate();
+console.log(`[TRENDING] Daily trending topics update scheduler DISABLED - only manual topics allowed`);
 
 // --- Deployment Protection ---
 const DEPLOYMENT_MODE = process.env.DEPLOYMENT_MODE || 'development';
