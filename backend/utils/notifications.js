@@ -157,6 +157,15 @@ async function sendPushNotification(deviceToken, title, body, data = {}) {
         result = await fallbackProvider.send(notification, deviceToken);
         
         if (result.failed && result.failed.length > 0) {
+          // Check for BadDeviceToken in fallback attempt
+          const badTokenError = result.failed.find(f => 
+            f.response && f.response.reason === 'BadDeviceToken'
+          );
+          if (badTokenError) {
+            console.error(`[NOTIFICATIONS] ❌ Invalid device token detected (${fallbackEnv}), token should be unregistered`);
+            // Return a special value to indicate token should be cleared
+            return 'BAD_TOKEN';
+          }
           console.error(`[NOTIFICATIONS] ❌ Failed to send notification (${fallbackEnv}):`, JSON.stringify(result.failed, null, 2));
           return false;
         }
@@ -166,6 +175,15 @@ async function sendPushNotification(deviceToken, title, body, data = {}) {
           return true;
         }
       } else {
+        // Check for BadDeviceToken in primary attempt
+        const badTokenError = result.failed.find(f => 
+          f.response && f.response.reason === 'BadDeviceToken'
+        );
+        if (badTokenError) {
+          console.error(`[NOTIFICATIONS] ❌ Invalid device token detected (${primaryEnv}), token should be unregistered`);
+          // Return a special value to indicate token should be cleared
+          return 'BAD_TOKEN';
+        }
         // Other error, log and return
         console.error(`[NOTIFICATIONS] ❌ Failed to send notification (${primaryEnv}):`, JSON.stringify(result.failed, null, 2));
         return false;

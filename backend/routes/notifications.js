@@ -203,7 +203,23 @@ router.post('/fetch-ready', authenticateToken, async (req, res) => {
     const { sendFetchReadyNotification } = require('../utils/notifications');
     const success = await sendFetchReadyNotification(deviceToken, fetchTitle);
     
-    if (success) {
+    if (success === 'BAD_TOKEN') {
+      // Invalid token - clear it from user record
+      console.log(`[NOTIFICATIONS] Clearing invalid device token for user ${user.email}`);
+      if (mongoose.connection.readyState === 1) {
+        const freshUser = await User.findById(user._id || user.id);
+        if (freshUser) {
+          freshUser.deviceToken = null;
+          await freshUser.save();
+        }
+      } else {
+        if (user.preferences) {
+          user.preferences.deviceToken = null;
+          await fallbackAuth.updatePreferences(user, user.preferences);
+        }
+      }
+      return res.json({ success: false, message: 'Invalid device token - token cleared. Please re-register your device.' });
+    } else if (success) {
       console.log(`[NOTIFICATIONS] ✅ Sent Fetch-ready notification to user ${user.email}`);
       return res.json({ success: true, message: 'Notification sent' });
     } else {

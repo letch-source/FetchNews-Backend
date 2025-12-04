@@ -707,8 +707,28 @@ async function executeScheduledSummary(user, summary) {
         
         if (deviceToken) {
           console.log(`[SCHEDULER]   - Sending notification for "${title}"...`);
-          await sendScheduledSummaryNotification(deviceToken, title, summaryData.id);
-          console.log(`[SCHEDULER] ✅ Successfully sent push notification for scheduled summary "${title}" to user ${user.email}`);
+          const notificationResult = await sendScheduledSummaryNotification(deviceToken, title, summaryData.id);
+          
+          if (notificationResult === 'BAD_TOKEN') {
+            // Invalid token - clear it from user record
+            console.log(`[SCHEDULER] ⚠️  Invalid device token detected, clearing token for user ${user.email}`);
+            if (mongoose.connection.readyState === 1) {
+              const freshUser = await User.findById(user._id || user.id);
+              if (freshUser) {
+                freshUser.deviceToken = null;
+                await freshUser.save();
+              }
+            } else {
+              if (user.preferences) {
+                user.preferences.deviceToken = null;
+                await fallbackAuth.updatePreferences(user, user.preferences);
+              }
+            }
+          } else if (notificationResult) {
+            console.log(`[SCHEDULER] ✅ Successfully sent push notification for scheduled summary "${title}" to user ${user.email}`);
+          } else {
+            console.log(`[SCHEDULER] ⚠️  Failed to send notification for user ${user.email}`);
+          }
         } else {
           console.log(`[SCHEDULER] ⚠️  No device token found for user ${user.email}, skipping push notification`);
         }
