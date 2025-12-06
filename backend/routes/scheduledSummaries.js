@@ -522,8 +522,14 @@ async function executeScheduledSummary(user, summary) {
       }
     }
     
-    // Convert to selectedSources for API (empty means use all, then filter)
+    // For US users, use only allowed sources via Mediastack API filtering
+    // For other countries, fetch from all sources and filter afterwards
     let selectedSources = [];
+    if (userCountry && userCountry.toLowerCase() === 'us') {
+      const { getUSMediastackSources } = require('../index');
+      selectedSources = getUSMediastackSources();
+      console.log(`[SCHEDULER US SOURCES] Using ${selectedSources.length} allowed US sources via Mediastack API`);
+    }
     
     const items = [];
     const summariesWithTopics = [];
@@ -560,7 +566,29 @@ async function executeScheduledSummary(user, summary) {
         console.log(`[SCHEDULER] Topic: ${topic}, Country: ${geoData.countryCode || geoData.country || 'none'}, GeoData:`, JSON.stringify(geoData));
         
         // Fetch articles for the topic
-        const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
+        let { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
+        
+        // Filter out excluded sources (if any)
+        if (excludedSources && excludedSources.length > 0) {
+          const { normalizeSourceName } = require('../index');
+          const excludedSet = new Set(excludedSources.map(s => s.toLowerCase()));
+          articles = articles.filter(article => {
+            const articleSource = normalizeSourceName(article.source);
+            return !excludedSet.has(articleSource);
+          });
+          console.log(`[SCHEDULER] Filtered out excluded sources, ${articles.length} articles remaining`);
+        }
+        
+        // For US users: post-filter as fallback (API-level filtering should handle most cases)
+        if (userCountry && userCountry.toLowerCase() === 'us' && selectedSources.length === 0) {
+          // Only post-filter if we didn't use API-level filtering (shouldn't happen, but safety check)
+          const { isSourceAllowedForUS } = require('../index');
+          const beforeCount = articles.length;
+          articles = articles.filter(article => {
+            return isSourceAllowedForUS(article.source);
+          });
+          console.log(`[SCHEDULER US FILTER FALLBACK] Post-filtered to allowed US sources: ${beforeCount} -> ${articles.length} articles`);
+        }
         
         // Filter relevant articles
         let relevant = filterRelevantArticles(topic, geoData, articles, perTopic);
