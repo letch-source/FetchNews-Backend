@@ -1409,7 +1409,10 @@ Requirements:
 - Target ${wordCount} words exactly
 - For short summaries (≤200 words), be very concise and stick to the word limit
 - End at a complete sentence, but prioritize staying within the word count
-- Do not use phrases like "welcome back to our podcast" or refer to it as a podcast`;
+- Do not use phrases like "welcome back to our podcast" or refer to it as a podcast
+- Format the summary with proper paragraph breaks: use double newlines (\\n\\n) to separate distinct paragraphs
+- Each paragraph should cover a related topic or story, typically 2-4 sentences long
+- Break paragraphs when transitioning between different stories or topics`;
 
     console.log(`Sending ${articles.length} articles to ChatGPT for summarization`);
 
@@ -1418,7 +1421,7 @@ Requirements:
       messages: [
         {
           role: "system",
-          content: "You are a professional news presenter. Create engaging, conversational news summaries with a warm, informative tone. Do not refer to the summary as a podcast."
+          content: "You are a professional news presenter. Create engaging, conversational news summaries with a warm, informative tone. Format your summaries with proper paragraph breaks using double newlines (\\n\\n) to separate distinct topics or stories. Each paragraph should be 2-4 sentences covering a related topic. Do not refer to the summary as a podcast."
         },
         {
           role: "user",
