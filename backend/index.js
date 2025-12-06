@@ -1465,7 +1465,7 @@ function combineTopicSummaries(summariesWithTopics) {
     return summariesWithTopics[0].summary.trim();
   }
   
-  // Combine summaries with transitions
+  // Combine summaries with transitions, each topic in its own paragraph
   const parts = [];
   summariesWithTopics.forEach((item, index) => {
     if (item.summary && item.summary.trim()) {
@@ -1478,7 +1478,8 @@ function combineTopicSummaries(summariesWithTopics) {
     }
   });
   
-  return parts.join(" ");
+  // Join with double newlines to create paragraph breaks between topics
+  return parts.join("\n\n");
 }
 
 // Helper function to add intro and outro to final summary
