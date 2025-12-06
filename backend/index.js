@@ -744,13 +744,15 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [],
   // If we got a 422 error with sources, retry without sources and post-filter
   if (got422Error && selectedSources && selectedSources.length > 0) {
     console.log(`[SEARCH] Falling back to fetching without sources parameter, will post-filter`);
+    // Fetch 10x more articles to account for filtering (since most will be filtered out)
+    const fetchLimit = Math.min(pageSize * 10, 100); // Cap at 100 (Mediastack limit)
     const fallbackStrategies = [
-      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${pageSize * 3}&date=${from}${countryParam}`,
-      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize * 3}&date=${from}${countryParam}`,
-      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize * 3}${countryParam}`,
+      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${fetchLimit}&date=${from}${countryParam}`,
+      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${fetchLimit}&date=${from}${countryParam}`,
+      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${fetchLimit}${countryParam}`,
       countryCode 
-        ? `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize * 3}${countryParam}`
-        : `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize * 3}`
+        ? `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${fetchLimit}${countryParam}`
+        : `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${fetchLimit}`
     ];
     
     for (const url of fallbackStrategies) {
@@ -768,9 +770,13 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [],
             }).slice(0, pageSize); // Limit to requested size
             
             // Log what sources we found vs what we're looking for (for debugging)
-            if (articles.length === 0 && beforeFilter > 0) {
-              const foundSources = [...new Set(data.data.map(a => a.source).filter(Boolean))].slice(0, 10);
-              console.log(`[SEARCH FALLBACK] Found ${beforeFilter} articles but none matched allowed sources. Sample sources found: ${foundSources.join(', ')}`);
+            if (articles.length < pageSize && beforeFilter > 0) {
+              const foundSources = [...new Set(data.data.map(a => a.source).filter(Boolean))];
+              const matchedSources = [...new Set(articles.map(a => a.source).filter(Boolean))];
+              console.log(`[SEARCH FALLBACK] Found ${beforeFilter} articles, ${articles.length} matched. Found sources: ${foundSources.slice(0, 15).join(', ')}`);
+              if (matchedSources.length > 0) {
+                console.log(`[SEARCH FALLBACK] Matched sources: ${matchedSources.join(', ')}`);
+              }
             }
             
             if (articles.length > 0) {
@@ -946,7 +952,7 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
     if (category) fallbackParams.set("categories", category);
     if (countryCode) fallbackParams.set("countries", String(countryCode).toLowerCase());
     if (extraQuery) fallbackParams.set("keywords", extraQuery);
-    fallbackParams.set("limit", String(pageSize * 3)); // Get more to account for filtering
+    fallbackParams.set("limit", String(Math.min(pageSize * 10, 100))); // Get 10x more to account for filtering (cap at 100)
     fallbackParams.set("languages", "en");
     
     const fallbackUrl = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&${fallbackParams.toString()}`;
@@ -1119,7 +1125,7 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
     // Handle 422 errors (invalid sources parameter) by retrying without sources
     if (!resp.ok && resp.status === 422 && selectedSources && selectedSources.length > 0) {
       console.log(`[GENERAL] Got 422 error with sources parameter, retrying without sources and post-filtering`);
-      url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize * 3}${countryParam}`;
+      url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${Math.min(pageSize * 10, 100)}${countryParam}`;
       resp = await fetch(url);
       
       if (!resp.ok) {
