@@ -761,15 +761,20 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [],
         if (resp.ok) {
           const data = await resp.json();
           if (data.data && data.data.length > 0) {
-            // Post-filter to only include allowed sources
-            const allowedSourcesSet = new Set(selectedSources.map(s => s.toLowerCase()));
+            // Post-filter to only include allowed sources using normalized matching
+            const beforeFilter = data.data.length;
             articles = data.data.filter(article => {
-              const articleSource = (article.source || '').toLowerCase();
-              return allowedSourcesSet.has(articleSource);
+              return isSourceAllowedForUS(article.source);
             }).slice(0, pageSize); // Limit to requested size
             
+            // Log what sources we found vs what we're looking for (for debugging)
+            if (articles.length === 0 && beforeFilter > 0) {
+              const foundSources = [...new Set(data.data.map(a => a.source).filter(Boolean))].slice(0, 10);
+              console.log(`[SEARCH FALLBACK] Found ${beforeFilter} articles but none matched allowed sources. Sample sources found: ${foundSources.join(', ')}`);
+            }
+            
             if (articles.length > 0) {
-              console.log(`[SEARCH FALLBACK] Post-filtered to ${articles.length} articles from allowed sources`);
+              console.log(`[SEARCH FALLBACK] Post-filtered ${beforeFilter} articles to ${articles.length} from allowed sources`);
               break;
             }
           }
@@ -781,6 +786,10 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [],
   }
   
   if (articles.length === 0) {
+    // If we were trying to filter by sources and got no results, provide more helpful error
+    if (got422Error && selectedSources && selectedSources.length > 0) {
+      throw new Error(`No articles found from allowed US sources. ${lastError || 'Try different topics or check back later.'}`);
+    }
     throw new Error(lastError || 'No articles found with any search strategy');
   }
   
@@ -953,17 +962,22 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
     const fallbackData = await resp.json();
     console.log(`[DEBUG] Fallback returned ${fallbackData.data?.length || 0} articles`);
     
-    // Post-filter to only include allowed sources
-    const allowedSourcesSet = new Set(selectedSources.map(s => s.toLowerCase()));
+    // Post-filter to only include allowed sources using normalized matching
+    const beforeFilter = fallbackData.data?.length || 0;
     data = {
       ...fallbackData,
       data: (fallbackData.data || []).filter(article => {
-        const articleSource = (article.source || '').toLowerCase();
-        return allowedSourcesSet.has(articleSource);
+        return isSourceAllowedForUS(article.source);
       }).slice(0, pageSize)
     };
     
-    console.log(`[DEBUG] Post-filtered to ${data.data.length} articles from allowed sources`);
+    // Log what sources we found vs what we're looking for (for debugging)
+    if (data.data.length === 0 && beforeFilter > 0) {
+      const foundSources = [...new Set((fallbackData.data || []).map(a => a.source).filter(Boolean))].slice(0, 10);
+      console.log(`[DEBUG] Found ${beforeFilter} articles but none matched allowed sources. Sample sources found: ${foundSources.join(', ')}`);
+    }
+    
+    console.log(`[DEBUG] Post-filtered ${beforeFilter} articles to ${data.data.length} from allowed sources`);
   } else if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     console.log(`[DEBUG] Mediastack error response: ${resp.status} ${text}`);
@@ -1113,16 +1127,22 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
       }
       
       const fallbackData = await resp.json();
-      // Post-filter to only include allowed sources
-      const allowedSourcesSet = new Set(selectedSources.map(s => s.toLowerCase()));
+      // Post-filter to only include allowed sources using normalized matching
+      const beforeFilter = fallbackData.data?.length || 0;
       data = {
         ...fallbackData,
         data: (fallbackData.data || []).filter(article => {
-          const articleSource = (article.source || '').toLowerCase();
-          return allowedSourcesSet.has(articleSource);
+          return isSourceAllowedForUS(article.source);
         }).slice(0, pageSize)
       };
-      console.log(`[GENERAL] Post-filtered to ${data.data.length} articles from allowed sources`);
+      
+      // Log what sources we found vs what we're looking for (for debugging)
+      if (data.data.length === 0 && beforeFilter > 0) {
+        const foundSources = [...new Set((fallbackData.data || []).map(a => a.source).filter(Boolean))].slice(0, 10);
+        console.log(`[GENERAL] Found ${beforeFilter} articles but none matched allowed sources. Sample sources found: ${foundSources.join(', ')}`);
+      }
+      
+      console.log(`[GENERAL] Post-filtered ${beforeFilter} articles to ${data.data.length} from allowed sources`);
     } else if (!resp.ok) {
       throw new Error(`Mediastack error: ${resp.status}`);
     } else {
