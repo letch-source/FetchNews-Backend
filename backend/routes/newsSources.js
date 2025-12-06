@@ -27,13 +27,26 @@ async function fetchAllUSSources() {
   try {
     while (hasMore) {
       try {
-        const sourcesUrl = `https://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&countries=us&limit=${limit}&offset=${offset}`;
+        // Build URL - try without offset on first request to see if that's the issue
+        let sourcesUrl;
+        if (offset === 0) {
+          sourcesUrl = `https://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&countries=us&limit=${limit}`;
+        } else {
+          sourcesUrl = `https://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&countries=us&limit=${limit}&offset=${offset}`;
+        }
+        
+        console.log(`[NEWS SOURCES] Fetching sources (offset: ${offset}, limit: ${limit})...`);
+        console.log(`[NEWS SOURCES] URL: ${sourcesUrl.replace(MEDIASTACK_KEY, '***')}`);
         const response = await fetch(sourcesUrl);
         
         if (response.ok) {
-          const data = await response.json();
-          const sourcesArray = data?.sources || data?.data || [];
-          const pagination = data?.pagination;
+          const responseData = await response.json();
+          
+          // Mediastack returns sources in 'data' field, not 'sources'
+          const sourcesArray = responseData?.data || responseData?.sources || [];
+          const pagination = responseData?.pagination;
+          
+          console.log(`[NEWS SOURCES] Response: ${sourcesArray.length} sources, pagination:`, pagination);
           
           if (Array.isArray(sourcesArray) && sourcesArray.length > 0) {
             const mappedSources = sourcesArray.map(source => ({
@@ -48,15 +61,23 @@ async function fetchAllUSSources() {
             
             allSources = allSources.concat(mappedSources);
             
-            // Check if there are more pages
+            // Check if there are more pages using pagination info
             if (pagination) {
               const total = pagination.total || 0;
+              const count = pagination.count || sourcesArray.length;
+              const currentOffset = pagination.offset || offset;
+              
+              console.log(`[NEWS SOURCES] Pagination: total=${total}, count=${count}, offset=${currentOffset}, allSources=${allSources.length}`);
+              
+              // If we've fetched all sources or got fewer than the limit, we're done
               if (allSources.length >= total || sourcesArray.length < limit) {
                 hasMore = false;
               } else {
-                offset = (pagination.offset || offset) + (pagination.count || sourcesArray.length);
+                // Calculate next offset
+                offset = currentOffset + count;
               }
             } else {
+              // No pagination info, stop if we got fewer than limit
               if (sourcesArray.length < limit) {
                 hasMore = false;
               } else {
@@ -70,15 +91,24 @@ async function fetchAllUSSources() {
               hasMore = false;
             }
           } else {
+            console.log(`[NEWS SOURCES] No sources in response, stopping`);
             hasMore = false;
           }
         } else {
           const errorText = await response.text().catch(() => '');
-          console.log(`[NEWS SOURCES] ❌ API returned ${response.status}: ${errorText.substring(0, 200)}`);
+          console.log(`[NEWS SOURCES] ❌ API returned ${response.status}: ${errorText}`);
+          // Try to parse error JSON for more details
+          try {
+            const errorJson = JSON.parse(errorText);
+            console.log(`[NEWS SOURCES] Error details:`, JSON.stringify(errorJson, null, 2));
+          } catch (e) {
+            // Not JSON, that's fine
+          }
           hasMore = false;
         }
       } catch (err) {
         console.warn(`[NEWS SOURCES] ⚠️  Error fetching page at offset ${offset}:`, err.message);
+        console.warn(`[NEWS SOURCES] Error stack:`, err.stack);
         hasMore = false;
       }
       
