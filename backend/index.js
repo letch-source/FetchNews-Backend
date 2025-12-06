@@ -704,6 +704,7 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [],
   
   let articles = [];
   let lastError = null;
+  let got422Error = false;
   
   for (const url of searchStrategies) {
     try {
@@ -724,11 +725,58 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [],
           break;
         }
       } else {
-        lastError = `Mediastack error: ${resp.status}`;
+        // Check if we got a 422 error (validation error) - likely invalid sources
+        if (resp.status === 422 && selectedSources && selectedSources.length > 0) {
+          got422Error = true;
+          console.log(`[SEARCH] Got 422 error with sources parameter, will fallback to post-filtering`);
+          lastError = `Mediastack error: ${resp.status} (invalid sources parameter)`;
+          break; // Exit loop to try fallback
+        } else {
+          lastError = `Mediastack error: ${resp.status}`;
+        }
       }
     } catch (error) {
       lastError = error.message;
       console.log(`[SEARCH] Strategy failed: ${error.message}`);
+    }
+  }
+  
+  // If we got a 422 error with sources, retry without sources and post-filter
+  if (got422Error && selectedSources && selectedSources.length > 0) {
+    console.log(`[SEARCH] Falling back to fetching without sources parameter, will post-filter`);
+    const fallbackStrategies = [
+      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${pageSize * 3}&date=${from}${countryParam}`,
+      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize * 3}&date=${from}${countryParam}`,
+      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize * 3}${countryParam}`,
+      countryCode 
+        ? `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize * 3}${countryParam}`
+        : `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize * 3}`
+    ];
+    
+    for (const url of fallbackStrategies) {
+      try {
+        console.log(`[SEARCH FALLBACK] Trying strategy: ${url}`);
+        const resp = await fetch(url);
+        
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.data && data.data.length > 0) {
+            // Post-filter to only include allowed sources
+            const allowedSourcesSet = new Set(selectedSources.map(s => s.toLowerCase()));
+            articles = data.data.filter(article => {
+              const articleSource = (article.source || '').toLowerCase();
+              return allowedSourcesSet.has(articleSource);
+            }).slice(0, pageSize); // Limit to requested size
+            
+            if (articles.length > 0) {
+              console.log(`[SEARCH FALLBACK] Post-filtered to ${articles.length} articles from allowed sources`);
+              break;
+            }
+          }
+        }
+      } catch (error) {
+        console.log(`[SEARCH FALLBACK] Strategy failed: ${error.message}`);
+      }
     }
   }
   
@@ -878,15 +926,53 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
   params.set("languages", "en");
   const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&${params.toString()}`;
   console.log(`[DEBUG] Final Mediastack URL: ${url}`);
-  const resp = await fetch(url);
-  if (!resp.ok) {
+  let resp = await fetch(url);
+  let data;
+  
+  // Handle 422 errors (invalid sources parameter) by retrying without sources
+  if (!resp.ok && resp.status === 422 && selectedSources && selectedSources.length > 0) {
+    console.log(`[DEBUG] Got 422 error with sources parameter, retrying without sources and post-filtering`);
+    // Retry without sources parameter
+    const fallbackParams = new URLSearchParams();
+    if (category) fallbackParams.set("categories", category);
+    if (countryCode) fallbackParams.set("countries", String(countryCode).toLowerCase());
+    if (extraQuery) fallbackParams.set("keywords", extraQuery);
+    fallbackParams.set("limit", String(pageSize * 3)); // Get more to account for filtering
+    fallbackParams.set("languages", "en");
+    
+    const fallbackUrl = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&${fallbackParams.toString()}`;
+    console.log(`[DEBUG] Fallback URL: ${fallbackUrl}`);
+    resp = await fetch(fallbackUrl);
+    
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      console.log(`[DEBUG] Fallback also failed: ${resp.status} ${text}`);
+      throw new Error(`Mediastack error: ${resp.status} ${text}`);
+    }
+    
+    const fallbackData = await resp.json();
+    console.log(`[DEBUG] Fallback returned ${fallbackData.data?.length || 0} articles`);
+    
+    // Post-filter to only include allowed sources
+    const allowedSourcesSet = new Set(selectedSources.map(s => s.toLowerCase()));
+    data = {
+      ...fallbackData,
+      data: (fallbackData.data || []).filter(article => {
+        const articleSource = (article.source || '').toLowerCase();
+        return allowedSourcesSet.has(articleSource);
+      }).slice(0, pageSize)
+    };
+    
+    console.log(`[DEBUG] Post-filtered to ${data.data.length} articles from allowed sources`);
+  } else if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     console.log(`[DEBUG] Mediastack error response: ${resp.status} ${text}`);
     throw new Error(`Mediastack error: ${resp.status} ${text}`);
+  } else {
+    data = await resp.json();
+    console.log(`[DEBUG] Mediastack category response:`, JSON.stringify(data, null, 2));
+    console.log(`Mediastack returned ${data.data?.length || 0} articles`);
   }
-  const data = await resp.json();
-  console.log(`[DEBUG] Mediastack category response:`, JSON.stringify(data, null, 2));
-  console.log(`Mediastack returned ${data.data?.length || 0} articles`);
   
   // Debug: Check how many articles have images
   if (data.data && data.data.length > 0) {
@@ -1012,14 +1098,36 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
     const sourcesParam = selectedSources && selectedSources.length > 0 
       ? `&sources=${encodeURIComponent(selectedSources.join(','))}` 
       : '';
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}${countryParam}${sourcesParam}`;
-    const resp = await fetch(url);
+    let url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}${countryParam}${sourcesParam}`;
+    let resp = await fetch(url);
+    let data;
     
-    if (!resp.ok) {
+    // Handle 422 errors (invalid sources parameter) by retrying without sources
+    if (!resp.ok && resp.status === 422 && selectedSources && selectedSources.length > 0) {
+      console.log(`[GENERAL] Got 422 error with sources parameter, retrying without sources and post-filtering`);
+      url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize * 3}${countryParam}`;
+      resp = await fetch(url);
+      
+      if (!resp.ok) {
+        throw new Error(`Mediastack error: ${resp.status}`);
+      }
+      
+      const fallbackData = await resp.json();
+      // Post-filter to only include allowed sources
+      const allowedSourcesSet = new Set(selectedSources.map(s => s.toLowerCase()));
+      data = {
+        ...fallbackData,
+        data: (fallbackData.data || []).filter(article => {
+          const articleSource = (article.source || '').toLowerCase();
+          return allowedSourcesSet.has(articleSource);
+        }).slice(0, pageSize)
+      };
+      console.log(`[GENERAL] Post-filtered to ${data.data.length} articles from allowed sources`);
+    } else if (!resp.ok) {
       throw new Error(`Mediastack error: ${resp.status}`);
+    } else {
+      data = await resp.json();
     }
-    
-    const data = await resp.json();
     
     // Map Mediastack response to expected format
     articles = (data.data || []).map(article => ({
