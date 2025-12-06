@@ -1599,6 +1599,9 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     if (!userCountry) {
       userCountry = 'us';
     }
+    
+    // Debug: Log country being used
+    console.log(`🌍 [SUMMARIZE] Country from request: ${country || 'none'}, Final userCountry: ${userCountry}`);
 
     // Check for global excluded news sources first (admin override)
     let excludedSources = [];
@@ -1708,7 +1711,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         }
         
         // Debug: Log country information
-        console.log(`[COUNTRY FILTER] Topic: ${topic}, Country: ${geoData.countryCode || geoData.country || 'none'}, GeoData:`, JSON.stringify(geoData));
+        console.log(`🌍 [COUNTRY FILTER] Topic: ${topic}, Country: ${geoData.countryCode || geoData.country || 'none'}, GeoData:`, JSON.stringify(geoData));
+        console.log(`🌍 [COUNTRY FILTER] userCountry: ${userCountry}, geoData.countryCode: ${geoData.countryCode}, geoData.country: ${geoData.country}`);
         
         const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
 
