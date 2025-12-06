@@ -1,4 +1,4 @@
-﻿// app.js (backend server)
+// app.js (backend server)
 
 require("dotenv").config();
 const express = require("express");
@@ -21,6 +21,7 @@ const summaryHistoryRoutes = require("./routes/summaryHistory");
 const adminRoutes = require("./routes/adminActions");
 const preferencesRoutes = require("./routes/preferences");
 const newsSourcesRoutes = require("./routes/newsSources");
+const { fetchAllUSSources } = require("./routes/newsSources");
 const trendingAdminRoutes = require("./routes/trendingAdmin");
 const notificationsRoutes = require("./routes/notifications");
 const { sendEngagementReminder, sendFetchReadyNotification } = require("./utils/notifications");
@@ -1707,6 +1708,9 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     if (!userCountry) {
       userCountry = 'us';
     }
+    
+    // Debug: Log country being used
+    console.log(`🌍 [SUMMARIZE] Country from request: ${country || 'none'}, Final userCountry: ${userCountry}`);
 
     // Check for global excluded news sources first (admin override)
     let excludedSources = [];
@@ -1819,7 +1823,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         }
         
         // Debug: Log country information
-        console.log(`[COUNTRY FILTER] Topic: ${topic}, Country: ${geoData.countryCode || geoData.country || 'none'}, GeoData:`, JSON.stringify(geoData));
+        console.log(`🌍 [COUNTRY FILTER] Topic: ${topic}, Country: ${geoData.countryCode || geoData.country || 'none'}, GeoData:`, JSON.stringify(geoData));
+        console.log(`🌍 [COUNTRY FILTER] userCountry: ${userCountry}, geoData.countryCode: ${geoData.countryCode}, geoData.country: ${geoData.country}`);
         
         const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
 
@@ -4087,8 +4092,13 @@ if (IS_PRODUCTION) {
 }
 
 function startServer() {
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, '0.0.0.0', async () => {
     console.log(`Backend server running on port ${PORT}`);
+    
+    // Fetch and print all US sources on startup
+    setTimeout(async () => {
+      await fetchAllUSSources();
+    }, 2000); // Wait 2 seconds for server to fully start
     const now = new Date();
     if (SCHEDULER_ENABLED) {
       const firstCheckIn = new Date(now.getTime() + (10 * 60 * 1000));

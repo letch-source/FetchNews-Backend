@@ -8,31 +8,231 @@ let sourcesCache = null;
 let sourcesCacheTimestamp = null;
 const SOURCES_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
+// Function to fetch all US sources from Mediastack
+async function fetchAllUSSources() {
+  const MEDIASTACK_KEY = process.env.MEDIASTACK_KEY;
+  
+  if (!MEDIASTACK_KEY) {
+    console.log('[NEWS SOURCES] ⚠️  Mediastack API key not configured, skipping source fetch');
+    console.log('[NEWS SOURCES] Using fallback sources list instead');
+    printSources(fallbackSources.filter(s => s.country === 'us'));
+    return [];
+  }
+  
+  console.log('[NEWS SOURCES] 🔍 Fetching all US sources from Mediastack...');
+  console.log(`[NEWS SOURCES] API Key present: ${MEDIASTACK_KEY ? 'Yes' : 'No'} (length: ${MEDIASTACK_KEY?.length || 0})`);
+  
+  // Try the /v1/sources endpoint first
+  let allSources = [];
+  let sourcesEndpointWorked = false;
+  
+  try {
+    // Try with minimal parameters first - match exact documentation format
+    // Use URLSearchParams to ensure proper encoding
+    const params = new URLSearchParams({
+      access_key: MEDIASTACK_KEY,
+      countries: 'us'
+    });
+    const testUrl = `https://api.mediastack.com/v1/sources?${params.toString()}`;
+    console.log(`[NEWS SOURCES] Testing sources endpoint: ${testUrl.replace(MEDIASTACK_KEY, '***')}`);
+    
+    const testResponse = await fetch(testUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      }
+    });
+    
+    if (testResponse.ok) {
+      const testData = await testResponse.json();
+      const sourcesArray = testData?.data || testData?.sources || [];
+      
+      if (Array.isArray(sourcesArray) && sourcesArray.length > 0) {
+        console.log(`[NEWS SOURCES] ✅ Sources endpoint works! Found ${sourcesArray.length} sources`);
+        sourcesEndpointWorked = true;
+        
+        // Now fetch all pages
+        let offset = 0;
+        const limit = 100;
+        let hasMore = true;
+        
+        while (hasMore) {
+          try {
+            // Use URLSearchParams for proper encoding
+            const pageParams = new URLSearchParams({
+              access_key: MEDIASTACK_KEY,
+              countries: 'us',
+              limit: limit.toString(),
+              offset: offset.toString()
+            });
+            const sourcesUrl = `https://api.mediastack.com/v1/sources?${pageParams.toString()}`;
+            const response = await fetch(sourcesUrl, {
+              method: 'GET',
+              headers: {
+                'Accept': 'application/json'
+              }
+            });
+            
+            if (response.ok) {
+              const responseData = await response.json();
+              const pageSources = responseData?.data || responseData?.sources || [];
+              const pagination = responseData?.pagination;
+              
+              if (Array.isArray(pageSources) && pageSources.length > 0) {
+                const mappedSources = pageSources.map(source => ({
+                  id: source.id || source.name?.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''),
+                  name: source.name || source.id,
+                  description: source.description || `${source.name || source.id} - ${source.category || 'general'} news source`,
+                  category: source.category || 'general',
+                  country: source.country || 'us',
+                  language: source.language || 'en',
+                  url: source.url || ''
+                }));
+                
+                allSources = allSources.concat(mappedSources);
+                
+                if (pagination) {
+                  const total = pagination.total || 0;
+                  const count = pagination.count || pageSources.length;
+                  const currentOffset = pagination.offset || offset;
+                  
+                  if (allSources.length >= total || pageSources.length < limit) {
+                    hasMore = false;
+                  } else {
+                    offset = currentOffset + count;
+                  }
+                } else {
+                  if (pageSources.length < limit) {
+                    hasMore = false;
+                  } else {
+                    offset += limit;
+                  }
+                }
+                
+                if (allSources.length >= 2000) {
+                  console.log(`[NEWS SOURCES] ⚠️  Reached safety limit of 2000 sources`);
+                  hasMore = false;
+                }
+              } else {
+                hasMore = false;
+              }
+            } else {
+              const errorText = await response.text().catch(() => '');
+              console.log(`[NEWS SOURCES] ⚠️  Pagination request failed: ${response.status}: ${errorText.substring(0, 200)}`);
+              hasMore = false;
+            }
+          } catch (err) {
+            console.warn(`[NEWS SOURCES] ⚠️  Error fetching page:`, err.message);
+            hasMore = false;
+          }
+          
+          if (hasMore) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+        }
+      }
+    } else {
+      const errorText = await testResponse.text().catch(() => '');
+      console.log(`[NEWS SOURCES] ⚠️  Sources endpoint returned ${testResponse.status}: ${errorText.substring(0, 300)}`);
+      console.log(`[NEWS SOURCES] ℹ️  The /v1/sources endpoint may not be available on your Mediastack plan`);
+      console.log(`[NEWS SOURCES] ℹ️  This endpoint may require a paid plan or different API access`);
+    }
+  } catch (error) {
+    console.error('[NEWS SOURCES] ❌ Error testing sources endpoint:', error.message);
+  }
+  
+  // If sources endpoint didn't work, use fallback sources
+  if (!sourcesEndpointWorked || allSources.length === 0) {
+    console.log(`[NEWS SOURCES] ⚠️  Could not fetch from API, using fallback sources list`);
+    allSources = fallbackSources.filter(s => s.country === 'us');
+  }
+  
+  // Cache the results
+  if (allSources.length > 0) {
+    sourcesCache = allSources;
+    sourcesCacheTimestamp = Date.now();
+  }
+  
+  // Print sources
+  printSources(allSources);
+  
+  return allSources;
+}
+
+// Helper function to print sources
+function printSources(sources) {
+  console.log(`[NEWS SOURCES] ✅ Displaying ${sources.length} US sources`);
+  console.log('\n📰 All US News Sources:');
+  console.log('='.repeat(80));
+  
+  if (sources.length === 0) {
+    console.log('\n   No sources available\n');
+    console.log('='.repeat(80));
+    return;
+  }
+  
+  // Group by category for better readability
+  const sourcesByCategory = {};
+  sources.forEach(source => {
+    const category = source.category || 'general';
+    if (!sourcesByCategory[category]) {
+      sourcesByCategory[category] = [];
+    }
+    sourcesByCategory[category].push(source);
+  });
+  
+  // Print sources grouped by category
+  Object.keys(sourcesByCategory).sort().forEach(category => {
+    const categorySources = sourcesByCategory[category];
+    console.log(`\n📂 ${category.toUpperCase()} (${categorySources.length} sources):`);
+    categorySources.forEach((source, index) => {
+      console.log(`   ${index + 1}. ${source.name} (${source.id})${source.url ? ` - ${source.url}` : ''}`);
+    });
+  });
+  
+  console.log('\n' + '='.repeat(80));
+  console.log(`📊 Total: ${sources.length} US sources available\n`);
+}
+
+// Export function for use on startup
+module.exports.fetchAllUSSources = fetchAllUSSources;
+
 // Fallback sources list (used if API fails)
 const fallbackSources = [
-  { id: 'cnn', name: 'CNN', category: 'general', country: 'us', language: 'en', url: 'https://cnn.com' },
-  { id: 'bbc-news', name: 'BBC News', category: 'general', country: 'gb', language: 'en', url: 'https://bbc.com' },
-  { id: 'reuters', name: 'Reuters', category: 'general', country: 'us', language: 'en', url: 'https://reuters.com' },
-  { id: 'associated-press', name: 'Associated Press', category: 'general', country: 'us', language: 'en', url: 'https://ap.org' },
-  { id: 'bloomberg', name: 'Bloomberg', category: 'business', country: 'us', language: 'en', url: 'https://bloomberg.com' },
-  { id: 'the-washington-post', name: 'The Washington Post', category: 'general', country: 'us', language: 'en', url: 'https://washingtonpost.com' },
-  { id: 'the-new-york-times', name: 'The New York Times', category: 'general', country: 'us', language: 'en', url: 'https://nytimes.com' },
-  { id: 'usa-today', name: 'USA Today', category: 'general', country: 'us', language: 'en', url: 'https://usatoday.com' },
-  { id: 'npr', name: 'NPR', category: 'general', country: 'us', language: 'en', url: 'https://npr.org' }
+  { id: 'cnn', name: 'CNN', description: 'CNN - Breaking news and top stories', category: 'general', country: 'us', language: 'en', url: 'https://cnn.com' },
+  { id: 'bbc-news', name: 'BBC News', description: 'BBC News - Trusted news from the British Broadcasting Corporation', category: 'general', country: 'gb', language: 'en', url: 'https://bbc.com' },
+  { id: 'reuters', name: 'Reuters', description: 'Reuters - International news and analysis', category: 'general', country: 'us', language: 'en', url: 'https://reuters.com' },
+  { id: 'associated-press', name: 'Associated Press', description: 'Associated Press - Independent news organization', category: 'general', country: 'us', language: 'en', url: 'https://ap.org' },
+  { id: 'bloomberg', name: 'Bloomberg', description: 'Bloomberg - Business and financial news', category: 'business', country: 'us', language: 'en', url: 'https://bloomberg.com' },
+  { id: 'the-washington-post', name: 'The Washington Post', description: 'The Washington Post - National and international news', category: 'general', country: 'us', language: 'en', url: 'https://washingtonpost.com' },
+  { id: 'the-new-york-times', name: 'The New York Times', description: 'The New York Times - All the news that\'s fit to print', category: 'general', country: 'us', language: 'en', url: 'https://nytimes.com' },
+  { id: 'usa-today', name: 'USA Today', description: 'USA Today - National news and information', category: 'general', country: 'us', language: 'en', url: 'https://usatoday.com' },
+  { id: 'npr', name: 'NPR', description: 'NPR - National Public Radio news and stories', category: 'general', country: 'us', language: 'en', url: 'https://npr.org' }
 ];
 
 // Get available news sources
 router.get('/', authenticateToken, async (req, res) => {
   try {
+    // Get user's country preference
+    const User = require('../models/User');
+    const userId = req.user._id || req.user.id;
+    const userDoc = await User.findById(userId);
+    const userCountry = (userDoc?.selectedCountry || 'us').toLowerCase();
+    
     // Check cache first
     const now = Date.now();
     if (sourcesCache && sourcesCacheTimestamp && (now - sourcesCacheTimestamp) < SOURCES_CACHE_TTL) {
-      console.log(`[NEWS SOURCES] Returning ${sourcesCache.length} cached sources`);
+      console.log(`[NEWS SOURCES] Returning ${sourcesCache.length} cached sources, filtering by country: ${userCountry}`);
+      // Filter cached sources by user's country
+      const filteredSources = sourcesCache.filter(source => 
+        source.country && source.country.toLowerCase() === userCountry.toLowerCase()
+      );
       return res.json({
-        newsSources: sourcesCache,
+        newsSources: filteredSources,
         source: 'cached',
-        total: sourcesCache.length,
-        cached: true
+        total: filteredSources.length,
+        cached: true,
+        filteredByCountry: userCountry
       });
     }
     
@@ -45,22 +245,19 @@ router.get('/', authenticateToken, async (req, res) => {
       });
     }
     
-    // Try to fetch sources from Mediastack API
-    // Note: Mediastack may not have a dedicated /sources endpoint
-    // We'll try the endpoint, and if it fails, build sources list from news API responses
+    // Fetch all US sources from Mediastack sources endpoint
     try {
-      // First, try the sources endpoint (if it exists)
-      // Try with different query parameters to get all sources
-      const sourcesUrls = [
-        `https://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}`,
-        `https://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&limit=10000`,
-        `https://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&languages=en`
-      ];
+      console.log(`[NEWS SOURCES] Fetching all US sources from Mediastack sources endpoint...`);
       
-      console.log('[NEWS SOURCES] Attempting to fetch sources from Mediastack sources endpoint...');
+      let allSources = [];
+      let offset = 0;
+      const limit = 100; // Mediastack default limit per page
+      let hasMore = true;
       
-      for (const sourcesUrl of sourcesUrls) {
+      // Fetch all pages of US sources
+      while (hasMore) {
         try {
+          const sourcesUrl = `https://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&countries=${userCountry}&limit=${limit}&offset=${offset}`;
           const response = await fetch(sourcesUrl);
           
           if (response.ok) {
@@ -68,46 +265,91 @@ router.get('/', authenticateToken, async (req, res) => {
             
             // Check if we got valid data (could be in 'sources' or 'data' field)
             const sourcesArray = data?.sources || data?.data || [];
+            const pagination = data?.pagination;
             
             if (Array.isArray(sourcesArray) && sourcesArray.length > 0) {
               // Map Mediastack response to our expected format
               const mappedSources = sourcesArray.map(source => ({
                 id: source.id || source.name?.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''),
                 name: source.name || source.id,
+                description: source.description || `${source.name || source.id} - ${source.category || 'general'} news source`,
                 category: source.category || 'general',
-                country: source.country || 'us',
+                country: source.country || userCountry,
                 language: source.language || 'en',
                 url: source.url || ''
               }));
               
-              console.log(`[NEWS SOURCES] Successfully fetched ${mappedSources.length} sources from Mediastack sources endpoint`);
+              allSources = allSources.concat(mappedSources);
               
-              // If we got a good number of sources (more than 100), use it and cache it
-              if (mappedSources.length > 100) {
-                // Cache the results
-                sourcesCache = mappedSources;
-                sourcesCacheTimestamp = Date.now();
+              console.log(`[NEWS SOURCES] Fetched ${mappedSources.length} sources (total so far: ${allSources.length})`);
+              
+              // Check if there are more pages
+              if (pagination) {
+                const total = pagination.total || 0;
+                const count = pagination.count || 0;
+                const currentOffset = pagination.offset || offset;
                 
-                return res.json({ 
-                  newsSources: mappedSources,
-                  source: 'mediastack',
-                  total: mappedSources.length
-                });
+                // If we've fetched all sources or got fewer than the limit, we're done
+                if (allSources.length >= total || sourcesArray.length < limit) {
+                  hasMore = false;
+                } else {
+                  offset = currentOffset + count;
+                }
               } else {
-                console.log(`[NEWS SOURCES] Only got ${mappedSources.length} sources from endpoint, trying next URL or discovery method...`);
+                // No pagination info, stop if we got fewer than limit
+                if (sourcesArray.length < limit) {
+                  hasMore = false;
+                } else {
+                  offset += limit;
+                }
               }
+              
+              // Safety limit: don't fetch more than 2000 sources
+              if (allSources.length >= 2000) {
+                console.log(`[NEWS SOURCES] Reached safety limit of 2000 sources, stopping pagination`);
+                hasMore = false;
+              }
+            } else {
+              // No more sources
+              hasMore = false;
             }
           } else {
-            // Only log non-validation errors (validation errors are expected - sources endpoint may not work)
-            if (response.status !== 422) {
-              const errorText = await response.text().catch(() => '');
-              console.log(`[NEWS SOURCES] Sources endpoint returned ${response.status}: ${errorText.substring(0, 200)}`);
-            }
-            // 422 validation errors are expected - Mediastack sources endpoint may require different parameters
+            // API error, try to get error message
+            const errorText = await response.text().catch(() => '');
+            console.log(`[NEWS SOURCES] Sources endpoint returned ${response.status}: ${errorText.substring(0, 200)}`);
+            hasMore = false;
           }
         } catch (err) {
-          console.warn(`[NEWS SOURCES] Error fetching from sources endpoint:`, err.message);
+          console.warn(`[NEWS SOURCES] Error fetching sources page at offset ${offset}:`, err.message);
+          hasMore = false;
         }
+        
+        // Small delay between requests to avoid rate limiting
+        if (hasMore) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+      
+      if (allSources.length > 0) {
+        console.log(`[NEWS SOURCES] Successfully fetched ${allSources.length} US sources from Mediastack sources endpoint`);
+        
+        // Cache the results (cache all sources, filter per user)
+        sourcesCache = allSources;
+        sourcesCacheTimestamp = Date.now();
+        
+        // Filter by user's country (should already be filtered, but double-check)
+        const filteredSources = allSources.filter(source => 
+          source.country && source.country.toLowerCase() === userCountry.toLowerCase()
+        );
+        
+        return res.json({ 
+          newsSources: filteredSources,
+          source: 'mediastack',
+          total: filteredSources.length,
+          filteredByCountry: userCountry
+        });
+      } else {
+        console.log(`[NEWS SOURCES] No sources found from sources endpoint, trying discovery method...`);
       }
       
       // If sources endpoint doesn't work, try building comprehensive list from news API
@@ -150,14 +392,15 @@ router.get('/', authenticateToken, async (req, res) => {
                   if (article.source) {
                     const sourceId = article.source.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
                     if (!sourcesSet.has(sourceId)) {
-                      sourcesSet.set(sourceId, {
-                        id: sourceId,
-                        name: article.source,
-                        category: category,
-                        country: country,
-                        language: 'en',
-                        url: article.url ? new URL(article.url).origin : ''
-                      });
+                    sourcesSet.set(sourceId, {
+                      id: sourceId,
+                      name: article.source,
+                      description: `${article.source} - ${category} news source`,
+                      category: category,
+                      country: country,
+                      language: 'en',
+                      url: article.url ? new URL(article.url).origin : ''
+                    });
                     } else {
                       // Update existing source with additional category/country info if needed
                       const existing = sourcesSet.get(sourceId);
@@ -188,14 +431,20 @@ router.get('/', authenticateToken, async (req, res) => {
         const discoveredSources = Array.from(sourcesSet.values());
         console.log(`[NEWS SOURCES] Discovered ${discoveredSources.length} sources from news API`);
         
-        // Cache the results
+        // Cache the results (cache all sources, filter per user)
         sourcesCache = discoveredSources;
         sourcesCacheTimestamp = Date.now();
         
+        // Filter by user's country
+        const filteredSources = discoveredSources.filter(source => 
+          source.country && source.country.toLowerCase() === userCountry.toLowerCase()
+        );
+        
         return res.json({ 
-          newsSources: discoveredSources,
+          newsSources: filteredSources,
           source: 'mediastack-discovered',
-          total: discoveredSources.length
+          total: filteredSources.length,
+          filteredByCountry: userCountry
         });
       } else {
         throw new Error('Could not discover sources from news API');
@@ -208,22 +457,49 @@ router.get('/', authenticateToken, async (req, res) => {
         console.log(`[NEWS SOURCES] ${index + 1}. ${source.name} (${source.id}) - ${source.category} - ${source.country}`);
       });
       
+      // Filter fallback sources by user's country
+      const filteredFallbackSources = fallbackSources.filter(source => 
+        source.country && source.country.toLowerCase() === userCountry.toLowerCase()
+      );
+      
       return res.json({ 
-        newsSources: fallbackSources,
+        newsSources: filteredFallbackSources,
         source: 'fallback',
-        total: fallbackSources.length,
-        warning: 'Using fallback sources due to API error'
+        total: filteredFallbackSources.length,
+        warning: 'Using fallback sources due to API error',
+        filteredByCountry: userCountry
       });
     }
   } catch (error) {
     console.error('[NEWS SOURCES] Get news sources error:', error);
-    // Even if everything fails, return fallback sources
-    return res.json({ 
-      newsSources: fallbackSources,
-      source: 'fallback',
-      total: fallbackSources.length,
-      error: 'Failed to get news sources from API'
-    });
+    // Even if everything fails, return fallback sources filtered by country
+    try {
+      const User = require('../models/User');
+      const userId = req.user?._id || req.user?.id;
+      let userCountry = 'us';
+      if (userId) {
+        const userDoc = await User.findById(userId);
+        userCountry = (userDoc?.selectedCountry || 'us').toLowerCase();
+      }
+      const filteredFallbackSources = fallbackSources.filter(source => 
+        source.country && source.country.toLowerCase() === userCountry
+      );
+      return res.json({ 
+        newsSources: filteredFallbackSources,
+        source: 'fallback',
+        total: filteredFallbackSources.length,
+        error: 'Failed to get news sources from API',
+        filteredByCountry: userCountry
+      });
+    } catch (fallbackError) {
+      // If we can't get user country, return all fallback sources
+      return res.json({ 
+        newsSources: fallbackSources,
+        source: 'fallback',
+        total: fallbackSources.length,
+        error: 'Failed to get news sources from API'
+      });
+    }
   }
 });
 
@@ -261,3 +537,4 @@ router.put('/', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.fetchAllUSSources = fetchAllUSSources;
