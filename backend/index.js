@@ -24,6 +24,7 @@ const newsSourcesRoutes = require("./routes/newsSources");
 const { fetchAllUSSources } = require("./routes/newsSources");
 const trendingAdminRoutes = require("./routes/trendingAdmin");
 const notificationsRoutes = require("./routes/notifications");
+const articleFeedbackRoutes = require("./routes/articleFeedback");
 const { sendEngagementReminder, sendFetchReadyNotification } = require("./utils/notifications");
 const fallbackAuth = require("./utils/fallbackAuth");
 const { uploadAudioToB2, isB2Configured } = require("./utils/b2Storage");
@@ -117,6 +118,9 @@ app.use("/api/news-sources", newsSourcesRoutes);
 
 // Notifications routes
 app.use("/api/notifications", notificationsRoutes);
+
+// Article feedback routes
+app.use("/api/article-feedback", articleFeedbackRoutes);
 
 // Function to extract breaking news topics from headlines
 function extractBreakingNewsTopics(articles) {
@@ -810,6 +814,51 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
   
   // Removed source printing log
   return articles;
+}
+
+// Helper function to prioritize articles based on user feedback
+function prioritizeArticlesByFeedback(articles, user) {
+  if (!user || !articles || articles.length === 0) {
+    return articles;
+  }
+  
+  const likedUrls = new Set((user.likedArticles || []).map(a => a.url?.toLowerCase()).filter(Boolean));
+  const dislikedUrls = new Set((user.dislikedArticles || []).map(a => a.url?.toLowerCase()).filter(Boolean));
+  const likedSources = new Set((user.likedArticles || []).map(a => a.source?.toLowerCase()).filter(Boolean));
+  const dislikedSources = new Set((user.dislikedArticles || []).map(a => a.source?.toLowerCase()).filter(Boolean));
+  
+  // Separate articles into categories
+  const liked = [];
+  const neutral = [];
+  const disliked = [];
+  
+  articles.forEach(article => {
+    const articleUrl = (article.url || '').toLowerCase();
+    const articleSource = ((article.source && article.source.name) || article.source || '').toLowerCase();
+    
+    // Check if article URL matches a liked/disliked article
+    const isLiked = likedUrls.has(articleUrl);
+    const isDisliked = dislikedUrls.has(articleUrl);
+    
+    // Check if article source matches a liked/disliked source
+    const sourceLiked = likedSources.has(articleSource);
+    const sourceDisliked = dislikedSources.has(articleSource);
+    
+    if (isDisliked || sourceDisliked) {
+      disliked.push(article);
+    } else if (isLiked || sourceLiked) {
+      liked.push(article);
+    } else {
+      neutral.push(article);
+    }
+  });
+  
+  // Return prioritized list: liked articles first, then neutral, exclude disliked
+  // But keep some disliked articles at the end (10%) to avoid filter bubbles
+  const dislikedToKeep = Math.floor(disliked.length * 0.1);
+  const dislikedKept = disliked.slice(0, dislikedToKeep);
+  
+  return [...liked, ...neutral, ...dislikedKept];
 }
 
 async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = []) {
@@ -1714,7 +1763,16 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         console.log(`🌍 [COUNTRY FILTER] Topic: ${topic}, Country: ${geoData.countryCode || geoData.country || 'none'}, GeoData:`, JSON.stringify(geoData));
         console.log(`🌍 [COUNTRY FILTER] userCountry: ${userCountry}, geoData.countryCode: ${geoData.countryCode}, geoData.country: ${geoData.country}`);
         
-        const { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
+        let { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
+        
+        // Prioritize articles based on user feedback (if authenticated)
+        if (req.user && mongoose.connection.readyState === 1) {
+          const user = await User.findById(req.user.id);
+          if (user) {
+            articles = prioritizeArticlesByFeedback(articles, user);
+            console.log(`[FEEDBACK] Prioritized articles for user ${user.email}: ${articles.length} articles`);
+          }
+        }
 
         // Optimized pool of unfiltered candidates for global backfill
         const topicCandidates = [];

@@ -125,6 +125,27 @@ const userSchema = new mongoose.Schema({
     type: [Object],
     default: []
   },
+  // Article feedback for personalization
+  likedArticles: [{
+    articleId: String,
+    url: String,
+    title: String,
+    source: String,
+    timestamp: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  dislikedArticles: [{
+    articleId: String,
+    url: String,
+    title: String,
+    source: String,
+    timestamp: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   preferences: {
     type: Object,
     default: () => ({ length: '200' }) // Initialize with default length
