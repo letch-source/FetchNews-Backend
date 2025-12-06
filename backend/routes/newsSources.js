@@ -27,10 +27,21 @@ async function fetchAllUSSources() {
   let sourcesEndpointWorked = false;
   
   try {
-    // Try with minimal parameters first - use HTTP for free plan compatibility
-    const testUrl = `http://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&countries=us`;
+    // Try with minimal parameters first - match exact documentation format
+    // Use URLSearchParams to ensure proper encoding
+    const params = new URLSearchParams({
+      access_key: MEDIASTACK_KEY,
+      countries: 'us'
+    });
+    const testUrl = `https://api.mediastack.com/v1/sources?${params.toString()}`;
     console.log(`[NEWS SOURCES] Testing sources endpoint: ${testUrl.replace(MEDIASTACK_KEY, '***')}`);
-    const testResponse = await fetch(testUrl);
+    
+    const testResponse = await fetch(testUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      }
+    });
     
     if (testResponse.ok) {
       const testData = await testResponse.json();
@@ -47,8 +58,20 @@ async function fetchAllUSSources() {
         
         while (hasMore) {
           try {
-            const sourcesUrl = `https://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&countries=us&limit=${limit}&offset=${offset}`;
-            const response = await fetch(sourcesUrl);
+            // Use URLSearchParams for proper encoding
+            const pageParams = new URLSearchParams({
+              access_key: MEDIASTACK_KEY,
+              countries: 'us',
+              limit: limit.toString(),
+              offset: offset.toString()
+            });
+            const sourcesUrl = `https://api.mediastack.com/v1/sources?${pageParams.toString()}`;
+            const response = await fetch(sourcesUrl, {
+              method: 'GET',
+              headers: {
+                'Accept': 'application/json'
+              }
+            });
             
             if (response.ok) {
               const responseData = await response.json();
