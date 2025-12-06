@@ -10,29 +10,40 @@ const SOURCES_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 // Fallback sources list (used if API fails)
 const fallbackSources = [
-  { id: 'cnn', name: 'CNN', category: 'general', country: 'us', language: 'en', url: 'https://cnn.com' },
-  { id: 'bbc-news', name: 'BBC News', category: 'general', country: 'gb', language: 'en', url: 'https://bbc.com' },
-  { id: 'reuters', name: 'Reuters', category: 'general', country: 'us', language: 'en', url: 'https://reuters.com' },
-  { id: 'associated-press', name: 'Associated Press', category: 'general', country: 'us', language: 'en', url: 'https://ap.org' },
-  { id: 'bloomberg', name: 'Bloomberg', category: 'business', country: 'us', language: 'en', url: 'https://bloomberg.com' },
-  { id: 'the-washington-post', name: 'The Washington Post', category: 'general', country: 'us', language: 'en', url: 'https://washingtonpost.com' },
-  { id: 'the-new-york-times', name: 'The New York Times', category: 'general', country: 'us', language: 'en', url: 'https://nytimes.com' },
-  { id: 'usa-today', name: 'USA Today', category: 'general', country: 'us', language: 'en', url: 'https://usatoday.com' },
-  { id: 'npr', name: 'NPR', category: 'general', country: 'us', language: 'en', url: 'https://npr.org' }
+  { id: 'cnn', name: 'CNN', description: 'CNN - Breaking news and top stories', category: 'general', country: 'us', language: 'en', url: 'https://cnn.com' },
+  { id: 'bbc-news', name: 'BBC News', description: 'BBC News - Trusted news from the British Broadcasting Corporation', category: 'general', country: 'gb', language: 'en', url: 'https://bbc.com' },
+  { id: 'reuters', name: 'Reuters', description: 'Reuters - International news and analysis', category: 'general', country: 'us', language: 'en', url: 'https://reuters.com' },
+  { id: 'associated-press', name: 'Associated Press', description: 'Associated Press - Independent news organization', category: 'general', country: 'us', language: 'en', url: 'https://ap.org' },
+  { id: 'bloomberg', name: 'Bloomberg', description: 'Bloomberg - Business and financial news', category: 'business', country: 'us', language: 'en', url: 'https://bloomberg.com' },
+  { id: 'the-washington-post', name: 'The Washington Post', description: 'The Washington Post - National and international news', category: 'general', country: 'us', language: 'en', url: 'https://washingtonpost.com' },
+  { id: 'the-new-york-times', name: 'The New York Times', description: 'The New York Times - All the news that\'s fit to print', category: 'general', country: 'us', language: 'en', url: 'https://nytimes.com' },
+  { id: 'usa-today', name: 'USA Today', description: 'USA Today - National news and information', category: 'general', country: 'us', language: 'en', url: 'https://usatoday.com' },
+  { id: 'npr', name: 'NPR', description: 'NPR - National Public Radio news and stories', category: 'general', country: 'us', language: 'en', url: 'https://npr.org' }
 ];
 
 // Get available news sources
 router.get('/', authenticateToken, async (req, res) => {
   try {
+    // Get user's country preference
+    const User = require('../models/User');
+    const userId = req.user._id || req.user.id;
+    const userDoc = await User.findById(userId);
+    const userCountry = (userDoc?.selectedCountry || 'us').toLowerCase();
+    
     // Check cache first
     const now = Date.now();
     if (sourcesCache && sourcesCacheTimestamp && (now - sourcesCacheTimestamp) < SOURCES_CACHE_TTL) {
-      console.log(`[NEWS SOURCES] Returning ${sourcesCache.length} cached sources`);
+      console.log(`[NEWS SOURCES] Returning ${sourcesCache.length} cached sources, filtering by country: ${userCountry}`);
+      // Filter cached sources by user's country
+      const filteredSources = sourcesCache.filter(source => 
+        source.country && source.country.toLowerCase() === userCountry.toLowerCase()
+      );
       return res.json({
-        newsSources: sourcesCache,
+        newsSources: filteredSources,
         source: 'cached',
-        total: sourcesCache.length,
-        cached: true
+        total: filteredSources.length,
+        cached: true,
+        filteredByCountry: userCountry
       });
     }
     
@@ -74,6 +85,7 @@ router.get('/', authenticateToken, async (req, res) => {
               const mappedSources = sourcesArray.map(source => ({
                 id: source.id || source.name?.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''),
                 name: source.name || source.id,
+                description: source.description || `${source.name || source.id} - ${source.category || 'general'} news source`,
                 category: source.category || 'general',
                 country: source.country || 'us',
                 language: source.language || 'en',
@@ -84,14 +96,20 @@ router.get('/', authenticateToken, async (req, res) => {
               
               // If we got a good number of sources (more than 100), use it and cache it
               if (mappedSources.length > 100) {
-                // Cache the results
+                // Cache the results (cache all sources, filter per user)
                 sourcesCache = mappedSources;
                 sourcesCacheTimestamp = Date.now();
                 
+                // Filter by user's country
+                const filteredSources = mappedSources.filter(source => 
+                  source.country && source.country.toLowerCase() === userCountry.toLowerCase()
+                );
+                
                 return res.json({ 
-                  newsSources: mappedSources,
+                  newsSources: filteredSources,
                   source: 'mediastack',
-                  total: mappedSources.length
+                  total: filteredSources.length,
+                  filteredByCountry: userCountry
                 });
               } else {
                 console.log(`[NEWS SOURCES] Only got ${mappedSources.length} sources from endpoint, trying next URL or discovery method...`);
@@ -150,14 +168,15 @@ router.get('/', authenticateToken, async (req, res) => {
                   if (article.source) {
                     const sourceId = article.source.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
                     if (!sourcesSet.has(sourceId)) {
-                      sourcesSet.set(sourceId, {
-                        id: sourceId,
-                        name: article.source,
-                        category: category,
-                        country: country,
-                        language: 'en',
-                        url: article.url ? new URL(article.url).origin : ''
-                      });
+                    sourcesSet.set(sourceId, {
+                      id: sourceId,
+                      name: article.source,
+                      description: `${article.source} - ${category} news source`,
+                      category: category,
+                      country: country,
+                      language: 'en',
+                      url: article.url ? new URL(article.url).origin : ''
+                    });
                     } else {
                       // Update existing source with additional category/country info if needed
                       const existing = sourcesSet.get(sourceId);
@@ -188,14 +207,20 @@ router.get('/', authenticateToken, async (req, res) => {
         const discoveredSources = Array.from(sourcesSet.values());
         console.log(`[NEWS SOURCES] Discovered ${discoveredSources.length} sources from news API`);
         
-        // Cache the results
+        // Cache the results (cache all sources, filter per user)
         sourcesCache = discoveredSources;
         sourcesCacheTimestamp = Date.now();
         
+        // Filter by user's country
+        const filteredSources = discoveredSources.filter(source => 
+          source.country && source.country.toLowerCase() === userCountry.toLowerCase()
+        );
+        
         return res.json({ 
-          newsSources: discoveredSources,
+          newsSources: filteredSources,
           source: 'mediastack-discovered',
-          total: discoveredSources.length
+          total: filteredSources.length,
+          filteredByCountry: userCountry
         });
       } else {
         throw new Error('Could not discover sources from news API');
@@ -208,22 +233,49 @@ router.get('/', authenticateToken, async (req, res) => {
         console.log(`[NEWS SOURCES] ${index + 1}. ${source.name} (${source.id}) - ${source.category} - ${source.country}`);
       });
       
+      // Filter fallback sources by user's country
+      const filteredFallbackSources = fallbackSources.filter(source => 
+        source.country && source.country.toLowerCase() === userCountry.toLowerCase()
+      );
+      
       return res.json({ 
-        newsSources: fallbackSources,
+        newsSources: filteredFallbackSources,
         source: 'fallback',
-        total: fallbackSources.length,
-        warning: 'Using fallback sources due to API error'
+        total: filteredFallbackSources.length,
+        warning: 'Using fallback sources due to API error',
+        filteredByCountry: userCountry
       });
     }
   } catch (error) {
     console.error('[NEWS SOURCES] Get news sources error:', error);
-    // Even if everything fails, return fallback sources
-    return res.json({ 
-      newsSources: fallbackSources,
-      source: 'fallback',
-      total: fallbackSources.length,
-      error: 'Failed to get news sources from API'
-    });
+    // Even if everything fails, return fallback sources filtered by country
+    try {
+      const User = require('../models/User');
+      const userId = req.user?._id || req.user?.id;
+      let userCountry = 'us';
+      if (userId) {
+        const userDoc = await User.findById(userId);
+        userCountry = (userDoc?.selectedCountry || 'us').toLowerCase();
+      }
+      const filteredFallbackSources = fallbackSources.filter(source => 
+        source.country && source.country.toLowerCase() === userCountry
+      );
+      return res.json({ 
+        newsSources: filteredFallbackSources,
+        source: 'fallback',
+        total: filteredFallbackSources.length,
+        error: 'Failed to get news sources from API',
+        filteredByCountry: userCountry
+      });
+    } catch (fallbackError) {
+      // If we can't get user country, return all fallback sources
+      return res.json({ 
+        newsSources: fallbackSources,
+        source: 'fallback',
+        total: fallbackSources.length,
+        error: 'Failed to get news sources from API'
+      });
+    }
   }
 });
 
