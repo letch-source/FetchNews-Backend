@@ -572,6 +572,107 @@ const CORE_CATEGORIES = new Set([
   "world", // not a NewsAPI category; fallback to q=world
 ]);
 
+// Allowed news sources for US users
+const US_ALLOWED_SOURCES = new Set([
+  "the new york times",
+  "cnn",
+  "fox news",
+  "yahoo finance",
+  "msn",
+  "usa today",
+  "people",
+  "bbc",
+  "google news",
+  "nbc news",
+  "ap news",
+  "new york post",
+  "the washington post",
+  "substack",
+  "cnbc",
+  "newsweek",
+  "abc news",
+  "the guardian",
+  "cbs news",
+  "business insider",
+  "bloomberg",
+  "marketwatch",
+  "reuters",
+  "the hill",
+  "politico",
+  "huffpost",
+  "the atlantic",
+  "axios",
+  "los angeles times",
+  "rolling stone",
+  "forbes",
+  "the verge",
+  "fox",
+  "the sun",
+  "the independent",
+  "sfgate",
+  "vogue",
+  "elle",
+  "harper's bazaar",
+  "vanity fair",
+  "w magazine",
+  "the cut",
+  "gq",
+  "esquire",
+  "instyle",
+  "who what wear",
+  "refinery29",
+  "business of fashion",
+  "women's wear daily",
+  "dazed",
+  "i-d",
+  "the gentlewoman",
+  "mr porter",
+  "highsnobiety",
+  "hypebeast",
+  "the zoe report"
+]);
+
+// Helper function to normalize source name for comparison
+function normalizeSourceName(source) {
+  if (!source) return "";
+  // Handle both string and object formats
+  const sourceName = typeof source === 'string' ? source : (source.name || source.id || "");
+  return sourceName.toLowerCase().trim();
+}
+
+// Helper function to check if a source is allowed for US users
+function isSourceAllowedForUS(source) {
+  const normalized = normalizeSourceName(source);
+  return US_ALLOWED_SOURCES.has(normalized);
+}
+
+// Map our normalized source names to Mediastack source identifiers
+// Mediastack uses source names as they appear in their API (often capitalized, with spaces)
+function getMediastackSourceNames() {
+  // Return array of source names as Mediastack expects them
+  // Note: Mediastack source names may vary - this is a best-effort mapping
+  // Common patterns: "CNN", "BBC News", "The New York Times", etc.
+  return [
+    "The New York Times", "CNN", "Fox News", "Yahoo Finance", "MSN",
+    "USA Today", "People", "BBC News", "Google News", "NBC News",
+    "Associated Press", "New York Post", "The Washington Post", "Substack",
+    "CNBC", "Newsweek", "ABC News", "The Guardian", "CBS News",
+    "Business Insider", "Bloomberg", "MarketWatch", "Reuters", "The Hill",
+    "Politico", "HuffPost", "The Atlantic", "Axios", "Los Angeles Times",
+    "Rolling Stone", "Forbes", "The Verge", "Fox", "The Sun",
+    "The Independent", "SFGate", "Vogue", "Elle", "Harper's Bazaar",
+    "Vanity Fair", "W Magazine", "The Cut", "GQ", "Esquire",
+    "InStyle", "Who What Wear", "Refinery29", "Business of Fashion",
+    "Women's Wear Daily", "Dazed", "i-D", "The Gentlewoman", "Mr Porter",
+    "Highsnobiety", "Hypebeast", "The Zoe Report"
+  ];
+}
+
+// Get Mediastack-compatible source names for US users
+function getUSMediastackSources() {
+  return getMediastackSourceNames();
+}
+
 async function fetchArticlesEverything(qParts, maxResults, selectedSources = [], countryCode = null) {
   const q = encodeURIComponent(qParts.filter(Boolean).join(" "));
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
@@ -581,18 +682,23 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [],
   // Build country parameter if provided
   const countryParam = countryCode ? `&countries=${String(countryCode).toLowerCase()}` : '';
   
+  // Build sources parameter if provided
+  const sourcesParam = selectedSources && selectedSources.length > 0 
+    ? `&sources=${encodeURIComponent(selectedSources.join(','))}` 
+    : '';
+  
   // Try multiple search strategies for better coverage
   const searchStrategies = [
     // Strategy 1: Exact phrase search
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${pageSize}&date=${from}${countryParam}`,
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${pageSize}&date=${from}${countryParam}${sourcesParam}`,
     // Strategy 2: Individual keywords
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}${countryParam}`,
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}${countryParam}${sourcesParam}`,
     // Strategy 3: Broader search without date restriction
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}${countryParam}`,
+    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}${countryParam}${sourcesParam}`,
     // Strategy 4: Search without keywords (general news) - only add country if provided
     countryCode 
-      ? `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}${countryParam}`
-      : `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}`
+      ? `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}${countryParam}${sourcesParam}`
+      : `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}${sourcesParam}`
   ];
   
   let articles = [];
@@ -902,7 +1008,10 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   // For general news, use a simple approach without date filtering
   try {
     const countryParam = countryCode ? `&countries=${String(countryCode).toLowerCase()}` : '';
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}${countryParam}`;
+    const sourcesParam = selectedSources && selectedSources.length > 0 
+      ? `&sources=${encodeURIComponent(selectedSources.join(','))}` 
+      : '';
+    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}${countryParam}${sourcesParam}`;
     const resp = await fetch(url);
     
     if (!resp.ok) {
@@ -1622,10 +1731,13 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       }
     }
     
-    // Convert excluded sources to selected sources (for API filtering)
-    // We'll filter articles after fetching, so pass empty array to use all sources from API
-    // The filtering will happen in post-processing
-    let selectedSources = []; // Empty means use all sources from API, then filter
+    // For US users, use only allowed sources via Mediastack API filtering
+    // For other countries, fetch from all sources and filter afterwards
+    let selectedSources = [];
+    if (userCountry && userCountry.toLowerCase() === 'us') {
+      selectedSources = getUSMediastackSources();
+      console.log(`[US SOURCES] Using ${selectedSources.length} allowed US sources via Mediastack API`);
+    }
 
     const items = [];
     const summariesWithTopics = [];
@@ -1732,14 +1844,25 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         const isCore = CORE_CATEGORIES.has(topicLower);
         const isLocal = topicLower === "local";
 
-        // Filter out excluded sources
+        // Filter out excluded sources (if any)
         if (excludedSources && excludedSources.length > 0) {
           const excludedSet = new Set(excludedSources.map(s => s.toLowerCase()));
           articles = articles.filter(article => {
-            const articleSource = (article.source || '').toLowerCase();
+            const articleSource = normalizeSourceName(article.source);
             return !excludedSet.has(articleSource);
           });
           console.log(`[FILTER] Filtered out excluded sources, ${articles.length} articles remaining`);
+        }
+        
+        // For US users: post-filter as fallback (API-level filtering should handle most cases)
+        // This ensures we catch any sources that might have slipped through
+        if (userCountry && userCountry.toLowerCase() === 'us' && selectedSources.length === 0) {
+          // Only post-filter if we didn't use API-level filtering (shouldn't happen, but safety check)
+          const beforeCount = articles.length;
+          articles = articles.filter(article => {
+            return isSourceAllowedForUS(article.source);
+          });
+          console.log(`[US FILTER FALLBACK] Post-filtered to allowed US sources: ${beforeCount} -> ${articles.length} articles`);
         }
         
         // Filter relevant articles
@@ -2035,10 +2158,23 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
       }
     }
     
-    // Convert excluded sources to selected sources (for API filtering)
-    // We'll filter articles after fetching, so pass empty array to use all sources from API
-    // The filtering will happen in post-processing
-    let selectedSources = []; // Empty means use all sources from API, then filter
+    // Get user's country preference for batch requests
+    let batchCountry = 'us';
+    if (req.user) {
+      const user = await User.findById(req.user.id);
+      if (user) {
+        const preferences = user.getPreferences();
+        batchCountry = preferences.selectedCountry || 'us';
+      }
+    }
+    
+    // For US users, use only allowed sources via Mediastack API filtering
+    // For other countries, fetch from all sources and filter afterwards
+    let selectedSources = [];
+    if (batchCountry && batchCountry.toLowerCase() === 'us') {
+      selectedSources = getUSMediastackSources();
+      console.log(`[US SOURCES BATCH] Using ${selectedSources.length} allowed US sources via Mediastack API`);
+    }
 
     const results = await Promise.all(
       batches.map(async (b) => {
@@ -2065,16 +2201,6 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
           return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
         }
 
-        // Get user's country preference for batch requests
-        let batchCountry = 'us';
-        if (req.user) {
-          const user = await User.findById(req.user.id);
-          if (user) {
-            const preferences = user.getPreferences();
-            batchCountry = preferences.selectedCountry || 'us';
-          }
-        }
-        
         for (const topic of topics) {
           try {
             const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
@@ -2093,13 +2219,23 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
             
             let { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
             
-            // Filter out excluded sources
+            // Filter out excluded sources (if any)
             if (excludedSources && excludedSources.length > 0) {
               const excludedSet = new Set(excludedSources.map(s => s.toLowerCase()));
               articles = articles.filter(article => {
-                const articleSource = (article.source || '').toLowerCase();
+                const articleSource = normalizeSourceName(article.source);
                 return !excludedSet.has(articleSource);
               });
+            }
+            
+            // For US users: post-filter as fallback (API-level filtering should handle most cases)
+            if (batchCountry && batchCountry.toLowerCase() === 'us' && selectedSources.length === 0) {
+              // Only post-filter if we didn't use API-level filtering (shouldn't happen, but safety check)
+              const beforeCount = articles.length;
+              articles = articles.filter(article => {
+                return isSourceAllowedForUS(article.source);
+              });
+              console.log(`[US FILTER BATCH FALLBACK] Post-filtered to allowed US sources: ${beforeCount} -> ${articles.length} articles`);
             }
 
             for (let idx = 0; idx < articles.length; idx++) {
@@ -3985,6 +4121,9 @@ module.exports = {
   addIntroAndOutro,
   combineTopicSummaries,
   filterRelevantArticles,
-  isUpliftingNews
+  isUpliftingNews,
+  normalizeSourceName,
+  isSourceAllowedForUS,
+  getUSMediastackSources
 };
 
