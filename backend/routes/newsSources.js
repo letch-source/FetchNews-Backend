@@ -14,144 +14,161 @@ async function fetchAllUSSources() {
   
   if (!MEDIASTACK_KEY) {
     console.log('[NEWS SOURCES] ⚠️  Mediastack API key not configured, skipping source fetch');
+    console.log('[NEWS SOURCES] Using fallback sources list instead');
+    printSources(fallbackSources.filter(s => s.country === 'us'));
     return [];
   }
   
   console.log('[NEWS SOURCES] 🔍 Fetching all US sources from Mediastack...');
+  console.log(`[NEWS SOURCES] API Key present: ${MEDIASTACK_KEY ? 'Yes' : 'No'} (length: ${MEDIASTACK_KEY?.length || 0})`);
   
+  // Try the /v1/sources endpoint first
   let allSources = [];
-  let offset = 0;
-  const limit = 100;
-  let hasMore = true;
+  let sourcesEndpointWorked = false;
   
   try {
-    while (hasMore) {
-      try {
-        // Build URL - try without offset on first request to see if that's the issue
-        let sourcesUrl;
-        if (offset === 0) {
-          sourcesUrl = `https://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&countries=us&limit=${limit}`;
-        } else {
-          sourcesUrl = `https://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&countries=us&limit=${limit}&offset=${offset}`;
-        }
+    // Try with minimal parameters first
+    const testUrl = `https://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&countries=us`;
+    console.log(`[NEWS SOURCES] Testing sources endpoint: ${testUrl.replace(MEDIASTACK_KEY, '***')}`);
+    const testResponse = await fetch(testUrl);
+    
+    if (testResponse.ok) {
+      const testData = await testResponse.json();
+      const sourcesArray = testData?.data || testData?.sources || [];
+      
+      if (Array.isArray(sourcesArray) && sourcesArray.length > 0) {
+        console.log(`[NEWS SOURCES] ✅ Sources endpoint works! Found ${sourcesArray.length} sources`);
+        sourcesEndpointWorked = true;
         
-        console.log(`[NEWS SOURCES] Fetching sources (offset: ${offset}, limit: ${limit})...`);
-        console.log(`[NEWS SOURCES] URL: ${sourcesUrl.replace(MEDIASTACK_KEY, '***')}`);
-        const response = await fetch(sourcesUrl);
+        // Now fetch all pages
+        let offset = 0;
+        const limit = 100;
+        let hasMore = true;
         
-        if (response.ok) {
-          const responseData = await response.json();
-          
-          // Mediastack returns sources in 'data' field, not 'sources'
-          const sourcesArray = responseData?.data || responseData?.sources || [];
-          const pagination = responseData?.pagination;
-          
-          console.log(`[NEWS SOURCES] Response: ${sourcesArray.length} sources, pagination:`, pagination);
-          
-          if (Array.isArray(sourcesArray) && sourcesArray.length > 0) {
-            const mappedSources = sourcesArray.map(source => ({
-              id: source.id || source.name?.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''),
-              name: source.name || source.id,
-              description: source.description || `${source.name || source.id} - ${source.category || 'general'} news source`,
-              category: source.category || 'general',
-              country: source.country || 'us',
-              language: source.language || 'en',
-              url: source.url || ''
-            }));
+        while (hasMore) {
+          try {
+            const sourcesUrl = `https://api.mediastack.com/v1/sources?access_key=${MEDIASTACK_KEY}&countries=us&limit=${limit}&offset=${offset}`;
+            const response = await fetch(sourcesUrl);
             
-            allSources = allSources.concat(mappedSources);
-            
-            // Check if there are more pages using pagination info
-            if (pagination) {
-              const total = pagination.total || 0;
-              const count = pagination.count || sourcesArray.length;
-              const currentOffset = pagination.offset || offset;
+            if (response.ok) {
+              const responseData = await response.json();
+              const pageSources = responseData?.data || responseData?.sources || [];
+              const pagination = responseData?.pagination;
               
-              console.log(`[NEWS SOURCES] Pagination: total=${total}, count=${count}, offset=${currentOffset}, allSources=${allSources.length}`);
-              
-              // If we've fetched all sources or got fewer than the limit, we're done
-              if (allSources.length >= total || sourcesArray.length < limit) {
-                hasMore = false;
+              if (Array.isArray(pageSources) && pageSources.length > 0) {
+                const mappedSources = pageSources.map(source => ({
+                  id: source.id || source.name?.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''),
+                  name: source.name || source.id,
+                  description: source.description || `${source.name || source.id} - ${source.category || 'general'} news source`,
+                  category: source.category || 'general',
+                  country: source.country || 'us',
+                  language: source.language || 'en',
+                  url: source.url || ''
+                }));
+                
+                allSources = allSources.concat(mappedSources);
+                
+                if (pagination) {
+                  const total = pagination.total || 0;
+                  const count = pagination.count || pageSources.length;
+                  const currentOffset = pagination.offset || offset;
+                  
+                  if (allSources.length >= total || pageSources.length < limit) {
+                    hasMore = false;
+                  } else {
+                    offset = currentOffset + count;
+                  }
+                } else {
+                  if (pageSources.length < limit) {
+                    hasMore = false;
+                  } else {
+                    offset += limit;
+                  }
+                }
+                
+                if (allSources.length >= 2000) {
+                  console.log(`[NEWS SOURCES] ⚠️  Reached safety limit of 2000 sources`);
+                  hasMore = false;
+                }
               } else {
-                // Calculate next offset
-                offset = currentOffset + count;
+                hasMore = false;
               }
             } else {
-              // No pagination info, stop if we got fewer than limit
-              if (sourcesArray.length < limit) {
-                hasMore = false;
-              } else {
-                offset += limit;
-              }
-            }
-            
-            // Safety limit
-            if (allSources.length >= 2000) {
-              console.log(`[NEWS SOURCES] ⚠️  Reached safety limit of 2000 sources`);
+              const errorText = await response.text().catch(() => '');
+              console.log(`[NEWS SOURCES] ⚠️  Pagination request failed: ${response.status}: ${errorText.substring(0, 200)}`);
               hasMore = false;
             }
-          } else {
-            console.log(`[NEWS SOURCES] No sources in response, stopping`);
+          } catch (err) {
+            console.warn(`[NEWS SOURCES] ⚠️  Error fetching page:`, err.message);
             hasMore = false;
           }
-        } else {
-          const errorText = await response.text().catch(() => '');
-          console.log(`[NEWS SOURCES] ❌ API returned ${response.status}: ${errorText}`);
-          // Try to parse error JSON for more details
-          try {
-            const errorJson = JSON.parse(errorText);
-            console.log(`[NEWS SOURCES] Error details:`, JSON.stringify(errorJson, null, 2));
-          } catch (e) {
-            // Not JSON, that's fine
+          
+          if (hasMore) {
+            await new Promise(resolve => setTimeout(resolve, 200));
           }
-          hasMore = false;
         }
-      } catch (err) {
-        console.warn(`[NEWS SOURCES] ⚠️  Error fetching page at offset ${offset}:`, err.message);
-        console.warn(`[NEWS SOURCES] Error stack:`, err.stack);
-        hasMore = false;
       }
-      
-      if (hasMore) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
+    } else {
+      const errorText = await testResponse.text().catch(() => '');
+      console.log(`[NEWS SOURCES] ⚠️  Sources endpoint returned ${testResponse.status}: ${errorText.substring(0, 300)}`);
+      console.log(`[NEWS SOURCES] ℹ️  The /v1/sources endpoint may not be available on your Mediastack plan`);
+      console.log(`[NEWS SOURCES] ℹ️  This endpoint may require a paid plan or different API access`);
     }
-    
-    // Cache the results
+  } catch (error) {
+    console.error('[NEWS SOURCES] ❌ Error testing sources endpoint:', error.message);
+  }
+  
+  // If sources endpoint didn't work, use fallback sources
+  if (!sourcesEndpointWorked || allSources.length === 0) {
+    console.log(`[NEWS SOURCES] ⚠️  Could not fetch from API, using fallback sources list`);
+    allSources = fallbackSources.filter(s => s.country === 'us');
+  }
+  
+  // Cache the results
+  if (allSources.length > 0) {
     sourcesCache = allSources;
     sourcesCacheTimestamp = Date.now();
-    
-    console.log(`[NEWS SOURCES] ✅ Successfully fetched ${allSources.length} US sources`);
-    console.log('\n📰 All US News Sources:');
-    console.log('='.repeat(80));
-    
-    // Group by category for better readability
-    const sourcesByCategory = {};
-    allSources.forEach(source => {
-      const category = source.category || 'general';
-      if (!sourcesByCategory[category]) {
-        sourcesByCategory[category] = [];
-      }
-      sourcesByCategory[category].push(source);
-    });
-    
-    // Print sources grouped by category
-    Object.keys(sourcesByCategory).sort().forEach(category => {
-      const sources = sourcesByCategory[category];
-      console.log(`\n📂 ${category.toUpperCase()} (${sources.length} sources):`);
-      sources.forEach((source, index) => {
-        console.log(`   ${index + 1}. ${source.name} (${source.id})${source.url ? ` - ${source.url}` : ''}`);
-      });
-    });
-    
-    console.log('\n' + '='.repeat(80));
-    console.log(`📊 Total: ${allSources.length} US sources available\n`);
-    
-    return allSources;
-  } catch (error) {
-    console.error('[NEWS SOURCES] ❌ Error fetching US sources:', error);
-    return [];
   }
+  
+  // Print sources
+  printSources(allSources);
+  
+  return allSources;
+}
+
+// Helper function to print sources
+function printSources(sources) {
+  console.log(`[NEWS SOURCES] ✅ Displaying ${sources.length} US sources`);
+  console.log('\n📰 All US News Sources:');
+  console.log('='.repeat(80));
+  
+  if (sources.length === 0) {
+    console.log('\n   No sources available\n');
+    console.log('='.repeat(80));
+    return;
+  }
+  
+  // Group by category for better readability
+  const sourcesByCategory = {};
+  sources.forEach(source => {
+    const category = source.category || 'general';
+    if (!sourcesByCategory[category]) {
+      sourcesByCategory[category] = [];
+    }
+    sourcesByCategory[category].push(source);
+  });
+  
+  // Print sources grouped by category
+  Object.keys(sourcesByCategory).sort().forEach(category => {
+    const categorySources = sourcesByCategory[category];
+    console.log(`\n📂 ${category.toUpperCase()} (${categorySources.length} sources):`);
+    categorySources.forEach((source, index) => {
+      console.log(`   ${index + 1}. ${source.name} (${source.id})${source.url ? ` - ${source.url}` : ''}`);
+    });
+  });
+  
+  console.log('\n' + '='.repeat(80));
+  console.log(`📊 Total: ${sources.length} US sources available\n`);
 }
 
 // Export function for use on startup
