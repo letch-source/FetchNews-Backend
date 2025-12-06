@@ -1,4 +1,4 @@
-﻿// app.js (backend server)
+// app.js (backend server)
 
 require("dotenv").config();
 const express = require("express");
@@ -21,6 +21,7 @@ const summaryHistoryRoutes = require("./routes/summaryHistory");
 const adminRoutes = require("./routes/adminActions");
 const preferencesRoutes = require("./routes/preferences");
 const newsSourcesRoutes = require("./routes/newsSources");
+const { fetchAllUSSources } = require("./routes/newsSources");
 const trendingAdminRoutes = require("./routes/trendingAdmin");
 const notificationsRoutes = require("./routes/notifications");
 const { sendEngagementReminder, sendFetchReadyNotification } = require("./utils/notifications");
@@ -3951,8 +3952,13 @@ if (IS_PRODUCTION) {
 }
 
 function startServer() {
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, '0.0.0.0', async () => {
     console.log(`Backend server running on port ${PORT}`);
+    
+    // Fetch and print all US sources on startup
+    setTimeout(async () => {
+      await fetchAllUSSources();
+    }, 2000); // Wait 2 seconds for server to fully start
     const now = new Date();
     if (SCHEDULER_ENABLED) {
       const firstCheckIn = new Date(now.getTime() + (10 * 60 * 1000));
