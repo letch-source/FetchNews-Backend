@@ -496,7 +496,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   throw new Error('JWT_SECRET environment variable is required');
 }
-const MEDIASTACK_KEY = process.env.MEDIASTACK_KEY || "";
+const NEWSAPI_KEY = process.env.NEWSAPI_KEY || "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 
 // --- In-memory data store fallback (replace with SQLite later) ---
@@ -663,33 +663,28 @@ function isSourceAllowedForUS(source) {
   return US_ALLOWED_SOURCES.has(normalized);
 }
 
-// Map our normalized source names to Mediastack source identifiers
-// Mediastack uses source names as they appear in their API (often capitalized, with spaces)
-function getMediastackSourceNames() {
-  // Return array of source names as Mediastack expects them
-  // Note: Mediastack source names may vary - this is a best-effort mapping
-  // Common patterns: "CNN", "BBC News", "The New York Times", etc.
+// Map our normalized source names to NewsAPI source identifiers
+// NewsAPI uses source IDs (lowercase, hyphenated)
+function getNewsAPISourceNames() {
+  // Return array of source IDs as NewsAPI expects them
+  // NewsAPI source IDs are lowercase and hyphenated (e.g., "cnn", "bbc-news", "the-new-york-times")
   return [
-    "The New York Times", "CNN", "Fox News", "Yahoo Finance", "MSN",
-    "USA Today", "People", "BBC News", "BBC", "Google News", "NBC News",
-    "Associated Press", "New York Post", "The Washington Post", "Substack",
-    "CNBC", "Newsweek", "ABC News", "The Guardian", "CBS News",
-    "Business Insider", "Bloomberg", "MarketWatch", "Reuters", "The Hill",
-    "Politico", "HuffPost", "The Atlantic", "Axios", "Los Angeles Times",
-    "Rolling Stone", "Forbes", "The Verge", "TechCrunch", "WIRED",
-    "Nature News", "Nature", "National Geographic", "Science", "Popular Science",
-    "Science.com", "New Scientist", "GameSpot", "IGN", "Fox", "The Sun",
-    "The Independent", "SFGate", "Vogue", "Elle", "Harper's Bazaar",
-    "Vanity Fair", "W Magazine", "The Cut", "GQ", "Esquire",
-    "InStyle", "Who What Wear", "Refinery29", "Business of Fashion",
-    "Women's Wear Daily", "Dazed", "i-D", "The Gentlewoman", "Mr Porter",
-    "Highsnobiety", "Hypebeast", "The Zoe Report"
+    "the-new-york-times", "cnn", "fox-news", "yahoo-finance", "msn",
+    "usa-today", "people", "bbc-news", "bbc", "google-news", "nbc-news",
+    "associated-press", "new-york-post", "the-washington-post", "substack",
+    "cnbc", "newsweek", "abc-news", "the-guardian", "cbs-news",
+    "business-insider", "bloomberg", "marketwatch", "reuters", "the-hill",
+    "politico", "huffpost", "the-atlantic", "axios", "los-angeles-times",
+    "rolling-stone", "forbes", "the-verge", "techcrunch", "wired",
+    "nature", "national-geographic", "popular-science", "new-scientist",
+    "gamespot", "ign", "the-independent", "sfgate", "vogue", "elle",
+    "vanity-fair", "gq", "esquire", "instyle"
   ];
 }
 
-// Get Mediastack-compatible source names for US users
-function getUSMediastackSources() {
-  return getMediastackSourceNames();
+// Get NewsAPI-compatible source names for US users
+function getUSNewsAPISources() {
+  return getNewsAPISourceNames();
 }
 
 async function fetchArticlesEverything(qParts, maxResults, selectedSources = [], countryCode = null) {
@@ -698,60 +693,52 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [],
   // Extend to 7 days for more variety (24 hours was too restrictive)
   const from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   
-  // Build country parameter if provided
-  const countryParam = countryCode ? `&countries=${String(countryCode).toLowerCase()}` : '';
+  if (!NEWSAPI_KEY) {
+    throw new Error("Missing NEWSAPI_KEY");
+  }
   
-  // Build sources parameter if provided
+  // Build sources parameter if provided (NewsAPI uses comma-separated source IDs)
   const sourcesParam = selectedSources && selectedSources.length > 0 
     ? `&sources=${encodeURIComponent(selectedSources.join(','))}` 
     : '';
   
   // Try multiple search strategies for better coverage
   const searchStrategies = [
-    // Strategy 1: Exact phrase search
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${pageSize}&date=${from}${countryParam}${sourcesParam}`,
-    // Strategy 2: Individual keywords
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}&date=${from}${countryParam}${sourcesParam}`,
-    // Strategy 3: Broader search without date restriction
-    `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${pageSize}${countryParam}${sourcesParam}`,
-    // Strategy 4: Search without keywords (general news) - only add country if provided
-    countryCode 
-      ? `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}${countryParam}${sourcesParam}`
-      : `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${pageSize}${sourcesParam}`
-  ];
+    // Strategy 1: Exact phrase search with sources
+    q && sourcesParam ? `https://newsapi.org/v2/everything?q="${q}"&language=en&sortBy=publishedAt&pageSize=${pageSize}&from=${from}${sourcesParam}` : null,
+    // Strategy 2: Individual keywords with sources
+    q && sourcesParam ? `https://newsapi.org/v2/everything?q=${q}&language=en&sortBy=publishedAt&pageSize=${pageSize}&from=${from}${sourcesParam}` : null,
+    // Strategy 3: Broader search without date restriction with sources
+    q && sourcesParam ? `https://newsapi.org/v2/everything?q=${q}&language=en&sortBy=publishedAt&pageSize=${pageSize}${sourcesParam}` : null,
+    // Strategy 4: Search without sources (if no sources provided)
+    q && !sourcesParam ? `https://newsapi.org/v2/everything?q=${q}&language=en&sortBy=publishedAt&pageSize=${pageSize}&from=${from}` : null,
+    q && !sourcesParam ? `https://newsapi.org/v2/everything?q=${q}&language=en&sortBy=publishedAt&pageSize=${pageSize}` : null,
+  ].filter(Boolean);
   
   let articles = [];
   let lastError = null;
-  let got422Error = false;
   
   for (const url of searchStrategies) {
     try {
       console.log(`[SEARCH] Trying strategy: ${url}`);
-      const resp = await fetch(url);
+      const resp = await fetch(url, { 
+        headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
+      });
       
       if (resp.ok) {
         const data = await resp.json();
-        if (data.data && data.data.length > 0) {
-          articles = data.data;
+        if (data.articles && data.articles.length > 0) {
+          articles = data.articles;
           console.log(`[SEARCH] Found ${articles.length} articles with current strategy`);
           // Debug: Check how many articles have images
-          const articlesWithImages = articles.filter(a => a.image).length;
+          const articlesWithImages = articles.filter(a => a.urlToImage).length;
           console.log(`[SEARCH] Articles with images: ${articlesWithImages} out of ${articles.length}`);
-          if (articles.length > 0 && !articles[0].image) {
-            console.log(`[SEARCH] Sample article keys:`, Object.keys(articles[0]));
-          }
           break;
         }
       } else {
-        // Check if we got a 422 error (validation error) - likely invalid sources
-        if (resp.status === 422 && selectedSources && selectedSources.length > 0) {
-          got422Error = true;
-          console.log(`[SEARCH] Got 422 error with sources parameter, will fallback to post-filtering`);
-          lastError = `Mediastack error: ${resp.status} (invalid sources parameter)`;
-          break; // Exit loop to try fallback
-        } else {
-          lastError = `Mediastack error: ${resp.status}`;
-        }
+        const text = await resp.text().catch(() => "");
+        lastError = `NewsAPI error: ${resp.status} ${text}`;
+        console.log(`[SEARCH] Strategy failed: ${lastError}`);
       }
     } catch (error) {
       lastError = error.message;
@@ -759,38 +746,38 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [],
     }
   }
   
-  // If we got a 422 error with sources, retry without sources and post-filter
-  if (got422Error && selectedSources && selectedSources.length > 0) {
+  // If we have selected sources but got no results, try fetching without sources and post-filter
+  if (articles.length === 0 && selectedSources && selectedSources.length > 0) {
     console.log(`[SEARCH] Falling back to fetching without sources parameter, will post-filter`);
     // Fetch 10x more articles to account for filtering (since most will be filtered out)
-    const fetchLimit = Math.min(pageSize * 10, 100); // Cap at 100 (Mediastack limit)
+    const fetchLimit = Math.min(pageSize * 10, 100); // Cap at 100 (NewsAPI limit)
     const fallbackStrategies = [
-      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords="${q}"&languages=en&sort=published_desc&limit=${fetchLimit}&date=${from}${countryParam}`,
-      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${fetchLimit}&date=${from}${countryParam}`,
-      `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&keywords=${q}&languages=en&sort=published_desc&limit=${fetchLimit}${countryParam}`,
-      countryCode 
-        ? `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${fetchLimit}${countryParam}`
-        : `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&sort=published_desc&limit=${fetchLimit}`
-    ];
+      q ? `https://newsapi.org/v2/everything?q="${q}"&language=en&sortBy=publishedAt&pageSize=${fetchLimit}&from=${from}` : null,
+      q ? `https://newsapi.org/v2/everything?q=${q}&language=en&sortBy=publishedAt&pageSize=${fetchLimit}&from=${from}` : null,
+      q ? `https://newsapi.org/v2/everything?q=${q}&language=en&sortBy=publishedAt&pageSize=${fetchLimit}` : null,
+    ].filter(Boolean);
     
     for (const url of fallbackStrategies) {
       try {
         console.log(`[SEARCH FALLBACK] Trying strategy: ${url}`);
-        const resp = await fetch(url);
+        const resp = await fetch(url, { 
+          headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
+        });
         
         if (resp.ok) {
           const data = await resp.json();
-          if (data.data && data.data.length > 0) {
+          if (data.articles && data.articles.length > 0) {
             // Post-filter to only include allowed sources using normalized matching
-            const beforeFilter = data.data.length;
-            articles = data.data.filter(article => {
-              return isSourceAllowedForUS(article.source);
+            const beforeFilter = data.articles.length;
+            articles = data.articles.filter(article => {
+              const sourceName = (article.source && article.source.name) || article.source || "";
+              return isSourceAllowedForUS(sourceName);
             }).slice(0, pageSize); // Limit to requested size
             
             // Log what sources we found vs what we're looking for (for debugging)
             if (articles.length < pageSize && beforeFilter > 0) {
-              const foundSources = [...new Set(data.data.map(a => a.source).filter(Boolean))];
-              const matchedSources = [...new Set(articles.map(a => a.source).filter(Boolean))];
+              const foundSources = [...new Set(data.articles.map(a => ((a.source && a.source.name) || a.source || "")).filter(Boolean))];
+              const matchedSources = [...new Set(articles.map(a => ((a.source && a.source.name) || a.source || "")).filter(Boolean))];
               console.log(`[SEARCH FALLBACK] Found ${beforeFilter} articles, ${articles.length} matched. Found sources: ${foundSources.slice(0, 15).join(', ')}`);
               if (matchedSources.length > 0) {
                 console.log(`[SEARCH FALLBACK] Matched sources: ${matchedSources.join(', ')}`);
@@ -811,30 +798,24 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [],
   
   if (articles.length === 0) {
     // If we were trying to filter by sources and got no results, provide more helpful error
-    if (got422Error && selectedSources && selectedSources.length > 0) {
+    if (selectedSources && selectedSources.length > 0) {
       throw new Error(`No articles found from allowed US sources. ${lastError || 'Try different topics or check back later.'}`);
     }
     throw new Error(lastError || 'No articles found with any search strategy');
   }
   
-  // Map Mediastack response to match expected format
+  // Map NewsAPI response to match expected format
   const mappedArticles = articles.map(article => {
-    // Debug: Log image-related fields for troubleshooting
-    if (!article.image) {
-      console.log(`[MEDIASTACK] Article "${article.title?.substring(0, 50)}" has no image field. Available fields:`, Object.keys(article));
-    }
-    
     return {
-      title: article.title,
-      description: article.description,
-      url: article.url,
-      publishedAt: article.published_at,
-      source: { id: article.source, name: article.source },
-      urlToImage: article.image || "" // Mediastack uses 'image' field
+      title: article.title || "",
+      description: article.description || "",
+      url: article.url || "",
+      publishedAt: article.publishedAt || "",
+      source: article.source || { id: "unknown", name: "Unknown" },
+      urlToImage: article.urlToImage || ""
     };
   });
   
-  // Removed source printing log
   return mappedArticles;
 }
 
@@ -842,6 +823,10 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [],
 async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
   if (!selectedSources || selectedSources.length === 0) {
     return [];
+  }
+  
+  if (!NEWSAPI_KEY) {
+    throw new Error("Missing NEWSAPI_KEY");
   }
   
   console.log(`Ensuring variety from ${selectedSources.length} sources with progressive time expansion`);
@@ -862,19 +847,22 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
       
       try {
         // Use everything endpoint with time filter for more control
-        const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&date=${from}&sort=published_desc&limit=1&languages=en`;
-        const resp = await fetch(url);
+        const url = `https://newsapi.org/v2/everything?sources=${source}&from=${from}&language=en&sortBy=publishedAt&pageSize=1`;
+        const resp = await fetch(url, { 
+          headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
+        });
         
         if (resp.ok) {
           const data = await resp.json();
-          if (data.data && data.data.length > 0) {
-            // Map Mediastack response to expected format
+          if (data.articles && data.articles.length > 0) {
+            // Map NewsAPI response to expected format
             const article = {
-              title: data.data[0].title,
-              description: data.data[0].description,
-              url: data.data[0].url,
-              publishedAt: data.data[0].published_at,
-              source: { id: data.data[0].source, name: data.data[0].source }
+              title: data.articles[0].title || "",
+              description: data.articles[0].description || "",
+              url: data.articles[0].url || "",
+              publishedAt: data.articles[0].publishedAt || "",
+              source: data.articles[0].source || { id: source, name: source },
+              urlToImage: data.articles[0].urlToImage || ""
             };
             articles.push(article);
             usedSources.add(source);
@@ -907,19 +895,22 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
     if (usedSources.size >= targetVariety) break;
     
     try {
-      const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&limit=1&languages=en`;
-      const resp = await fetch(url);
+      const url = `https://newsapi.org/v2/top-headlines?sources=${source}&pageSize=1`;
+      const resp = await fetch(url, { 
+        headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
+      });
       
       if (resp.ok) {
         const data = await resp.json();
-        if (data.data && data.data.length > 0) {
-          // Map Mediastack response to expected format
+        if (data.articles && data.articles.length > 0) {
+          // Map NewsAPI response to expected format
           const article = {
-            title: data.data[0].title,
-            description: data.data[0].description,
-            url: data.data[0].url,
-            publishedAt: data.data[0].published_at,
-            source: { id: data.data[0].source, name: data.data[0].source }
+            title: data.articles[0].title || "",
+            description: data.articles[0].description || "",
+            url: data.articles[0].url || "",
+            publishedAt: data.articles[0].publishedAt || "",
+            source: data.articles[0].source || { id: source, name: source },
+            urlToImage: data.articles[0].urlToImage || ""
           };
           articles.push(article);
           usedSources.add(source);
@@ -937,108 +928,108 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
 
 async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, extraQuery, selectedSources = []) {
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
+  
+  if (!NEWSAPI_KEY) {
+    throw new Error("Missing NEWSAPI_KEY");
+  }
+  
   const params = new URLSearchParams();
   
-  // Mediastack parameter mapping
+  // NewsAPI parameter mapping
   if (selectedSources && selectedSources.length > 0) {
     console.log(`Filtering by sources: ${selectedSources.join(",")}`);
     params.set("sources", selectedSources.join(","));
   } else {
     console.log(`No source filtering applied (using all sources)`);
-    if (category) params.set("categories", category);
+    if (category) params.set("category", category);
   }
   
   // Always apply country filter if countryCode is provided (works with both sources and categories)
-  if (countryCode) {
-    params.set("countries", String(countryCode).toLowerCase());
+  if (countryCode && !selectedSources) {
+    params.set("country", String(countryCode).toLowerCase());
     console.log(`Applying country filter: ${String(countryCode).toLowerCase()}`);
   }
   
-  if (extraQuery) params.set("keywords", extraQuery);
-  params.set("limit", String(pageSize));
-  params.set("languages", "en");
-  const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&${params.toString()}`;
-  console.log(`[DEBUG] Final Mediastack URL: ${url}`);
-  let resp = await fetch(url);
+  if (extraQuery) params.set("q", extraQuery);
+  params.set("pageSize", String(pageSize));
+  
+  const url = `https://newsapi.org/v2/top-headlines?${params.toString()}`;
+  console.log(`[DEBUG] Final NewsAPI URL: ${url}`);
+  let resp = await fetch(url, { 
+    headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
+  });
   let data;
   
-  // Handle 422 errors (invalid sources parameter) by retrying without sources
-  if (!resp.ok && resp.status === 422 && selectedSources && selectedSources.length > 0) {
-    console.log(`[DEBUG] Got 422 error with sources parameter, retrying without sources and post-filtering`);
+  // Handle errors by retrying without sources and post-filtering
+  if (!resp.ok && selectedSources && selectedSources.length > 0) {
+    console.log(`[DEBUG] Got error with sources parameter, retrying without sources and post-filtering`);
     // Retry without sources parameter
     const fallbackParams = new URLSearchParams();
-    if (category) fallbackParams.set("categories", category);
-    if (countryCode) fallbackParams.set("countries", String(countryCode).toLowerCase());
-    if (extraQuery) fallbackParams.set("keywords", extraQuery);
-    fallbackParams.set("limit", String(Math.min(pageSize * 10, 100))); // Get 10x more to account for filtering (cap at 100)
-    fallbackParams.set("languages", "en");
+    if (category) fallbackParams.set("category", category);
+    if (countryCode) fallbackParams.set("country", String(countryCode).toLowerCase());
+    if (extraQuery) fallbackParams.set("q", extraQuery);
+    fallbackParams.set("pageSize", String(Math.min(pageSize * 10, 100))); // Get 10x more to account for filtering (cap at 100)
     
-    const fallbackUrl = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&${fallbackParams.toString()}`;
+    const fallbackUrl = `https://newsapi.org/v2/top-headlines?${fallbackParams.toString()}`;
     console.log(`[DEBUG] Fallback URL: ${fallbackUrl}`);
-    resp = await fetch(fallbackUrl);
+    resp = await fetch(fallbackUrl, { 
+      headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
+    });
     
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
       console.log(`[DEBUG] Fallback also failed: ${resp.status} ${text}`);
-      throw new Error(`Mediastack error: ${resp.status} ${text}`);
+      throw new Error(`NewsAPI error: ${resp.status} ${text}`);
     }
     
     const fallbackData = await resp.json();
-    console.log(`[DEBUG] Fallback returned ${fallbackData.data?.length || 0} articles`);
+    console.log(`[DEBUG] Fallback returned ${fallbackData.articles?.length || 0} articles`);
     
     // Post-filter to only include allowed sources using normalized matching
-    const beforeFilter = fallbackData.data?.length || 0;
+    const beforeFilter = fallbackData.articles?.length || 0;
     data = {
       ...fallbackData,
-      data: (fallbackData.data || []).filter(article => {
-        return isSourceAllowedForUS(article.source);
+      articles: (fallbackData.articles || []).filter(article => {
+        const sourceName = (article.source && article.source.name) || article.source || "";
+        return isSourceAllowedForUS(sourceName);
       }).slice(0, pageSize)
     };
     
     // Log what sources we found vs what we're looking for (for debugging)
-    if (data.data.length === 0 && beforeFilter > 0) {
-      const foundSources = [...new Set((fallbackData.data || []).map(a => a.source).filter(Boolean))].slice(0, 10);
+    if (data.articles.length === 0 && beforeFilter > 0) {
+      const foundSources = [...new Set((fallbackData.articles || []).map(a => ((a.source && a.source.name) || a.source || "")).filter(Boolean))].slice(0, 10);
       console.log(`[DEBUG] Found ${beforeFilter} articles but none matched allowed sources. Sample sources found: ${foundSources.join(', ')}`);
     }
     
-    console.log(`[DEBUG] Post-filtered ${beforeFilter} articles to ${data.data.length} from allowed sources`);
+    console.log(`[DEBUG] Post-filtered ${beforeFilter} articles to ${data.articles.length} from allowed sources`);
   } else if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    console.log(`[DEBUG] Mediastack error response: ${resp.status} ${text}`);
-    throw new Error(`Mediastack error: ${resp.status} ${text}`);
+    console.log(`[DEBUG] NewsAPI error response: ${resp.status} ${text}`);
+    throw new Error(`NewsAPI error: ${resp.status} ${text}`);
   } else {
     data = await resp.json();
-    console.log(`[DEBUG] Mediastack category response:`, JSON.stringify(data, null, 2));
-    console.log(`Mediastack returned ${data.data?.length || 0} articles`);
+    console.log(`[DEBUG] NewsAPI category response:`, JSON.stringify(data, null, 2));
+    console.log(`NewsAPI returned ${data.articles?.length || 0} articles`);
   }
   
   // Debug: Check how many articles have images
-  if (data.data && data.data.length > 0) {
-    const articlesWithImages = data.data.filter(a => a.image).length;
-    console.log(`[DEBUG] Articles with images: ${articlesWithImages} out of ${data.data.length}`);
-    if (!data.data[0].image && data.data.length > 0) {
-      console.log(`[DEBUG] Sample article keys:`, Object.keys(data.data[0]));
-    }
+  if (data.articles && data.articles.length > 0) {
+    const articlesWithImages = data.articles.filter(a => a.urlToImage).length;
+    console.log(`[DEBUG] Articles with images: ${articlesWithImages} out of ${data.articles.length}`);
   }
   
-  // Map Mediastack response to match expected format
-  const articles = (data.data || []).map(article => {
-    // Debug: Log image-related fields for troubleshooting
-    if (!article.image) {
-      console.log(`[MEDIASTACK] Article "${article.title?.substring(0, 50)}" has no image field. Available fields:`, Object.keys(article));
-    }
-    
+  // Map NewsAPI response to match expected format
+  const articles = (data.articles || []).map(article => {
     return {
-      title: article.title,
-      description: article.description,
-      url: article.url,
-      publishedAt: article.published_at,
-      source: { id: article.source, name: article.source },
-      urlToImage: article.image || "" // Mediastack uses 'image' field
+      title: article.title || "",
+      description: article.description || "",
+      url: article.url || "",
+      publishedAt: article.publishedAt || "",
+      source: article.source || { id: "unknown", name: "Unknown" },
+      urlToImage: article.urlToImage || ""
     };
   });
   
-  // Removed source printing log
   return articles;
 }
 
@@ -1098,9 +1089,9 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
       title: article.title || "",
       description: article.description || "",
       url: article.url || "",
-      publishedAt: article.published_at || "",
-      source: { id: article.source, name: article.source },
-      urlToImage: article.image || "",
+      publishedAt: article.publishedAt || article.published_at || "",
+      source: article.source || { id: (article.source && article.source.name) || article.source || "unknown", name: (article.source && article.source.name) || article.source || "Unknown" },
+      urlToImage: article.urlToImage || article.image || "",
       isSourceArticle: true // Mark as source article
     }));
     
@@ -1156,8 +1147,8 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   if (city) queryParts.push(city);
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
 
-  if (!MEDIASTACK_KEY) {
-    return { articles: [], note: "Missing MEDIASTACK_KEY" };
+  if (!NEWSAPI_KEY) {
+    return { articles: [], note: "Missing NEWSAPI_KEY" };
   }
 
   // Check cache first
@@ -1177,55 +1168,70 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   if (isGeneral) {
   // For general news, use a simple approach without date filtering
   try {
-    const countryParam = countryCode ? `&countries=${String(countryCode).toLowerCase()}` : '';
-    const sourcesParam = selectedSources && selectedSources.length > 0 
-      ? `&sources=${encodeURIComponent(selectedSources.join(','))}` 
-      : '';
-    let url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${pageSize}${countryParam}${sourcesParam}`;
-    let resp = await fetch(url);
+    const params = new URLSearchParams();
+    if (countryCode) params.set("country", String(countryCode).toLowerCase());
+    if (selectedSources && selectedSources.length > 0) {
+      params.set("sources", selectedSources.join(","));
+    } else {
+      params.set("category", "general");
+    }
+    params.set("pageSize", String(pageSize));
+    
+    let url = `https://newsapi.org/v2/top-headlines?${params.toString()}`;
+    let resp = await fetch(url, { 
+      headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
+    });
     let data;
     
-    // Handle 422 errors (invalid sources parameter) by retrying without sources
-    if (!resp.ok && resp.status === 422 && selectedSources && selectedSources.length > 0) {
-      console.log(`[GENERAL] Got 422 error with sources parameter, retrying without sources and post-filtering`);
-      url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=${Math.min(pageSize * 10, 100)}${countryParam}`;
-      resp = await fetch(url);
+    // Handle errors by retrying without sources and post-filtering
+    if (!resp.ok && selectedSources && selectedSources.length > 0) {
+      console.log(`[GENERAL] Got error with sources parameter, retrying without sources and post-filtering`);
+      const fallbackParams = new URLSearchParams();
+      if (countryCode) fallbackParams.set("country", String(countryCode).toLowerCase());
+      fallbackParams.set("category", "general");
+      fallbackParams.set("pageSize", String(Math.min(pageSize * 10, 100)));
+      
+      url = `https://newsapi.org/v2/top-headlines?${fallbackParams.toString()}`;
+      resp = await fetch(url, { 
+        headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
+      });
       
       if (!resp.ok) {
-        throw new Error(`Mediastack error: ${resp.status}`);
+        throw new Error(`NewsAPI error: ${resp.status}`);
       }
       
       const fallbackData = await resp.json();
       // Post-filter to only include allowed sources using normalized matching
-      const beforeFilter = fallbackData.data?.length || 0;
+      const beforeFilter = fallbackData.articles?.length || 0;
       data = {
         ...fallbackData,
-        data: (fallbackData.data || []).filter(article => {
-          return isSourceAllowedForUS(article.source);
+        articles: (fallbackData.articles || []).filter(article => {
+          const sourceName = (article.source && article.source.name) || article.source || "";
+          return isSourceAllowedForUS(sourceName);
         }).slice(0, pageSize)
       };
       
       // Log what sources we found vs what we're looking for (for debugging)
-      if (data.data.length === 0 && beforeFilter > 0) {
-        const foundSources = [...new Set((fallbackData.data || []).map(a => a.source).filter(Boolean))].slice(0, 10);
+      if (data.articles.length === 0 && beforeFilter > 0) {
+        const foundSources = [...new Set((fallbackData.articles || []).map(a => ((a.source && a.source.name) || a.source || "")).filter(Boolean))].slice(0, 10);
         console.log(`[GENERAL] Found ${beforeFilter} articles but none matched allowed sources. Sample sources found: ${foundSources.join(', ')}`);
       }
       
-      console.log(`[GENERAL] Post-filtered ${beforeFilter} articles to ${data.data.length} from allowed sources`);
+      console.log(`[GENERAL] Post-filtered ${beforeFilter} articles to ${data.articles.length} from allowed sources`);
     } else if (!resp.ok) {
-      throw new Error(`Mediastack error: ${resp.status}`);
+      throw new Error(`NewsAPI error: ${resp.status}`);
     } else {
       data = await resp.json();
     }
     
-    // Map Mediastack response to expected format
-    articles = (data.data || []).map(article => ({
-      title: article.title,
-      description: article.description,
-      url: article.url,
-      publishedAt: article.published_at,
-      source: { id: article.source, name: article.source },
-      urlToImage: article.image || "" // Mediastack uses 'image' field
+    // Map NewsAPI response to expected format
+    articles = (data.articles || []).map(article => ({
+      title: article.title || "",
+      description: article.description || "",
+      url: article.url || "",
+      publishedAt: article.publishedAt || "",
+      source: article.source || { id: "unknown", name: "Unknown" },
+      urlToImage: article.urlToImage || ""
     }));
     } catch (error) {
       console.error(`Error fetching general news:`, error);
@@ -1750,7 +1756,7 @@ app.get("/api/health", (req, res) => {
   res.json({
     status: "ok",
     jwtConfigured: !!process.env.JWT_SECRET, // true means you're using a real secret
-    newsConfigured: !!process.env.MEDIASTACK_KEY,
+    newsConfigured: !!process.env.NEWSAPI_KEY,
     ttsConfigured: !!process.env.OPENAI_API_KEY,
   });
 });
@@ -1760,34 +1766,36 @@ app.get("/api/test", (req, res) => {
   res.json({ message: "Test endpoint working", timestamp: new Date().toISOString() });
 });
 
-// Test Mediastack API endpoint
-app.get("/api/test-mediastack", async (req, res) => {
+// Test NewsAPI endpoint
+app.get("/api/test-newsapi", async (req, res) => {
   try {
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=5`;
-    console.log(`[TEST] Testing Mediastack URL: ${url}`);
-    const resp = await fetch(url);
+    const url = `https://newsapi.org/v2/top-headlines?country=us&pageSize=5`;
+    console.log(`[TEST] Testing NewsAPI URL: ${url}`);
+    const resp = await fetch(url, { 
+      headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
+    });
     
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
       return res.status(500).json({ 
-        error: `Mediastack API error: ${resp.status}`, 
+        error: `NewsAPI error: ${resp.status}`, 
         details: text,
         url: url
       });
     }
     
     const data = await resp.json();
-    console.log(`[TEST] Mediastack test response:`, JSON.stringify(data, null, 2));
+    console.log(`[TEST] NewsAPI test response:`, JSON.stringify(data, null, 2));
     
     res.json({
       success: true,
-      articlesCount: data.data?.length || 0,
+      articlesCount: data.articles?.length || 0,
       response: data
     });
   } catch (error) {
-    console.error('[TEST] Mediastack test error:', error);
+    console.error('[TEST] NewsAPI test error:', error);
     res.status(500).json({ 
-      error: 'Mediastack test failed', 
+      error: 'NewsAPI test failed', 
       details: error.message 
     });
   }
@@ -1936,12 +1944,12 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       }
     }
     
-    // For US users, use only allowed sources via Mediastack API filtering
+    // For US users, use only allowed sources via NewsAPI filtering
     // For other countries, fetch from all sources and filter afterwards
     let selectedSources = [];
     if (userCountry && userCountry.toLowerCase() === 'us') {
-      selectedSources = getUSMediastackSources();
-      console.log(`[US SOURCES] Using ${selectedSources.length} allowed US sources via Mediastack API`);
+      selectedSources = getUSNewsAPISources();
+      console.log(`[US SOURCES] Using ${selectedSources.length} allowed US sources via NewsAPI`);
     }
 
     const items = [];
@@ -2383,12 +2391,12 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
       }
     }
     
-    // For US users, use only allowed sources via Mediastack API filtering
+    // For US users, use only allowed sources via NewsAPI filtering
     // For other countries, fetch from all sources and filter afterwards
     let selectedSources = [];
     if (batchCountry && batchCountry.toLowerCase() === 'us') {
-      selectedSources = getUSMediastackSources();
-      console.log(`[US SOURCES BATCH] Using ${selectedSources.length} allowed US sources via Mediastack API`);
+      selectedSources = getUSNewsAPISources();
+      console.log(`[US SOURCES BATCH] Using ${selectedSources.length} allowed US sources via NewsAPI`);
     }
 
     const results = await Promise.all(
@@ -4023,9 +4031,9 @@ ${articlesText}${initialTopicsText}`;
   try {
     console.log('[TRENDING] Updating trending topics...');
     
-    const MEDIASTACK_KEY = process.env.MEDIASTACK_KEY;
-    if (!MEDIASTACK_KEY) {
-      console.log('[TRENDING] Mediastack API key not configured, skipping update');
+    const NEWSAPI_KEY = process.env.NEWSAPI_KEY;
+    if (!NEWSAPI_KEY) {
+      console.log('[TRENDING] NewsAPI key not configured, skipping update');
       return;
     }
     
@@ -4055,7 +4063,7 @@ ${articlesText}${initialTopicsText}`;
     for (const source of newsSources) {
       try {
         // Fetch 5 articles per source for better topic coverage
-        const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&sources=${source}&languages=en&limit=5&sort=published_desc`;
+        const url = `https://newsapi.org/v2/top-headlines?sources=${source}&pageSize=5`;
         const response = await fetch(url);
         
         if (response.ok) {
@@ -4123,17 +4131,19 @@ ${articlesText}${initialTopicsText}`;
     const categories = ['general', 'business', 'technology', 'sports', 'entertainment', 'health', 'science'];
     const randomCategory = categories[Math.floor(Math.random() * categories.length)];
     
-    const url = `http://api.mediastack.com/v1/news?access_key=${MEDIASTACK_KEY}&languages=en&limit=30&sort=published_desc&categories=${randomCategory}`;
-    const response = await fetch(url);
+    const url = `https://newsapi.org/v2/top-headlines?category=${randomCategory}&pageSize=30`;
+    const response = await fetch(url, { 
+      headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
+    });
     
     if (!response.ok) {
-      throw new Error(`Mediastack API error: ${response.status}`);
+      throw new Error(`NewsAPI error: ${response.status}`);
     }
     
     const data = await response.json();
     
-    if (!data.data || !Array.isArray(data.data)) {
-      throw new Error('Invalid response from Mediastack API');
+    if (!data.articles || !Array.isArray(data.articles)) {
+      throw new Error('Invalid response from NewsAPI');
     }
     
     const trendingTopics = extractBreakingNewsTopics(data.data);
@@ -4344,6 +4354,6 @@ module.exports = {
   isUpliftingNews,
   normalizeSourceName,
   isSourceAllowedForUS,
-  getUSMediastackSources
+  getUSNewsAPISources
 };
 

@@ -522,13 +522,13 @@ async function executeScheduledSummary(user, summary) {
       }
     }
     
-    // For US users, use only allowed sources via Mediastack API filtering
+    // For US users, use only allowed sources via NewsAPI filtering
     // For other countries, fetch from all sources and filter afterwards
     let selectedSources = [];
     if (userCountry && userCountry.toLowerCase() === 'us') {
-      const { getUSMediastackSources } = require('../index');
-      selectedSources = getUSMediastackSources();
-      console.log(`[SCHEDULER US SOURCES] Using ${selectedSources.length} allowed US sources via Mediastack API`);
+      const { getUSNewsAPISources } = require('../index');
+      selectedSources = getUSNewsAPISources();
+      console.log(`[SCHEDULER US SOURCES] Using ${selectedSources.length} allowed US sources via NewsAPI`);
     }
     
     const items = [];
