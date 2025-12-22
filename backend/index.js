@@ -30,6 +30,9 @@ const fallbackAuth = require("./utils/fallbackAuth");
 const { uploadAudioToB2, isB2Configured } = require("./utils/b2Storage");
 const User = require("./models/User");
 const GlobalSettings = require("./models/GlobalSettings");
+const ArticleCache = require("./models/ArticleCache");
+const { runCategorizationJob, scheduleCategorization, getJobStatus } = require("./jobs/categorizeArticles");
+const { getCacheHealth, fetchArticlesFromCache, fetchMultipleTopicsFromCache } = require("./services/cachedArticleFetcher");
 
 // Connect to MongoDB
 connectDB();
@@ -110,6 +113,59 @@ app.use("/api/admin", adminRoutes);
 // Admin trending topics management
 app.use("/api/admin/trending-topics", trendingAdminRoutes);
 
+// Admin cache management routes
+app.get("/api/admin/cache/status", authenticateToken, async (req, res) => {
+  try {
+    const health = await getCacheHealth();
+    const jobStatus = getJobStatus();
+    
+    res.json({
+      cache: health,
+      job: jobStatus
+    });
+  } catch (error) {
+    console.error('[ADMIN] Cache status error:', error);
+    res.status(500).json({ error: 'Failed to get cache status' });
+  }
+});
+
+app.post("/api/admin/cache/refresh", authenticateToken, async (req, res) => {
+  try {
+    const jobStatus = getJobStatus();
+    
+    if (jobStatus.isRunning) {
+      return res.status(409).json({ 
+        error: 'Categorization job is already running',
+        status: jobStatus
+      });
+    }
+    
+    res.json({ message: 'Categorization job started', status: 'running' });
+    
+    // Run job asynchronously
+    runCategorizationJob()
+      .then(stats => {
+        console.log('[ADMIN] Categorization job completed:', stats);
+      })
+      .catch(error => {
+        console.error('[ADMIN] Categorization job failed:', error);
+      });
+  } catch (error) {
+    console.error('[ADMIN] Cache refresh error:', error);
+    res.status(500).json({ error: 'Failed to start categorization job' });
+  }
+});
+
+app.get("/api/admin/cache/stats", authenticateToken, async (req, res) => {
+  try {
+    const stats = await ArticleCache.getStats();
+    res.json(stats);
+  } catch (error) {
+    console.error('[ADMIN] Cache stats error:', error);
+    res.status(500).json({ error: 'Failed to get cache statistics' });
+  }
+});
+
 // Preferences routes
 app.use("/api/preferences", preferencesRoutes);
 
@@ -121,6 +177,90 @@ app.use("/api/notifications", notificationsRoutes);
 
 // Article feedback routes
 app.use("/api/article-feedback", articleFeedbackRoutes);
+
+// --- Article Categorization Admin Endpoints ---
+
+// Manual trigger for categorization job (admin only)
+app.post("/api/admin/categorize-articles", authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user || !user.isAdmin) {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    console.log(`[ADMIN] Manual categorization triggered by ${user.email}`);
+    
+    // Run job asynchronously
+    runCategorizationJob()
+      .then(stats => {
+        console.log('[ADMIN] Categorization job completed:', stats);
+      })
+      .catch(error => {
+        console.error('[ADMIN] Categorization job failed:', error);
+      });
+    
+    res.json({ 
+      message: "Categorization job started",
+      status: getJobStatus()
+    });
+  } catch (error) {
+    console.error('[ADMIN] Error triggering categorization:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get categorization job status
+app.get("/api/admin/categorization-status", authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user || !user.isAdmin) {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    const status = getJobStatus();
+    const cacheStats = await ArticleCache.getStats();
+    
+    res.json({
+      job: status,
+      cache: cacheStats
+    });
+  } catch (error) {
+    console.error('[ADMIN] Error getting categorization status:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get cached articles by category
+app.get("/api/articles/by-category/:category", optionalAuth, async (req, res) => {
+  try {
+    const { category } = req.params;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    
+    const articles = await ArticleCache.getByCategory(category, limit);
+    
+    res.json({
+      category,
+      articles,
+      total: articles.length,
+      cached: true,
+      source: 'article-cache'
+    });
+  } catch (error) {
+    console.error('[ARTICLES] Error fetching by category:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get cache statistics (public)
+app.get("/api/articles/cache-stats", async (req, res) => {
+  try {
+    const stats = await ArticleCache.getStats();
+    res.json(stats);
+  } catch (error) {
+    console.error('[ARTICLES] Error getting cache stats:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Function to extract breaking news topics from headlines
 function extractBreakingNewsTopics(articles) {
@@ -1079,6 +1219,51 @@ function prioritizeArticlesByFeedback(articles, user) {
 }
 
 async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = []) {
+  // ⚡ CACHE-FIRST STRATEGY: Always check cache before hitting NewsAPI
+  // This reduces NewsAPI calls from hundreds per day to just 2 (from scheduled job)
+  
+  const coreCategories = ['general', 'business', 'technology', 'sports', 'entertainment', 'health', 'science'];
+  const normalizedTopic = topic.toLowerCase().trim();
+  
+  // Slugify topic to match how it's stored in cache (for custom topics)
+  const { slugify } = require('./services/articleCategorizer');
+  const slugifiedTopic = slugify(normalizedTopic);
+  
+  // ALWAYS check cache first (for all topics)
+  try {
+    // Try both the normalized topic and slugified version
+    const cachedArticles = await ArticleCache.find({
+      categories: { $in: [normalizedTopic, slugifiedTopic] },
+      expiresAt: { $gt: new Date() }
+    }).sort({ publishedAt: -1 }).limit(maxResults);
+    
+    // Use cache if we have ANY articles (no minimum threshold)
+    if (cachedArticles && cachedArticles.length > 0) {
+      console.log(`✅ [CACHE HIT] Using ${cachedArticles.length} cached articles for topic: ${topic}`);
+      
+      // Convert cached articles to expected format
+      return {
+        articles: cachedArticles.map(article => ({
+          title: article.title || "",
+          description: article.description || "",
+          url: article.url || "",
+          publishedAt: article.publishedAt?.toISOString() || "",
+          source: article.source || { id: "unknown", name: "Unknown" },
+          urlToImage: article.urlToImage || "",
+          author: article.author || "",
+          content: article.content || "",
+          fromCache: true
+        }))
+      };
+    } else {
+      console.warn(`⚠️  [CACHE MISS] No cached articles for "${topic}" (tried: ${normalizedTopic}, ${slugifiedTopic})`);
+      console.warn(`    ⚠️  This will use a NewsAPI call! Ensure categorization job is running.`);
+    }
+  } catch (error) {
+    console.error(`❌ [CACHE ERROR] Failed to fetch from cache for ${topic}:`, error.message);
+    console.warn(`    ⚠️  Falling back to NewsAPI (will count against rate limit)`);
+  }
+  
   // Check if this is a trending topic and combine source articles with fresh content
   if (trendingTopicsWithSources && trendingTopicsWithSources[topic]) {
     console.log(`[TRENDING] Combining source articles with fresh content for trending topic: ${topic}`);
@@ -1160,7 +1345,7 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   }
 
   let articles = [];
-  const normalizedTopic = String(topic || "").toLowerCase();
+  // normalizedTopic already defined above for cache checking
   const useCategory = CORE_CATEGORIES.has(normalizedTopic) && normalizedTopic !== "world";
   const isLocal = normalizedTopic === "local";
   const isGeneral = normalizedTopic === "general";
@@ -1752,13 +1937,25 @@ function authMiddleware(req, res, next) {
 // --- Routes ---
 
 // Health check
-app.get("/api/health", (req, res) => {
-  res.json({
-    status: "ok",
-    jwtConfigured: !!process.env.JWT_SECRET, // true means you're using a real secret
-    newsConfigured: !!process.env.NEWSAPI_KEY,
-    ttsConfigured: !!process.env.OPENAI_API_KEY,
-  });
+app.get("/api/health", async (req, res) => {
+  try {
+    const cacheHealth = await getCacheHealth();
+    res.json({
+      status: "ok",
+      jwtConfigured: !!process.env.JWT_SECRET,
+      newsConfigured: !!process.env.NEWSAPI_KEY,
+      ttsConfigured: !!process.env.OPENAI_API_KEY,
+      cache: cacheHealth
+    });
+  } catch (error) {
+    res.json({
+      status: "ok",
+      jwtConfigured: !!process.env.JWT_SECRET,
+      newsConfigured: !!process.env.NEWSAPI_KEY,
+      ttsConfigured: !!process.env.OPENAI_API_KEY,
+      cache: { healthy: false, message: 'Error checking cache' }
+    });
+  }
 });
 
 // Simple test endpoint
@@ -4319,6 +4516,10 @@ function startServer() {
     setTimeout(async () => {
       await fetchAllUSSources();
     }, 2000); // Wait 2 seconds for server to fully start
+    
+    // Schedule article categorization job (runs at 6am and 6pm daily)
+    scheduleCategorization();
+    console.log('✅ Article categorization job scheduled');
     const now = new Date();
     if (SCHEDULER_ENABLED) {
       const firstCheckIn = new Date(now.getTime() + (10 * 60 * 1000));
