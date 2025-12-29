@@ -4,6 +4,7 @@
  */
 
 const NEWSAPI_KEY = process.env.NEWSAPI_KEY;
+const DISABLE_NEWSAPI_FALLBACK = process.env.DISABLE_NEWSAPI_FALLBACK === 'true';
 
 /**
  * Fetch all available US sources from NewsAPI
@@ -106,6 +107,14 @@ async function fetchArticlesFromSources(sourceIds, pageSize = 20) {
  * Batches requests to stay within NewsAPI limits (20 sources per request)
  */
 async function fetchAllArticles() {
+  // 🚨 EMERGENCY KILL SWITCH: Block categorization job if NewsAPI is disabled
+  // This prevents the cron job from hitting rate limits
+  if (DISABLE_NEWSAPI_FALLBACK) {
+    console.error('🚫 [NEWSAPI DISABLED] Categorization job blocked. Set DISABLE_NEWSAPI_FALLBACK=false to re-enable.');
+    console.error('   This prevents automatic cache refresh until you manually re-enable NewsAPI.');
+    throw new Error('NewsAPI fallback is disabled. Cannot fetch articles for categorization.');
+  }
+  
   console.log('[ARTICLE FETCHER] Starting to fetch articles from all sources...');
   
   const sources = await fetchAllSources();
