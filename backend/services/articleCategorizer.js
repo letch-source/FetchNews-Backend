@@ -84,11 +84,13 @@ Rules:
 Articles to categorize:
 ${articlesForPrompt.map(a => `${a.id}. "${a.title}" - ${a.description}`).join('\n\n')}
 
-Return ONLY a JSON array in this exact format:
-[
-  { "id": 0, "categories": ["technology", "business"] },
-  { "id": 1, "categories": ["health", "science", "mental-health"] }
-]`;
+Return a JSON object with an "articles" array in this exact format:
+{
+  "articles": [
+    { "id": 0, "categories": ["technology", "business"] },
+    { "id": 1, "categories": ["health", "science", "mental-health"] }
+  ]
+}`;
 
   try {
     const startTime = Date.now();
@@ -122,8 +124,13 @@ Return ONLY a JSON array in this exact format:
     
     try {
       const parsed = JSON.parse(content);
-      // Handle both array and object with array property
-      result = Array.isArray(parsed) ? parsed : (parsed.categories || parsed.results || []);
+      // Handle multiple response formats
+      result = Array.isArray(parsed) ? parsed : (parsed.articles || parsed.categories || parsed.results || []);
+      
+      if (!Array.isArray(result)) {
+        console.error('[CATEGORIZER] Unexpected response format:', content);
+        throw new Error('ChatGPT response does not contain an array');
+      }
     } catch (parseError) {
       console.error('[CATEGORIZER] Failed to parse ChatGPT response:', content);
       throw new Error('Invalid JSON response from ChatGPT');
