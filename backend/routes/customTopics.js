@@ -2,8 +2,31 @@ const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 const mongoose = require('mongoose');
 const fallbackAuth = require('../utils/fallbackAuth');
+const fs = require('fs');
+const path = require('path');
 
 const router = express.Router();
+
+// Load predefined topics
+const predefinedTopicsPath = path.join(__dirname, '../data/predefinedTopics.json');
+let predefinedTopics = { categories: [] };
+try {
+  const data = fs.readFileSync(predefinedTopicsPath, 'utf8');
+  predefinedTopics = JSON.parse(data);
+  console.log('[CUSTOM TOPICS] Loaded predefined topics:', predefinedTopics.categories.length, 'categories');
+} catch (error) {
+  console.error('[CUSTOM TOPICS] Failed to load predefined topics:', error.message);
+}
+
+// Get predefined topics list (no auth required for browsing)
+router.get('/predefined', async (req, res) => {
+  try {
+    res.json(predefinedTopics);
+  } catch (error) {
+    console.error('Get predefined topics error:', error);
+    res.status(500).json({ error: 'Failed to get predefined topics' });
+  }
+});
 
 // Get user's custom topics
 router.get('/', authenticateToken, async (req, res) => {
