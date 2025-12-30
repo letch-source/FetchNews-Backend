@@ -30,6 +30,9 @@ const fallbackAuth = require("./utils/fallbackAuth");
 const { uploadAudioToB2, isB2Configured } = require("./utils/b2Storage");
 const User = require("./models/User");
 const GlobalSettings = require("./models/GlobalSettings");
+const ArticleCache = require("./models/ArticleCache");
+const { runCategorizationJob, scheduleCategorization, getJobStatus } = require("./jobs/categorizeArticles");
+const { getCacheHealth, fetchArticlesFromCache, fetchMultipleTopicsFromCache } = require("./services/cachedArticleFetcher");
 
 // Connect to MongoDB
 connectDB();
@@ -110,6 +113,59 @@ app.use("/api/admin", adminRoutes);
 // Admin trending topics management
 app.use("/api/admin/trending-topics", trendingAdminRoutes);
 
+// Admin cache management routes
+app.get("/api/admin/cache/status", authenticateToken, async (req, res) => {
+  try {
+    const health = await getCacheHealth();
+    const jobStatus = getJobStatus();
+    
+    res.json({
+      cache: health,
+      job: jobStatus
+    });
+  } catch (error) {
+    console.error('[ADMIN] Cache status error:', error);
+    res.status(500).json({ error: 'Failed to get cache status' });
+  }
+});
+
+app.post("/api/admin/cache/refresh", authenticateToken, async (req, res) => {
+  try {
+    const jobStatus = getJobStatus();
+    
+    if (jobStatus.isRunning) {
+      return res.status(409).json({ 
+        error: 'Categorization job is already running',
+        status: jobStatus
+      });
+    }
+    
+    res.json({ message: 'Categorization job started', status: 'running' });
+    
+    // Run job asynchronously
+    runCategorizationJob()
+      .then(stats => {
+        console.log('[ADMIN] Categorization job completed:', stats);
+      })
+      .catch(error => {
+        console.error('[ADMIN] Categorization job failed:', error);
+      });
+  } catch (error) {
+    console.error('[ADMIN] Cache refresh error:', error);
+    res.status(500).json({ error: 'Failed to start categorization job' });
+  }
+});
+
+app.get("/api/admin/cache/stats", authenticateToken, async (req, res) => {
+  try {
+    const stats = await ArticleCache.getStats();
+    res.json(stats);
+  } catch (error) {
+    console.error('[ADMIN] Cache stats error:', error);
+    res.status(500).json({ error: 'Failed to get cache statistics' });
+  }
+});
+
 // Preferences routes
 app.use("/api/preferences", preferencesRoutes);
 
@@ -121,6 +177,90 @@ app.use("/api/notifications", notificationsRoutes);
 
 // Article feedback routes
 app.use("/api/article-feedback", articleFeedbackRoutes);
+
+// --- Article Categorization Admin Endpoints ---
+
+// Manual trigger for categorization job (admin only)
+app.post("/api/admin/categorize-articles", authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user || !user.isAdmin) {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    console.log(`[ADMIN] Manual categorization triggered by ${user.email}`);
+    
+    // Run job asynchronously
+    runCategorizationJob()
+      .then(stats => {
+        console.log('[ADMIN] Categorization job completed:', stats);
+      })
+      .catch(error => {
+        console.error('[ADMIN] Categorization job failed:', error);
+      });
+    
+    res.json({ 
+      message: "Categorization job started",
+      status: getJobStatus()
+    });
+  } catch (error) {
+    console.error('[ADMIN] Error triggering categorization:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get categorization job status
+app.get("/api/admin/categorization-status", authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user || !user.isAdmin) {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    const status = getJobStatus();
+    const cacheStats = await ArticleCache.getStats();
+    
+    res.json({
+      job: status,
+      cache: cacheStats
+    });
+  } catch (error) {
+    console.error('[ADMIN] Error getting categorization status:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get cached articles by category
+app.get("/api/articles/by-category/:category", optionalAuth, async (req, res) => {
+  try {
+    const { category } = req.params;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    
+    const articles = await ArticleCache.getByCategory(category, limit);
+    
+    res.json({
+      category,
+      articles,
+      total: articles.length,
+      cached: true,
+      source: 'article-cache'
+    });
+  } catch (error) {
+    console.error('[ARTICLES] Error fetching by category:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get cache statistics (public)
+app.get("/api/articles/cache-stats", async (req, res) => {
+  try {
+    const stats = await ArticleCache.getStats();
+    res.json(stats);
+  } catch (error) {
+    console.error('[ARTICLES] Error getting cache stats:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Function to extract breaking news topics from headlines
 function extractBreakingNewsTopics(articles) {
@@ -498,6 +638,7 @@ if (!JWT_SECRET) {
 }
 const NEWSAPI_KEY = process.env.NEWSAPI_KEY || "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const DISABLE_NEWSAPI_FALLBACK = process.env.DISABLE_NEWSAPI_FALLBACK === 'true'; // Emergency kill switch to stop NewsAPI calls
 
 // --- In-memory data store fallback (replace with SQLite later) ---
 let users = []; // [{ email, passwordHash, topics: [], location: "" }]
@@ -688,6 +829,12 @@ function getUSNewsAPISources() {
 }
 
 async function fetchArticlesEverything(qParts, maxResults, selectedSources = [], countryCode = null) {
+  // 🚨 EMERGENCY KILL SWITCH: Block all NewsAPI calls if disabled
+  if (DISABLE_NEWSAPI_FALLBACK) {
+    console.error(`🚫 [NEWSAPI DISABLED] Blocked fetchArticlesEverything call. Set DISABLE_NEWSAPI_FALLBACK=false to re-enable.`);
+    throw new Error("NewsAPI fallback is disabled. Cache must be populated first.");
+  }
+  
   const q = encodeURIComponent(qParts.filter(Boolean).join(" "));
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
   // Extend to 7 days for more variety (24 hours was too restrictive)
@@ -821,6 +968,12 @@ async function fetchArticlesEverything(qParts, maxResults, selectedSources = [],
 
 // Function to ensure variety by getting articles from multiple sources with progressive time expansion
 async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
+  // 🚨 EMERGENCY KILL SWITCH: Block all NewsAPI calls if disabled
+  if (DISABLE_NEWSAPI_FALLBACK) {
+    console.error(`🚫 [NEWSAPI DISABLED] Blocked fetchArticlesWithVariety call. Set DISABLE_NEWSAPI_FALLBACK=false to re-enable.`);
+    return [];
+  }
+  
   if (!selectedSources || selectedSources.length === 0) {
     return [];
   }
@@ -829,104 +982,85 @@ async function fetchArticlesWithVariety(selectedSources, maxResults = 10) {
     throw new Error("Missing NEWSAPI_KEY");
   }
   
-  console.log(`Ensuring variety from ${selectedSources.length} sources with progressive time expansion`);
-  const targetVariety = Math.min(5, selectedSources.length); // Aim for 5 different sources
+  console.log(`Fetching articles from ${selectedSources.length} sources (SINGLE API CALL)`);
   
-  // Progressive time windows: 1h, 2h, 4h, 8h, 16h, 24h
-  const timeWindows = [1, 2, 4, 8, 16, 24]; // hours
+  // OPTIMIZED: Make ONE API call with ALL sources instead of looping through each source
+  // This reduces API calls from potentially 30+ to just 1-2 per topic
+  const sourcesParam = selectedSources.join(',');
   
-  for (const hours of timeWindows) {
-    console.log(`Trying ${hours} hour(s) time window...`);
-    const articles = [];
-    const usedSources = new Set();
-    const from = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString().slice(0, 10);
+  // Try with a 24-hour window first (most articles)
+  try {
+    const from = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const url = `https://newsapi.org/v2/everything?sources=${sourcesParam}&from=${from}&language=en&sortBy=publishedAt&pageSize=${maxResults}`;
     
-    // Try to get at least one article from each source within this time window
-    for (const source of selectedSources) {
-      if (usedSources.size >= targetVariety) break;
-      
-      try {
-        // Use everything endpoint with time filter for more control
-        const url = `https://newsapi.org/v2/everything?sources=${source}&from=${from}&language=en&sortBy=publishedAt&pageSize=1`;
-        const resp = await fetch(url, { 
-          headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
-        });
+    const resp = await fetch(url, { 
+      headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
+    });
+    
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.articles && data.articles.length > 0) {
+        // Map NewsAPI response to expected format
+        const articles = data.articles.map(article => ({
+          title: article.title || "",
+          description: article.description || "",
+          url: article.url || "",
+          publishedAt: article.publishedAt || "",
+          source: article.source || { id: "", name: "" },
+          urlToImage: article.urlToImage || ""
+        }));
         
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data.articles && data.articles.length > 0) {
-            // Map NewsAPI response to expected format
-            const article = {
-              title: data.articles[0].title || "",
-              description: data.articles[0].description || "",
-              url: data.articles[0].url || "",
-              publishedAt: data.articles[0].publishedAt || "",
-              source: data.articles[0].source || { id: source, name: source },
-              urlToImage: data.articles[0].urlToImage || ""
-            };
-            articles.push(article);
-            usedSources.add(source);
-            console.log(`Got article from ${source} (${hours}h window)`);
-          }
-        }
-      } catch (error) {
-        console.log(`Failed to get article from ${source} (${hours}h window): ${error.message}`);
+        // Count variety
+        const sourcesUsed = new Set(articles.map(a => a.source.id || a.source.name));
+        console.log(`✅ Got ${articles.length} articles from ${sourcesUsed.size} different sources (24h window)`);
+        return articles.slice(0, maxResults);
       }
     }
     
-    // If we got enough variety, return the articles
-    if (usedSources.size >= targetVariety) {
-      console.log(`Variety achieved: ${usedSources.size} different sources in ${hours} hour(s)`);
-      return articles;
-    }
-    
-    // If we got some articles but not enough variety, continue to next time window
-    if (articles.length > 0) {
-      console.log(`Got ${usedSources.size} sources in ${hours}h, expanding to next time window...`);
-    }
+    console.log(`No articles found in 24h window, trying without time filter...`);
+  } catch (error) {
+    console.log(`Error fetching with time filter: ${error.message}`);
   }
   
-  // If we still don't have enough variety after all time windows, return what we have
-  console.log(`Final attempt: trying top-headlines without time filter for maximum coverage`);
-  const articles = [];
-  const usedSources = new Set();
-  
-  for (const source of selectedSources) {
-    if (usedSources.size >= targetVariety) break;
+  // Fallback: Try without time filter (only makes 1 additional call if needed)
+  try {
+    const url = `https://newsapi.org/v2/top-headlines?sources=${sourcesParam}&pageSize=${maxResults}`;
+    const resp = await fetch(url, { 
+      headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
+    });
     
-    try {
-      const url = `https://newsapi.org/v2/top-headlines?sources=${source}&pageSize=1`;
-      const resp = await fetch(url, { 
-        headers: { Authorization: `Bearer ${NEWSAPI_KEY}` } 
-      });
-      
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data.articles && data.articles.length > 0) {
-          // Map NewsAPI response to expected format
-          const article = {
-            title: data.articles[0].title || "",
-            description: data.articles[0].description || "",
-            url: data.articles[0].url || "",
-            publishedAt: data.articles[0].publishedAt || "",
-            source: data.articles[0].source || { id: source, name: source },
-            urlToImage: data.articles[0].urlToImage || ""
-          };
-          articles.push(article);
-          usedSources.add(source);
-          console.log(`Got article from ${source} (no time filter)`);
-        }
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.articles && data.articles.length > 0) {
+        const articles = data.articles.map(article => ({
+          title: article.title || "",
+          description: article.description || "",
+          url: article.url || "",
+          publishedAt: article.publishedAt || "",
+          source: article.source || { id: "", name: "" },
+          urlToImage: article.urlToImage || ""
+        }));
+        
+        const sourcesUsed = new Set(articles.map(a => a.source.id || a.source.name));
+        console.log(`✅ Got ${articles.length} articles from ${sourcesUsed.size} different sources (top-headlines)`);
+        return articles.slice(0, maxResults);
       }
-    } catch (error) {
-      console.log(`Failed to get article from ${source} (no time filter): ${error.message}`);
     }
+  } catch (error) {
+    console.log(`Error fetching top-headlines: ${error.message}`);
   }
   
-  console.log(`Final variety achieved: ${usedSources.size} different sources`);
-  return articles;
+  console.log(`⚠️ No articles found from selected sources`);
+  return [];
 }
 
 async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, extraQuery, selectedSources = []) {
+  // 🚨 EMERGENCY KILL SWITCH: Block all NewsAPI calls if disabled
+  if (DISABLE_NEWSAPI_FALLBACK) {
+    console.error(`🚫 [NEWSAPI DISABLED] Blocked fetchTopHeadlinesByCategory call. Set DISABLE_NEWSAPI_FALLBACK=false to re-enable.`);
+    throw new Error("NewsAPI fallback is disabled. Cache must be populated first.");
+  }
+  
   const pageSize = Math.min(Math.max(Number(maxResults) || 5, 1), 50);
   
   if (!NEWSAPI_KEY) {
@@ -1079,6 +1213,65 @@ function prioritizeArticlesByFeedback(articles, user) {
 }
 
 async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = []) {
+  // ⚡ CACHE-FIRST STRATEGY: Always check cache before hitting NewsAPI
+  // This reduces NewsAPI calls from hundreds per day to just 2 (from scheduled job)
+  
+  const coreCategories = ['general', 'business', 'technology', 'sports', 'entertainment', 'health', 'science'];
+  const normalizedTopic = topic.toLowerCase().trim();
+  
+  // Slugify topic to match how it's stored in cache (for custom topics)
+  const { slugify } = require('./services/articleCategorizer');
+  const slugifiedTopic = slugify(normalizedTopic);
+  
+  // ALWAYS check cache first (for all topics)
+  try {
+    // Try both the normalized topic and slugified version
+    const cachedArticles = await ArticleCache.find({
+      categories: { $in: [normalizedTopic, slugifiedTopic] },
+      expiresAt: { $gt: new Date() }
+    }).sort({ publishedAt: -1 }).limit(maxResults);
+    
+    // Use cache if we have ANY articles (no minimum threshold)
+    if (cachedArticles && cachedArticles.length > 0) {
+      console.log(`✅ [CACHE HIT] Using ${cachedArticles.length} cached articles for topic: ${topic}`);
+      
+      // Convert cached articles to expected format
+      return {
+        articles: cachedArticles.map(article => ({
+          title: article.title || "",
+          description: article.description || "",
+          url: article.url || "",
+          publishedAt: article.publishedAt?.toISOString() || "",
+          source: article.source || { id: "unknown", name: "Unknown" },
+          urlToImage: article.urlToImage || "",
+          author: article.author || "",
+          content: article.content || "",
+          fromCache: true
+        }))
+      };
+    } else {
+      console.warn(`⚠️  [CACHE MISS] No cached articles for "${topic}" (tried: ${normalizedTopic}, ${slugifiedTopic})`);
+      
+      // 🚨 EMERGENCY KILL SWITCH: If NewsAPI fallback is disabled, return empty results
+      if (DISABLE_NEWSAPI_FALLBACK) {
+        console.error(`🚫 [NEWSAPI DISABLED] Returning empty results. Set DISABLE_NEWSAPI_FALLBACK=false to re-enable NewsAPI fallback.`);
+        return { articles: [] };
+      }
+      
+      console.warn(`    ⚠️  This will use a NewsAPI call! Ensure categorization job is running.`);
+    }
+  } catch (error) {
+    console.error(`❌ [CACHE ERROR] Failed to fetch from cache for ${topic}:`, error.message);
+    
+    // 🚨 EMERGENCY KILL SWITCH: If NewsAPI fallback is disabled, return empty results
+    if (DISABLE_NEWSAPI_FALLBACK) {
+      console.error(`🚫 [NEWSAPI DISABLED] Returning empty results. Set DISABLE_NEWSAPI_FALLBACK=false to re-enable NewsAPI fallback.`);
+      return { articles: [] };
+    }
+    
+    console.warn(`    ⚠️  Falling back to NewsAPI (will count against rate limit)`);
+  }
+  
   // Check if this is a trending topic and combine source articles with fresh content
   if (trendingTopicsWithSources && trendingTopicsWithSources[topic]) {
     console.log(`[TRENDING] Combining source articles with fresh content for trending topic: ${topic}`);
@@ -1160,7 +1353,7 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   }
 
   let articles = [];
-  const normalizedTopic = String(topic || "").toLowerCase();
+  // normalizedTopic already defined above for cache checking
   const useCategory = CORE_CATEGORIES.has(normalizedTopic) && normalizedTopic !== "world";
   const isLocal = normalizedTopic === "local";
   const isGeneral = normalizedTopic === "general";
@@ -1418,30 +1611,77 @@ Requirements:
 - Do not use phrases like "welcome back to our podcast" or refer to it as a podcast
 - Format the summary with proper paragraph breaks: use double newlines (\\n\\n) to separate distinct paragraphs
 - Each paragraph should cover a related topic or story, typically 2-4 sentences long
-- Break paragraphs when transitioning between different stories or topics`;
+- Break paragraphs when transitioning between different stories or topics
 
-    console.log(`Sending ${articles.length} articles to ChatGPT for summarization`);
+IMPORTANT: After the summary, add a JSON metadata block with enhanced tagging:
+{
+  "enhancedTags": ["array of relevant topics/categories from these options: politics, technology, business, sports, entertainment, health, science, world, local, economy, climate, education, crime, opinion, and any other relevant tags"],
+  "sentiment": "positive, negative, neutral, or mixed",
+  "keyEntities": ["array of important people, companies, organizations, or places mentioned"],
+  "importance": "low, medium, or high"
+}
+
+Format your response as:
+[SUMMARY TEXT]
+
+---METADATA---
+[JSON OBJECT]`;
+
+    console.log(`Sending ${articles.length} articles to ChatGPT for summarization with enhanced tagging`);
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: "You are a professional news presenter. Create engaging, conversational news summaries with a warm, informative tone. Format your summaries with proper paragraph breaks using double newlines (\\n\\n) to separate distinct topics or stories. Each paragraph should be 2-4 sentences covering a related topic. Do not refer to the summary as a podcast."
+          content: "You are a professional news presenter and analyst. Create engaging, conversational news summaries with a warm, informative tone. Format your summaries with proper paragraph breaks using double newlines (\\n\\n) to separate distinct topics or stories. Each paragraph should be 2-4 sentences covering a related topic. After the summary, provide enhanced metadata in JSON format. Do not refer to the summary as a podcast."
         },
         {
           role: "user",
           content: prompt
         }
       ],
-      max_tokens: Math.min(wordCount * 2, 2000), // Increased to allow for proper word count targets
-      temperature: 0.6, // Reduced for more consistent, faster responses
+      max_tokens: Math.min(wordCount * 2 + 200, 2200), // Extra tokens for metadata
+      temperature: 0.6,
     });
 
-    let summary = completion.choices[0]?.message?.content?.trim();
+    let fullResponse = completion.choices[0]?.message?.content?.trim();
     
-    if (!summary) {
+    if (!fullResponse) {
       throw new Error("No summary generated by ChatGPT");
+    }
+    
+    // Parse summary and metadata
+    let summary = fullResponse;
+    let metadata = {
+      enhancedTags: [String(topic || "").trim()],
+      sentiment: "neutral",
+      keyEntities: [],
+      importance: "medium"
+    };
+    
+    // Check if response contains metadata
+    if (fullResponse.includes('---METADATA---')) {
+      const parts = fullResponse.split('---METADATA---');
+      summary = parts[0].trim();
+      
+      try {
+        // Extract JSON from the metadata section
+        const metadataText = parts[1].trim();
+        const jsonMatch = metadataText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsedMetadata = JSON.parse(jsonMatch[0]);
+          metadata = {
+            enhancedTags: parsedMetadata.enhancedTags || metadata.enhancedTags,
+            sentiment: parsedMetadata.sentiment || metadata.sentiment,
+            keyEntities: parsedMetadata.keyEntities || metadata.keyEntities,
+            importance: parsedMetadata.importance || metadata.importance
+          };
+          console.log(`✅ Enhanced metadata extracted:`, metadata);
+        }
+      } catch (parseError) {
+        console.warn(`⚠️ Failed to parse metadata, using defaults:`, parseError.message);
+      }
     }
     
     // Log actual word count vs target
@@ -1452,7 +1692,9 @@ Requirements:
     summary = ensureCompleteSentence(summary);
 
     console.log(`ChatGPT generated summary: ${summary.length} characters`);
-    return summary;
+    
+    // Return both summary and metadata
+    return { summary, metadata };
 
   } catch (error) {
     console.error("ChatGPT summarization failed:", error);
@@ -1752,13 +1994,25 @@ function authMiddleware(req, res, next) {
 // --- Routes ---
 
 // Health check
-app.get("/api/health", (req, res) => {
-  res.json({
-    status: "ok",
-    jwtConfigured: !!process.env.JWT_SECRET, // true means you're using a real secret
-    newsConfigured: !!process.env.NEWSAPI_KEY,
-    ttsConfigured: !!process.env.OPENAI_API_KEY,
-  });
+app.get("/api/health", async (req, res) => {
+  try {
+    const cacheHealth = await getCacheHealth();
+    res.json({
+      status: "ok",
+      jwtConfigured: !!process.env.JWT_SECRET,
+      newsConfigured: !!process.env.NEWSAPI_KEY,
+      ttsConfigured: !!process.env.OPENAI_API_KEY,
+      cache: cacheHealth
+    });
+  } catch (error) {
+    res.json({
+      status: "ok",
+      jwtConfigured: !!process.env.JWT_SECRET,
+      newsConfigured: !!process.env.NEWSAPI_KEY,
+      ttsConfigured: !!process.env.OPENAI_API_KEY,
+      cache: { healthy: false, message: 'Error checking cache' }
+    });
+  }
 });
 
 // Simple test endpoint
@@ -2096,7 +2350,11 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
           relevant = relevant.filter(isUpliftingNews);
         }
 
-        const summary = await summarizeArticles(topic, geoData, relevant, wordCount, goodNewsOnly, req.user);
+        const summaryResult = await summarizeArticles(topic, geoData, relevant, wordCount, goodNewsOnly, req.user);
+        
+        // Handle both old format (string) and new format (object with metadata)
+        const summary = typeof summaryResult === 'string' ? summaryResult : summaryResult.summary;
+        const metadata = typeof summaryResult === 'object' && summaryResult.metadata ? summaryResult.metadata : null;
 
         // Debug: Check if articles have urlToImage
         if (relevant.length > 0) {
@@ -2119,6 +2377,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
 
         return {
           summary,
+          metadata, // Include enhanced metadata
           sourceItems,
           candidates: topicCandidates
         };
@@ -2486,9 +2745,13 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
               relevant = relevant.filter(isUpliftingNews);
             }
 
-            const summary = await summarizeArticles(topic, { country: location }, relevant, wordCount, goodNewsOnly, req.user);
-            // Track summaries with their topics for transition generation
-            if (summary) summariesWithTopics.push({ summary: summary, topic: topic });
+            const summaryResult = await summarizeArticles(topic, { country: location }, relevant, wordCount, goodNewsOnly, req.user);
+            // Handle both old format (string) and new format (object with metadata)
+            const summary = typeof summaryResult === 'string' ? summaryResult : summaryResult.summary;
+            const metadata = typeof summaryResult === 'object' && summaryResult.metadata ? summaryResult.metadata : null;
+            
+            // Track summaries with their topics and metadata for transition generation
+            if (summary) summariesWithTopics.push({ summary: summary, topic: topic, metadata: metadata });
 
             // Debug: Check if articles have urlToImage
             if (relevant.length > 0) {
@@ -4319,6 +4582,10 @@ function startServer() {
     setTimeout(async () => {
       await fetchAllUSSources();
     }, 2000); // Wait 2 seconds for server to fully start
+    
+    // Schedule article categorization job (runs at 6am and 6pm daily)
+    scheduleCategorization();
+    console.log('✅ Article categorization job scheduled');
     const now = new Date();
     if (SCHEDULER_ENABLED) {
       const firstCheckIn = new Date(now.getTime() + (10 * 60 * 1000));

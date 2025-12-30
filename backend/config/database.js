@@ -14,6 +14,9 @@ const connectDB = async () => {
       useUnifiedTopology: true,
     });
     
+    // Increase max listeners to prevent warnings with the article caching system
+    mongoose.connection.setMaxListeners(20);
+    
     console.log('MongoDB connected successfully');
   } catch (error) {
     console.error('MongoDB connection error:', error);
