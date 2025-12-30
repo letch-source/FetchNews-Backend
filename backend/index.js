@@ -1168,48 +1168,260 @@ async function fetchTopHeadlinesByCategory(category, countryCode, maxResults, ex
 }
 
 // Helper function to prioritize articles based on user feedback
-function prioritizeArticlesByFeedback(articles, user) {
+// Extract keywords from user comments for content filtering
+function extractKeywords(comment) {
+  if (!comment) return [];
+  
+  // Common words to ignore
+  const stopWords = new Set([
+    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+    'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'been',
+    'be', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+    'should', 'may', 'might', 'can', 'about', 'more', 'less', 'much', 'many',
+    'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they',
+    'want', 'like', 'love', 'hate', 'need', 'prefer', 'see', 'get', 'give',
+    'topic', 'topics', 'news', 'article', 'articles', 'story', 'stories', 'coverage'
+  ]);
+  
+  // Extract words (2+ chars, alphanumeric)
+  const words = comment.toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(word => word.length >= 2 && !stopWords.has(word));
+  
+  // Look for key phrases and concepts across ALL topics
+  const keywords = new Set();
+  const text = comment.toLowerCase();
+  
+  // Comprehensive concept map for ALL topic categories
+  const conceptMap = {
+    // TECHNOLOGY
+    'ai': ['ai', 'artificial intelligence', 'machine learning', 'chatgpt', 'gpt', 'llm', 'neural network', 'deep learning'],
+    'crypto': ['crypto', 'cryptocurrency', 'bitcoin', 'ethereum', 'blockchain', 'nft', 'web3'],
+    'gaming': ['gaming', 'games', 'xbox', 'playstation', 'nintendo', 'esports', 'video game'],
+    'smartphone': ['smartphone', 'iphone', 'android', 'mobile phone', 'samsung', 'pixel', 'phone'],
+    'social media': ['social media', 'facebook', 'twitter', 'instagram', 'tiktok', 'meta', 'snapchat'],
+    'space': ['space', 'spacex', 'nasa', 'rocket', 'mars', 'satellite', 'astronomy'],
+    'ev': ['electric vehicle', 'ev', 'tesla', 'electric car', 'hybrid'],
+    'vr': ['vr', 'virtual reality', 'ar', 'augmented reality', 'metaverse'],
+    'cybersecurity': ['security', 'hack', 'breach', 'cyber', 'privacy', 'data breach', 'ransomware'],
+    
+    // POLITICS
+    'election': ['election', 'voting', 'ballot', 'polls', 'campaign'],
+    'congress': ['congress', 'senate', 'house', 'legislation', 'bill'],
+    'president': ['president', 'white house', 'executive order', 'administration'],
+    'court': ['court', 'supreme court', 'judge', 'ruling', 'justice'],
+    'immigration': ['immigration', 'border', 'visa', 'refugee', 'asylum'],
+    'healthcare': ['healthcare', 'obamacare', 'insurance', 'medicaid', 'medicare'],
+    'foreign policy': ['foreign policy', 'diplomacy', 'international', 'embassy'],
+    
+    // SPORTS
+    'football': ['football', 'nfl', 'super bowl', 'quarterback'],
+    'basketball': ['basketball', 'nba', 'playoffs', 'championship'],
+    'baseball': ['baseball', 'mlb', 'world series', 'pitcher'],
+    'soccer': ['soccer', 'football', 'fifa', 'world cup', 'premier league'],
+    'hockey': ['hockey', 'nhl', 'stanley cup'],
+    'olympics': ['olympics', 'olympic games'],
+    'tennis': ['tennis', 'wimbledon', 'us open'],
+    'golf': ['golf', 'pga', 'masters'],
+    
+    // ENTERTAINMENT
+    'movies': ['movie', 'film', 'cinema', 'box office', 'hollywood'],
+    'tv': ['tv show', 'television', 'series', 'streaming', 'netflix', 'hulu'],
+    'music': ['music', 'album', 'concert', 'spotify', 'grammy'],
+    'celebrity': ['celebrity', 'actor', 'actress', 'star'],
+    'awards': ['awards', 'oscar', 'emmy', 'golden globe'],
+    'reality tv': ['reality tv', 'reality show'],
+    
+    // BUSINESS
+    'stocks': ['stock', 'stocks', 'stock market', 'nasdaq', 'dow jones', 'sp500'],
+    'earnings': ['earnings', 'quarterly', 'revenue', 'profit'],
+    'startup': ['startup', 'venture capital', 'vc', 'funding', 'seed round'],
+    'merger': ['merger', 'acquisition', 'buyout', 'takeover'],
+    'economy': ['economy', 'economic', 'gdp', 'inflation', 'recession'],
+    'real estate': ['real estate', 'housing', 'mortgage', 'property'],
+    
+    // HEALTH/SCIENCE
+    'covid': ['covid', 'coronavirus', 'pandemic', 'vaccine'],
+    'medical': ['medical', 'health', 'disease', 'treatment', 'clinical'],
+    'climate': ['climate', 'global warming', 'carbon', 'emissions'],
+    'research': ['research', 'study', 'scientific', 'laboratory'],
+    
+    // GENERAL
+    'crime': ['crime', 'criminal', 'police', 'arrest', 'investigation'],
+    'weather': ['weather', 'storm', 'hurricane', 'flood', 'wildfire'],
+    'local': ['local', 'community', 'neighborhood', 'city'],
+  };
+  
+  // Check for concept matches
+  for (const [concept, patterns] of Object.entries(conceptMap)) {
+    for (const pattern of patterns) {
+      if (text.includes(pattern)) {
+        keywords.add(concept);
+      }
+    }
+  }
+  
+  // IMPORTANT: Add ALL significant individual words (3+ chars, not in stop words)
+  // This ensures we catch custom topics, company names, and any specific terms
+  // the user mentions, even if not in our predefined concept map
+  words.forEach(word => {
+    if (word.length >= 3) {
+      keywords.add(word);
+    }
+  });
+  
+  return Array.from(keywords);
+}
+
+// Example outputs:
+// "No AI or crypto" -> ['ai', 'crypto']
+// "Love basketball and tennis" -> ['basketball', 'tennis']
+// "More SpaceX coverage" -> ['space', 'spacex']
+// "No Elon Musk drama" -> ['elon', 'musk', 'drama']  <- catches custom terms!
+
+function prioritizeArticlesByFeedback(articles, user, currentTopic = null) {
   if (!user || !articles || articles.length === 0) {
     return articles;
   }
   
+  console.log(`🎯 [PERSONALIZATION] Prioritizing ${articles.length} articles for user ${user.email}`);
+  
+  // Extract content preferences from comments
+  const likedKeywords = new Set();
+  const dislikedKeywords = new Set();
+  
+  if (currentTopic && user.topicPreferences) {
+    const topicKey = currentTopic.toLowerCase();
+    const topicPref = user.topicPreferences.get(topicKey);
+    if (topicPref && topicPref.comments) {
+      console.log(`   💬 Analyzing ${topicPref.comments.length} comments for content preferences`);
+      
+      topicPref.comments.forEach(commentObj => {
+        const keywords = extractKeywords(commentObj.comment);
+        if (keywords.length > 0) {
+          console.log(`      ${commentObj.feedback === 'like' ? '✅' : '❌'} Keywords: ${keywords.join(', ')}`);
+          keywords.forEach(kw => {
+            if (commentObj.feedback === 'like') {
+              likedKeywords.add(kw);
+            } else {
+              dislikedKeywords.add(kw);
+            }
+          });
+        }
+      });
+      
+      if (likedKeywords.size > 0) {
+        console.log(`   🎯 Content WANTED: ${Array.from(likedKeywords).join(', ')}`);
+      }
+      if (dislikedKeywords.size > 0) {
+        console.log(`   🚫 Content AVOIDED: ${Array.from(dislikedKeywords).join(', ')}`);
+      }
+    }
+  }
+  
+  // Build sets of liked/disliked sources
   const likedUrls = new Set((user.likedArticles || []).map(a => a.url?.toLowerCase()).filter(Boolean));
   const dislikedUrls = new Set((user.dislikedArticles || []).map(a => a.url?.toLowerCase()).filter(Boolean));
-  const likedSources = new Set((user.likedArticles || []).map(a => a.source?.toLowerCase()).filter(Boolean));
-  const dislikedSources = new Set((user.dislikedArticles || []).map(a => a.source?.toLowerCase()).filter(Boolean));
   
-  // Separate articles into categories
-  const liked = [];
-  const neutral = [];
-  const disliked = [];
+  // Topic-specific source preferences
+  const topicLikedSources = new Set(
+    (user.likedArticles || [])
+      .filter(a => !currentTopic || a.topic?.toLowerCase() === currentTopic.toLowerCase())
+      .map(a => a.source?.toLowerCase())
+      .filter(Boolean)
+  );
   
-  articles.forEach(article => {
+  const topicDislikedSources = new Set(
+    (user.dislikedArticles || [])
+      .filter(a => !currentTopic || a.topic?.toLowerCase() === currentTopic.toLowerCase())
+      .map(a => a.source?.toLowerCase())
+      .filter(Boolean)
+  );
+  
+  // General source preferences (all topics)
+  const allLikedSources = new Set((user.likedArticles || []).map(a => a.source?.toLowerCase()).filter(Boolean));
+  const allDislikedSources = new Set((user.dislikedArticles || []).map(a => a.source?.toLowerCase()).filter(Boolean));
+  
+  console.log(`   ✅ Liked sources for this topic: ${topicLikedSources.size}`);
+  console.log(`   ❌ Disliked sources for this topic: ${topicDislikedSources.size}`);
+  
+  // Separate articles into categories with scoring
+  const scored = articles.map(article => {
     const articleUrl = (article.url || '').toLowerCase();
     const articleSource = ((article.source && article.source.name) || article.source || '').toLowerCase();
+    const articleText = `${article.title || ''} ${article.description || ''}`.toLowerCase();
     
-    // Check if article URL matches a liked/disliked article
-    const isLiked = likedUrls.has(articleUrl);
-    const isDisliked = dislikedUrls.has(articleUrl);
+    let score = 0;
     
-    // Check if article source matches a liked/disliked source
-    const sourceLiked = likedSources.has(articleSource);
-    const sourceDisliked = dislikedSources.has(articleSource);
+    // Exact article match (strongest signal)
+    if (likedUrls.has(articleUrl)) score += 100;
+    if (dislikedUrls.has(articleUrl)) score -= 100;
     
-    if (isDisliked || sourceDisliked) {
-      disliked.push(article);
-    } else if (isLiked || sourceLiked) {
-      liked.push(article);
-    } else {
-      neutral.push(article);
+    // Content-based scoring (NEW - most important for subtopic filtering)
+    let contentMatches = { liked: 0, disliked: 0 };
+    
+    likedKeywords.forEach(keyword => {
+      if (articleText.includes(keyword)) {
+        contentMatches.liked++;
+        score += 40; // High boost for wanted content
+      }
+    });
+    
+    dislikedKeywords.forEach(keyword => {
+      if (articleText.includes(keyword)) {
+        contentMatches.disliked++;
+        score -= 60; // Strong penalty for unwanted content
+      }
+    });
+    
+    // Log significant content matches
+    if (contentMatches.liked > 0 || contentMatches.disliked > 0) {
+      const title = (article.title || '').substring(0, 60);
+      if (contentMatches.disliked > 0) {
+        console.log(`      🚫 Filtering: "${title}..." (matches ${contentMatches.disliked} disliked keywords)`);
+      } else if (contentMatches.liked > 0) {
+        console.log(`      ✨ Boosting: "${title}..." (matches ${contentMatches.liked} liked keywords)`);
+      }
     }
+    
+    // Topic-specific source match (moderate signal - less important than content)
+    if (topicLikedSources.has(articleSource)) score += 30;
+    if (topicDislikedSources.has(articleSource)) score -= 30;
+    
+    // General source match (weak signal)
+    if (allLikedSources.has(articleSource)) score += 15;
+    if (allDislikedSources.has(articleSource)) score -= 15;
+    
+    return { article, score };
   });
   
-  // Return prioritized list: liked articles first, then neutral, exclude disliked
-  // But keep some disliked articles at the end (10%) to avoid filter bubbles
-  const dislikedToKeep = Math.floor(disliked.length * 0.1);
-  const dislikedKept = disliked.slice(0, dislikedToKeep);
+  // Sort by score (highest first)
+  scored.sort((a, b) => b.score - a.score);
   
-  return [...liked, ...neutral, ...dislikedKept];
+  // Filter out heavily disliked (score < -40) but keep some for diversity
+  const filtered = scored.filter(s => s.score >= -40);
+  const removed = scored.filter(s => s.score < -40);
+  
+  // Keep 10% of removed articles for diversity, but prioritize least negative
+  removed.sort((a, b) => b.score - a.score); // Best of the worst
+  const diversityKeep = Math.max(1, Math.floor(removed.length * 0.1));
+  
+  const final = [...filtered, ...removed.slice(0, diversityKeep)].map(s => s.article);
+  
+  const filteredCount = articles.length - final.length;
+  console.log(`   🔄 Result: ${final.length} articles (${filtered.length} kept, ${diversityKeep} diversity, ${filteredCount} filtered)`);
+  
+  // Log content filtering summary
+  const contentFiltered = scored.filter(s => s.score < -40 && Array.from(dislikedKeywords).some(kw => 
+    `${s.article.title || ''} ${s.article.description || ''}`.toLowerCase().includes(kw)
+  )).length;
+  
+  if (contentFiltered > 0) {
+    console.log(`   🎯 Content-filtered ${contentFiltered} articles matching unwanted keywords`);
+  }
+  
+  return final;
 }
 
 async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = []) {
@@ -1613,6 +1825,15 @@ Requirements:
 - Each paragraph should cover a related topic or story, typically 2-4 sentences long
 - Break paragraphs when transitioning between different stories or topics
 
+CRITICAL - Avoid Vague Content:
+- ALWAYS include specific names, facts, numbers, and concrete details
+- NEVER write vague statements like "X highlights some stories" without stating what the stories are
+- NEVER use phrases like "there are developments" without explaining what they are
+- Every sentence must provide actionable information (who, what, when, where, why, how)
+- If mentioning a person, briefly identify them (e.g., "tech journalist David Pogue" not just "David Pogue")
+- If referencing events or developments, state the specifics, not just that they exist
+- Avoid meta-commentary that doesn't add information value
+
 IMPORTANT: After the summary, add a JSON metadata block with enhanced tagging:
 {
   "enhancedTags": ["array of relevant topics/categories from these options: politics, technology, business, sports, entertainment, health, science, world, local, economy, climate, education, crime, opinion, and any other relevant tags"],
@@ -1634,7 +1855,7 @@ Format your response as:
       messages: [
         {
           role: "system",
-          content: "You are a professional news presenter and analyst. Create engaging, conversational news summaries with a warm, informative tone. Format your summaries with proper paragraph breaks using double newlines (\\n\\n) to separate distinct topics or stories. Each paragraph should be 2-4 sentences covering a related topic. After the summary, provide enhanced metadata in JSON format. Do not refer to the summary as a podcast."
+          content: "You are a professional news presenter and analyst. Create engaging, conversational news summaries with a warm, informative tone that prioritizes concrete information. Every sentence must provide specific value - include names, numbers, facts, and details. Never write vague meta-commentary like 'Person X discusses stories' without stating what the stories actually are. Always identify people briefly (e.g., 'CEO of Tesla' or 'tech journalist'). Format your summaries with proper paragraph breaks using double newlines (\\n\\n) to separate distinct topics or stories. Each paragraph should be 2-4 sentences covering a related topic. After the summary, provide enhanced metadata in JSON format. Do not refer to the summary as a podcast."
         },
         {
           role: "user",
@@ -2295,7 +2516,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         if (req.user && mongoose.connection.readyState === 1) {
           const user = await User.findById(req.user.id);
           if (user) {
-            articles = prioritizeArticlesByFeedback(articles, user);
+            articles = prioritizeArticlesByFeedback(articles, user, topic);
             console.log(`[FEEDBACK] Prioritized articles for user ${user.email}: ${articles.length} articles`);
           }
         }
@@ -2369,7 +2590,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
             .replace(/\s+/g, " ") // Normalize whitespace
             .trim()
             .slice(0, 180), // Optimized truncation length
-          source: a.source || "",
+          source: typeof a.source === 'object' ? (a.source?.name || a.source?.id || "") : (a.source || ""),
           url: a.url || "",
           topic,
           imageUrl: a.urlToImage || "",
@@ -2401,12 +2622,23 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     // Process all topics in parallel for better performance
     const topicResults = await Promise.all(topics.map(topic => processTopic(topic)));
     
+    // Build structured topic sections with their articles
+    const topicSections = [];
+    
     // Combine results from parallel processing, tracking which summary belongs to which topic
     for (let i = 0; i < topicResults.length; i++) {
       const result = topicResults[i];
       const topic = topics[i];
       if (result.summary) {
         summariesWithTopics.push({ summary: result.summary, topic: topic });
+        
+        // Store structured topic section
+        topicSections.push({
+          topic: topic,
+          summary: result.summary,
+          articles: result.sourceItems,
+          metadata: result.metadata
+        });
       }
       items.push(...result.sourceItems);
       globalCandidates.push(...result.candidates);
@@ -2516,6 +2748,11 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     const appInForeground = req.query.appInForeground !== 'false' && req.body.appInForeground !== false;
     
     // Send response first
+    console.log(`📊 [TOPIC FEEDBACK] Sending ${topicSections.length} topic sections`);
+    for (const section of topicSections) {
+      console.log(`   - Topic: ${section.topic}, Articles: ${section.articles.length}`);
+    }
+    
     res.json({
       items,
       combined: {
@@ -2523,6 +2760,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         title: title,
         summary: combinedText,
         audioUrl: null,
+        topicSections: topicSections // Include structured topic data for feedback
       },
     });
 
@@ -2669,6 +2907,7 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
         const items = [];
         const summariesWithTopics = [];
         const globalCandidates = [];
+        const topicSections = []; // Track structured topic sections
 
 
         function formatTopicList(list, geoObj) {
@@ -2765,13 +3004,23 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
                 .replace(/\s+/g, " ") // Normalize whitespace
                 .trim()
                 .slice(0, 180), // Optimized truncation length
-              source: a.source || "",
+              source: typeof a.source === 'object' ? (a.source?.name || a.source?.id || "") : (a.source || ""),
               url: a.url || "",
               topic,
               imageUrl: a.urlToImage || "",
             }));
 
             items.push(...sourceItems);
+            
+            // Store structured topic section
+            if (summary) {
+              topicSections.push({
+                topic: topic,
+                summary: summary,
+                articles: sourceItems,
+                metadata: metadata
+              });
+            }
           } catch (innerErr) {
             console.error("batch summarize topic failed", topic, innerErr);
             items.push({
@@ -2817,6 +3066,7 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
             title: title,
             summary: combinedText,
             audioUrl: null,
+            topicSections: topicSections // Include structured topic data for feedback
           },
         };
       })
