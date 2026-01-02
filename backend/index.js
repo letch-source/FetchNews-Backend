@@ -3567,7 +3567,14 @@ app.post("/api/tts", async (req, res) => {
 // --- AI Fetch Assistant endpoint ---
 app.post("/api/fetch-assistant", authenticateToken, async (req, res) => {
   try {
-    const { fetchId, userMessage, conversationHistory = [] } = req.body || {};
+    const { 
+      fetchId, 
+      userMessage, 
+      conversationHistory = [],
+      audioProgress = null,
+      currentTime = null,
+      totalDuration = null
+    } = req.body || {};
     
     if (!userMessage || typeof userMessage !== "string") {
       return res.status(400).json({ error: "userMessage is required" });
@@ -3614,11 +3621,34 @@ app.post("/api/fetch-assistant", authenticateToken, async (req, res) => {
       ? fetchContext.articles.map(a => `${a.index}. ${a.title} (${a.source})`).join("\n")
       : "No articles available";
     
+    // Build audio position context
+    let audioPositionContext = "";
+    if (audioProgress !== null && currentTime && totalDuration) {
+      audioPositionContext = `\n**Audio Position:**
+- The user is currently ${audioProgress}% through the audio (${currentTime} of ${totalDuration})`;
+      
+      // Infer which topic they might be listening to based on progress
+      if (audioProgress < 20) {
+        audioPositionContext += `\n- They are likely near the beginning of the fetch`;
+      } else if (audioProgress > 80) {
+        audioPositionContext += `\n- They are near the end of the fetch`;
+      } else {
+        audioPositionContext += `\n- They are in the middle of the fetch`;
+      }
+      
+      // If topics are available, estimate which topic based on even distribution
+      if (fetchContext.topics.length > 0) {
+        const topicIndex = Math.floor((audioProgress / 100) * fetchContext.topics.length);
+        const currentTopic = fetchContext.topics[Math.min(topicIndex, fetchContext.topics.length - 1)];
+        audioPositionContext += `\n- Based on their position, they may be hearing about: ${currentTopic}`;
+      }
+    }
+    
     const systemPrompt = `You are a helpful AI assistant for FetchNews, helping users understand their news fetch.
 
 **Current Fetch Context:**
 - Topics: ${fetchContext.topics.join(", ")}
-- Number of articles: ${fetchContext.articles.length}
+- Number of articles: ${fetchContext.articles.length}${audioPositionContext}
 
 **Summary:**
 ${fetchContext.summary}
@@ -3632,6 +3662,8 @@ ${articlesList}
 - Be conversational, helpful, and concise (2-3 sentences unless asked for more)
 - If asked about a specific topic or article, focus your response accordingly
 - You can reference article numbers (e.g., "Article 3 discusses...")
+- When the user asks vague questions like "this" or "that", use their audio position context to understand what they're likely referring to
+- If they say things like "what about this?" or "is the government doing anything?" and you know their position in the audio, infer the topic they mean
 - If information isn't in this fetch, politely say so`;
 
     // Build conversation messages for OpenAI
