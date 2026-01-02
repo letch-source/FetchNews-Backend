@@ -1437,11 +1437,51 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
   
   // ALWAYS check cache first (for all topics)
   try {
-    // Try both the normalized topic and slugified version
-    const cachedArticles = await ArticleCache.find({
+    let cachedArticles = [];
+    
+    // First try: Category-based search (for core categories and custom topics)
+    cachedArticles = await ArticleCache.find({
       categories: { $in: [normalizedTopic, slugifiedTopic] },
       expiresAt: { $gt: new Date() }
     }).sort({ publishedAt: -1 }).limit(maxResults);
+    
+    // Second try: Content-based search for trending topics (if no category match)
+    if (cachedArticles.length === 0 && !coreCategories.includes(normalizedTopic)) {
+      console.log(`🔍 [CONTENT SEARCH] No category match, trying content-based search for: ${topic}`);
+      
+      // Build MongoDB text search for multi-word topics
+      // Escape special regex characters and create flexible search
+      const escapedTopic = normalizedTopic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      
+      // Use case-insensitive regex that matches the phrase anywhere in title/description
+      const searchRegex = new RegExp(escapedTopic, 'i');
+      
+      cachedArticles = await ArticleCache.find({
+        $or: [
+          { title: searchRegex },
+          { description: searchRegex }
+        ],
+        expiresAt: { $gt: new Date() }
+      }).sort({ publishedAt: -1 }).limit(maxResults * 2); // Get more results for content search
+      
+      // Score articles by relevance (title matches are better than description matches)
+      if (cachedArticles.length > 0) {
+        const scored = cachedArticles.map(article => {
+          const titleMatch = (article.title || '').toLowerCase().includes(normalizedTopic);
+          const descMatch = (article.description || '').toLowerCase().includes(normalizedTopic);
+          return {
+            article,
+            score: (titleMatch ? 10 : 0) + (descMatch ? 1 : 0)
+          };
+        });
+        
+        // Sort by score and take top results
+        scored.sort((a, b) => b.score - a.score);
+        cachedArticles = scored.slice(0, maxResults).map(s => s.article);
+        
+        console.log(`✅ [CONTENT MATCH] Found ${cachedArticles.length} articles by content search for: ${topic}`);
+      }
+    }
     
     // Use cache if we have ANY articles (no minimum threshold)
     if (cachedArticles && cachedArticles.length > 0) {
@@ -1462,7 +1502,7 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
         }))
       };
     } else {
-      console.warn(`⚠️  [CACHE MISS] No cached articles for "${topic}" (tried: ${normalizedTopic}, ${slugifiedTopic})`);
+      console.warn(`⚠️  [CACHE MISS] No cached articles for "${topic}" (tried: category match + content search)`);
       
       // 🚨 EMERGENCY KILL SWITCH: If NewsAPI fallback is disabled, return empty results
       if (DISABLE_NEWSAPI_FALLBACK) {
