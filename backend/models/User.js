@@ -104,6 +104,10 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  summaryLength: {
+    type: String,
+    default: '200'
+  },
   lastFetchedTopics: {
     type: [String],
     default: []
@@ -412,7 +416,7 @@ userSchema.methods.getPreferences = function() {
     selectedVoice: capitalizeVoice(this.selectedVoice) || 'Alloy',
     playbackRate: this.playbackRate || 1.0,
     upliftingNewsOnly: this.upliftingNewsOnly || false,
-    length: this.preferences?.length || '200',
+    length: this.summaryLength || '200',
     lastFetchedTopics: this.lastFetchedTopics || [],
     selectedTopics: this.selectedTopics || [],
     excludedNewsSources: this.excludedNewsSources || [],
@@ -439,6 +443,11 @@ userSchema.methods.updatePreferences = async function(preferences) {
     this.upliftingNewsOnly = preferences.upliftingNewsOnly;
   }
   
+  // Update summary length (only if provided)
+  if (preferences.length !== undefined) {
+    this.summaryLength = preferences.length;
+  }
+  
   // Update array values (only if provided)
   if (preferences.lastFetchedTopics !== undefined) {
     this.lastFetchedTopics = preferences.lastFetchedTopics;
@@ -456,14 +465,6 @@ userSchema.methods.updatePreferences = async function(preferences) {
   }
   // Do NOT update scheduledSummaries via updatePreferences - it's managed separately via /api/scheduled-summaries
   // This prevents version conflicts when both routes try to save at the same time
-  
-  // Update length in preferences object
-  if (!this.preferences) {
-    this.preferences = {};
-  }
-  if (preferences.length !== undefined) {
-    this.preferences.length = preferences.length;
-  }
   
   // Retry logic for version conflicts
   let retries = 3;
@@ -489,8 +490,7 @@ userSchema.methods.updatePreferences = async function(preferences) {
             freshUser.upliftingNewsOnly = preferences.upliftingNewsOnly;
           }
           if (preferences.length !== undefined) {
-            if (!freshUser.preferences) freshUser.preferences = {};
-            freshUser.preferences.length = preferences.length;
+            freshUser.summaryLength = preferences.length;
           }
           if (preferences.lastFetchedTopics !== undefined) {
             freshUser.lastFetchedTopics = preferences.lastFetchedTopics;

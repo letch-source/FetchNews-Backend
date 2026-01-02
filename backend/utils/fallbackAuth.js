@@ -83,11 +83,19 @@ function deserializeUser(userData) {
   if (!user.lastFetchedTopics || !Array.isArray(user.lastFetchedTopics)) {
     user.lastFetchedTopics = [];
   }
+  if (!user.excludedNewsSources || !Array.isArray(user.excludedNewsSources)) {
+    // Migrate from old selectedNewsSources field if it exists
+    user.excludedNewsSources = user.selectedNewsSources || [];
+  }
   if (!user.selectedNewsSources || !Array.isArray(user.selectedNewsSources)) {
     user.selectedNewsSources = [];
   }
   if (!user.scheduledSummaries || !Array.isArray(user.scheduledSummaries)) {
     user.scheduledSummaries = [];
+  }
+  // Ensure summaryLength exists (for users created before this field was added)
+  if (!user.summaryLength) {
+    user.summaryLength = user.preferences?.length || '200';
   }
   return user;
 }
@@ -208,8 +216,11 @@ const fallbackAuth = {
       selectedVoice: 'alloy',
       playbackRate: 1.0,
       upliftingNewsOnly: false,
+      summaryLength: '200',
       lastFetchedTopics: [],
       selectedTopics: [],
+      excludedNewsSources: [],
+      // Legacy field for migration (deprecated)
       selectedNewsSources: [],
       selectedCountry: 'us',
       scheduledSummaries: [],
@@ -380,10 +391,12 @@ const fallbackAuth = {
       selectedVoice: capitalizeVoice(user.selectedVoice) || 'Alloy',
       playbackRate: user.playbackRate || 1.0,
       upliftingNewsOnly: user.upliftingNewsOnly || false,
-      length: user.preferences?.length || '200',
+      length: user.summaryLength || '200',
       lastFetchedTopics: user.lastFetchedTopics || [],
       selectedTopics: user.selectedTopics || [],
-      selectedNewsSources: user.selectedNewsSources || [],
+      excludedNewsSources: user.excludedNewsSources || user.selectedNewsSources || [],
+      // Legacy field for migration
+      selectedNewsSources: user.excludedNewsSources || user.selectedNewsSources || [],
       selectedCountry: user.selectedCountry || 'us',
       scheduledSummaries: user.scheduledSummaries || []
     };
@@ -409,6 +422,11 @@ const fallbackAuth = {
       user.upliftingNewsOnly = preferences.upliftingNewsOnly;
     }
     
+    // Update summary length (only if provided)
+    if (preferences.length !== undefined) {
+      user.summaryLength = preferences.length;
+    }
+    
     // Update array values (only if provided)
     if (preferences.lastFetchedTopics !== undefined) {
       user.lastFetchedTopics = preferences.lastFetchedTopics;
@@ -417,22 +435,19 @@ const fallbackAuth = {
       user.selectedTopics = preferences.selectedTopics;
       console.log(`[FALLBACK AUTH] Updated selectedTopics to: ${JSON.stringify(user.selectedTopics)}`);
     }
+    if (preferences.excludedNewsSources !== undefined) {
+      user.excludedNewsSources = preferences.excludedNewsSources;
+    }
+    // Legacy field support for migration
     if (preferences.selectedNewsSources !== undefined) {
-      user.selectedNewsSources = preferences.selectedNewsSources;
+      // Migrate old allowlist to new blocklist
+      user.excludedNewsSources = preferences.selectedNewsSources;
     }
     if (preferences.selectedCountry !== undefined) {
       user.selectedCountry = preferences.selectedCountry || 'us';
     }
     if (preferences.scheduledSummaries !== undefined) {
       user.scheduledSummaries = preferences.scheduledSummaries;
-    }
-    
-    // Update length in preferences object
-    if (!user.preferences) {
-      user.preferences = {};
-    }
-    if (preferences.length !== undefined) {
-      user.preferences.length = preferences.length;
     }
     
     user.updatedAt = new Date();
