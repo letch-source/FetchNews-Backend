@@ -77,8 +77,10 @@ function getTimeBasedFetchName(timestamp = null) {
 
 // Helper function to save user with retry logic for version conflicts
 // Preserves all changes made to the user object, not just scheduledSummaries
-async function saveUserWithRetry(user, retries = 3) {
+async function saveUserWithRetry(user, retries = 5, initialDelay = 100) {
   let currentUser = user;
+  let attempt = 0;
+  const maxRetries = retries;
   
   while (retries > 0) {
     try {
@@ -95,7 +97,19 @@ async function saveUserWithRetry(user, retries = 3) {
     } catch (error) {
       if (error.name === 'VersionError' && retries > 1) {
         retries--; // Decrement retry counter
-        console.log(`[SCHEDULED_SUMMARY] Version conflict, retrying... (${retries} retries left)`);
+        attempt++;
+        
+        // Calculate exponential backoff with jitter
+        // Base delay increases exponentially: 100ms, 200ms, 400ms, 800ms, 1600ms
+        const baseDelay = initialDelay * Math.pow(2, attempt - 1);
+        // Add random jitter (0-50% of base delay) to prevent thundering herd
+        const jitter = Math.random() * baseDelay * 0.5;
+        const delay = baseDelay + jitter;
+        
+        console.log(`[SCHEDULED_SUMMARY] Version conflict, retrying in ${Math.round(delay)}ms... (${retries} retries left)`);
+        
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, delay));
         
         // Reload the document to get the latest version
         const freshUser = await User.findById(currentUser._id);
@@ -149,29 +163,46 @@ async function saveUserWithRetry(user, retries = 3) {
           }
         }
         
-        // Explicitly check for common fields that might have been modified
-        // This ensures we don't miss any fields even if modifiedPaths() doesn't catch them
+        // Explicitly check for scheduled-summary-related fields only
+        // DO NOT include auth-related fields (resetPasswordToken, emailVerificationToken, etc.)
+        // to avoid conflicts with concurrent auth operations
         const fieldsToCheck = [
           'scheduledSummaries',
           'summaryHistory',
           'dailyUsageCount',
           'lastUsageDate',
           'preferences',
-          'resetPasswordToken',
-          'resetPasswordExpires',
-          'emailVerificationToken',
-          'emailVerificationExpires',
           'selectedVoice',
           'playbackRate',
           'upliftingNewsOnly',
           'lastFetchedTopics',
           'selectedTopics',
           'excludedNewsSources',
-          'selectedCountry'
+          'selectedCountry',
+          'deviceToken'
         ];
         
+        // Filter the changes to preserve - only keep scheduled-summary-related fields
+        const filteredChanges = {};
+        for (const [path, value] of Object.entries(changesToPreserve)) {
+          // Check if this path should be preserved
+          const isRelevantField = fieldsToCheck.some(field => 
+            path === field || path.startsWith(field + '.')
+          );
+          
+          if (isRelevantField) {
+            filteredChanges[path] = value;
+          } else {
+            console.log(`[SCHEDULED_SUMMARY] Skipping non-relevant field during retry: ${path}`);
+          }
+        }
+        
+        // Replace changesToPreserve with filtered version
+        Object.keys(changesToPreserve).forEach(key => delete changesToPreserve[key]);
+        Object.assign(changesToPreserve, filteredChanges);
+        
         for (const field of fieldsToCheck) {
-          if (currentUser.isModified(field)) {
+          if (currentUser.isModified(field) && !changesToPreserve[field]) {
             const value = currentUser[field];
             if (value !== undefined) {
               if (typeof value === 'object' && value !== null && !(value instanceof Date) && !(value instanceof mongoose.Types.ObjectId)) {
@@ -186,6 +217,9 @@ async function saveUserWithRetry(user, retries = 3) {
             }
           }
         }
+        
+        console.log(`[SCHEDULED_SUMMARY] Preserving ${Object.keys(changesToPreserve).length} field(s): ${Object.keys(changesToPreserve).join(', ')}`);
+      
         
         // Apply our preserved changes to the fresh user
         for (const [path, value] of Object.entries(changesToPreserve)) {

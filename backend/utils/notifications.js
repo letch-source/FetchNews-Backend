@@ -138,8 +138,23 @@ async function sendPushNotification(deviceToken, title, body, data = {}) {
       return false;
     }
     
-    // Check for BadEnvironmentKeyInToken error
+    // Check for BadEnvironmentKeyInToken error and invalid token errors
     if (result.failed && result.failed.length > 0) {
+      const failedNotification = result.failed[0];
+      const reason = failedNotification.response?.reason;
+      
+      // Check for invalid/bad device token reasons
+      const invalidTokenReasons = [
+        'BadDeviceToken',
+        'Unregistered',
+        'InvalidToken'
+      ];
+      
+      if (reason && invalidTokenReasons.includes(reason)) {
+        console.error(`[NOTIFICATIONS] Invalid device token detected (${reason}): ${deviceToken.substring(0, 8)}...`);
+        return 'BAD_TOKEN'; // Signal to caller that token should be removed
+      }
+      
       const badEnvError = result.failed.find(f => 
         f.response && f.response.reason === 'BadEnvironmentKeyInToken'
       );
@@ -151,6 +166,15 @@ async function sendPushNotification(deviceToken, title, body, data = {}) {
         result = await fallbackProvider.send(notification, deviceToken);
         
         if (result.failed && result.failed.length > 0) {
+          const retryFailedNotification = result.failed[0];
+          const retryReason = retryFailedNotification.response?.reason;
+          
+          // Check for invalid token on retry too
+          if (retryReason && invalidTokenReasons.includes(retryReason)) {
+            console.error(`[NOTIFICATIONS] Invalid device token detected on retry (${retryReason}): ${deviceToken.substring(0, 8)}...`);
+            return 'BAD_TOKEN';
+          }
+          
           console.error(`[NOTIFICATIONS] Failed to send notification (${fallbackEnv}):`, result.failed);
           return false;
         }
@@ -198,6 +222,23 @@ async function sendScheduledSummaryNotification(deviceToken, summaryTitle, summa
 }
 
 /**
+ * Send notification for Fetch ready
+ * @param {string} deviceToken - The device token
+ * @param {string} fetchTitle - Title of the Fetch
+ */
+async function sendFetchReadyNotification(deviceToken, fetchTitle) {
+  return await sendPushNotification(
+    deviceToken,
+    'Your Fetch is Ready! 📰',
+    `${fetchTitle} is ready to read.`,
+    {
+      notificationType: 'fetchReady',
+      action: 'openApp'
+    }
+  );
+}
+
+/**
  * Send engagement reminder notification
  * @param {string} deviceToken - The device token
  * @param {string} message - Custom message (optional)
@@ -240,6 +281,7 @@ function shutdown() {
 module.exports = {
   sendPushNotification,
   sendScheduledSummaryNotification,
+  sendFetchReadyNotification,
   sendEngagementReminder,
   initializeAPNs,
   shutdown

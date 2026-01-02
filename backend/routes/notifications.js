@@ -152,7 +152,7 @@ router.post('/test', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'No device token registered' });
     }
 
-    const success = await sendPushNotification(
+    const result = await sendPushNotification(
       deviceToken,
       title || 'Test Notification',
       body || 'This is a test notification from Fetch News',
@@ -162,7 +162,26 @@ router.post('/test', authenticateToken, async (req, res) => {
       }
     );
 
-    if (success) {
+    if (result === 'BAD_TOKEN') {
+      // Invalid token - clear it from user record
+      console.log(`[NOTIFICATIONS] Clearing invalid device token for user ${user.email}`);
+      if (mongoose.connection.readyState === 1) {
+        const freshUser = await User.findById(user._id || user.id);
+        if (freshUser) {
+          freshUser.deviceToken = null;
+          await freshUser.save();
+        }
+      } else {
+        if (user.preferences) {
+          user.preferences.deviceToken = null;
+          await fallbackAuth.updatePreferences(user, user.preferences);
+        }
+      }
+      return res.status(400).json({ 
+        error: 'Invalid device token',
+        message: 'Device token has been cleared. Please re-register your device.'
+      });
+    } else if (result) {
       res.json({ message: 'Test notification sent successfully' });
     } else {
       res.status(500).json({ error: 'Failed to send test notification' });
