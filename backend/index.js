@@ -3565,7 +3565,7 @@ app.post("/api/tts", async (req, res) => {
 });
 
 // --- AI Fetch Assistant endpoint ---
-app.post("/api/fetch-assistant", requireAuth, async (req, res) => {
+app.post("/api/fetch-assistant", authenticateToken, async (req, res) => {
   try {
     const { fetchId, userMessage, conversationHistory = [] } = req.body || {};
     
