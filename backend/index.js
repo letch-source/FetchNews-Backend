@@ -1472,10 +1472,21 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
           // For specific topics, expand search to include related terms
           searchTerms = analysis.expandedTerms;
           console.log(`🎯 [SMART SEARCH] Expanding specific topic "${topic}" to: ${searchTerms.join(', ')}`);
-        } else if (analysis.specificity === 'too_broad' && context.userCountry) {
-          // For broad topics, add location context
-          searchTerms = [normalizedTopic, `${context.userCountry} ${normalizedTopic}`];
-          console.log(`🌍 [SMART SEARCH] Adding location context to broad topic "${topic}"`);
+        } else if (analysis.specificity === 'too_broad') {
+          // For broad topics: use expanded terms if available, otherwise add location context
+          if (analysis.expandedTerms.length > 1) {
+            // Use expanded terms from GPT (semantic variations)
+            searchTerms = [normalizedTopic, ...analysis.expandedTerms];
+            console.log(`🌍 [SMART SEARCH] Expanding broad topic "${topic}" with semantic terms: ${searchTerms.join(', ')}`);
+          } else if (context.userCountry) {
+            // Fallback: add location context only
+            searchTerms = [normalizedTopic, `${context.userCountry} ${normalizedTopic}`];
+            console.log(`🌍 [SMART SEARCH] Adding location context to broad topic "${topic}"`);
+          }
+        } else if (analysis.expandedTerms.length > 1) {
+          // For "just_right" topics, use expanded terms if available (semantic variations)
+          searchTerms = [normalizedTopic, ...analysis.expandedTerms];
+          console.log(`🎯 [SMART SEARCH] Adding semantic variations for "${topic}": ${searchTerms.join(', ')}`);
         }
       } catch (error) {
         console.warn(`⚠️  [SMART SEARCH] Failed to analyze topic, using simple search:`, error.message);
@@ -3550,6 +3561,140 @@ app.post("/api/tts", async (req, res) => {
       }
     } catch {}
     res.status(500).json({ error: "tts failed" });
+  }
+});
+
+// --- AI Fetch Assistant endpoint ---
+app.post("/api/fetch-assistant", requireAuth, async (req, res) => {
+  try {
+    const { fetchId, userMessage, conversationHistory = [] } = req.body || {};
+    
+    if (!userMessage || typeof userMessage !== "string") {
+      return res.status(400).json({ error: "userMessage is required" });
+    }
+    
+    if (!fetchId || typeof fetchId !== "string") {
+      return res.status(400).json({ error: "fetchId is required" });
+    }
+    
+    // Get the user's fetch from summary history
+    let user;
+    if (mongoose.connection.readyState === 1) {
+      user = await User.findById(req.user._id || req.user.id);
+    } else {
+      user = req.user;
+    }
+    
+    if (!user) {
+      return res.status(401).json({ error: "User not found" });
+    }
+    
+    // Find the fetch in user's summary history
+    const fetch = user.summaryHistory.find(s => s.id === fetchId);
+    
+    if (!fetch) {
+      return res.status(404).json({ error: "Fetch not found" });
+    }
+    
+    // Build context from the fetch
+    const fetchContext = {
+      summary: fetch.summary || "",
+      topics: fetch.topics || [],
+      articles: (fetch.sources || []).map((source, idx) => ({
+        index: idx + 1,
+        title: source.title || "Untitled",
+        source: source.source || "Unknown",
+        url: source.url || "",
+        summary: source.summary || ""
+      }))
+    };
+    
+    // Build system prompt with full context
+    const articlesList = fetchContext.articles.length > 0 
+      ? fetchContext.articles.map(a => `${a.index}. ${a.title} (${a.source})`).join("\n")
+      : "No articles available";
+    
+    const systemPrompt = `You are a helpful AI assistant for FetchNews, helping users understand their news fetch.
+
+**Current Fetch Context:**
+- Topics: ${fetchContext.topics.join(", ")}
+- Number of articles: ${fetchContext.articles.length}
+
+**Summary:**
+${fetchContext.summary}
+
+**Available articles:**
+${articlesList}
+
+**Your role:**
+- Answer questions about the news in this fetch
+- Provide specific details from the articles when relevant
+- Be conversational, helpful, and concise (2-3 sentences unless asked for more)
+- If asked about a specific topic or article, focus your response accordingly
+- You can reference article numbers (e.g., "Article 3 discusses...")
+- If information isn't in this fetch, politely say so`;
+
+    // Build conversation messages for OpenAI
+    const messages = [
+      { role: "system", content: systemPrompt }
+    ];
+    
+    // Add conversation history (limit to last 10 messages to save tokens)
+    const recentHistory = conversationHistory.slice(-10);
+    messages.push(...recentHistory);
+    
+    // Add current user message
+    messages.push({ role: "user", content: userMessage });
+    
+    // Call OpenAI
+    if (!OPENAI_API_KEY) {
+      return res.status(501).json({ error: "AI assistant not configured" });
+    }
+    
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    
+    console.log(`[AI ASSISTANT] Processing question for fetch ${fetchId}: "${userMessage}"`);
+    
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: messages,
+      temperature: 0.7,
+      max_tokens: 300
+    });
+    
+    const assistantResponse = completion.choices[0]?.message?.content?.trim();
+    
+    if (!assistantResponse) {
+      throw new Error("No response from AI");
+    }
+    
+    console.log(`[AI ASSISTANT] Response generated (${assistantResponse.length} chars)`);
+    
+    // Optional: Generate suggested follow-up questions
+    const suggestedQuestions = [];
+    
+    // You could enhance this with another GPT call to generate relevant follow-ups
+    // For now, provide some generic helpful suggestions
+    if (conversationHistory.length === 0) {
+      suggestedQuestions.push(
+        "What are the key takeaways?",
+        "Tell me more about " + (fetchContext.topics[0] || "the main topic"),
+        "Which article has the most detail?"
+      );
+    }
+    
+    res.json({
+      response: assistantResponse,
+      suggestedQuestions: suggestedQuestions,
+      fetchContext: {
+        summary: fetchContext.summary,
+        topics: fetchContext.topics
+      }
+    });
+    
+  } catch (error) {
+    console.error("[AI ASSISTANT] Error:", error.message);
+    res.status(500).json({ error: "Failed to process message: " + error.message });
   }
 });
 
