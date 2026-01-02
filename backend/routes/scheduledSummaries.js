@@ -12,6 +12,48 @@ const { sendScheduledSummaryNotification } = require('../utils/notifications');
 
 const router = express.Router();
 
+// Helper function to split text into chunks at sentence boundaries
+function splitTextIntoChunks(text, maxChunkSize = 4000) {
+  if (text.length <= maxChunkSize) {
+    return [text];
+  }
+  
+  const chunks = [];
+  let currentChunk = '';
+  
+  // Split by sentences (., !, ?)
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+  
+  for (const sentence of sentences) {
+    // If a single sentence is too long, split it by clauses (commas)
+    if (sentence.length > maxChunkSize) {
+      const clauses = sentence.split(/,\s*/);
+      for (const clause of clauses) {
+        if ((currentChunk + clause).length > maxChunkSize) {
+          if (currentChunk) chunks.push(currentChunk.trim());
+          currentChunk = clause;
+        } else {
+          currentChunk += (currentChunk ? ', ' : '') + clause;
+        }
+      }
+    } else {
+      // Normal sentence handling
+      if ((currentChunk + sentence).length > maxChunkSize) {
+        if (currentChunk) chunks.push(currentChunk.trim());
+        currentChunk = sentence;
+      } else {
+        currentChunk += ' ' + sentence;
+      }
+    }
+  }
+  
+  if (currentChunk) {
+    chunks.push(currentChunk.trim());
+  }
+  
+  return chunks;
+}
+
 // Helper function to determine time-based fetch name
 // Returns "Morning Fetch", "Afternoon Fetch", or "Evening Fetch" based on provided time
 // If no timestamp is provided, uses current time
@@ -181,44 +223,80 @@ async function saveUserWithRetry(user, retries = 3) {
 // Get user's scheduled fetch (ensure one always exists)
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    // Reload user fresh from database to ensure we have the latest version
-    // This prevents version conflicts from stale user objects
-    let user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    let user;
+    let scheduledSummaries;
     
-    // Get scheduled fetch from user.scheduledSummaries
-    let scheduledSummaries = user.scheduledSummaries || [];
-    
-    // Ensure user always has exactly one scheduled fetch
-    if (scheduledSummaries.length === 0) {
-      // Create default scheduled fetch
-      const defaultSummary = {
-        id: Date.now().toString(),
-        name: "Daily Fetch",
-        topics: [],
-        customTopics: [],
-        time: "08:00",
-        days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
-        wordCount: 200,
-        isEnabled: false,
-        createdAt: new Date().toISOString(),
-        lastRun: null
-      };
+    // Check if MongoDB is connected
+    if (mongoose.connection.readyState === 1) {
+      // Reload user fresh from database to ensure we have the latest version
+      // This prevents version conflicts from stale user objects
+      user = await User.findById(req.user._id);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
       
-      scheduledSummaries = [defaultSummary];
-      user.scheduledSummaries = scheduledSummaries;
-      user.markModified('scheduledSummaries');
+      // Get scheduled fetch from user.scheduledSummaries
+      scheduledSummaries = user.scheduledSummaries || [];
       
-      // Save user with retry logic
-      await saveUserWithRetry(user);
-    } else if (scheduledSummaries.length > 1) {
-      // If more than one, keep only the first one
-      scheduledSummaries = [scheduledSummaries[0]];
-      user.scheduledSummaries = scheduledSummaries;
-      user.markModified('scheduledSummaries');
-      await saveUserWithRetry(user);
+      // Ensure user always has exactly one scheduled fetch
+      if (scheduledSummaries.length === 0) {
+        // Create default scheduled fetch
+        const defaultSummary = {
+          id: Date.now().toString(),
+          name: "Daily Fetch",
+          topics: [],
+          customTopics: [],
+          time: "08:00",
+          days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+          wordCount: 200,
+          isEnabled: false,
+          createdAt: new Date().toISOString(),
+          lastRun: null
+        };
+        
+        scheduledSummaries = [defaultSummary];
+        user.scheduledSummaries = scheduledSummaries;
+        user.markModified('scheduledSummaries');
+        
+        // Save user with retry logic
+        await saveUserWithRetry(user);
+      } else if (scheduledSummaries.length > 1) {
+        // If more than one, keep only the first one
+        scheduledSummaries = [scheduledSummaries[0]];
+        user.scheduledSummaries = scheduledSummaries;
+        user.markModified('scheduledSummaries');
+        await saveUserWithRetry(user);
+      }
+    } else {
+      // Use fallback authentication
+      user = req.user;
+      scheduledSummaries = user.scheduledSummaries || [];
+      
+      // Ensure user always has exactly one scheduled fetch
+      if (scheduledSummaries.length === 0) {
+        // Create default scheduled fetch
+        const defaultSummary = {
+          id: Date.now().toString(),
+          name: "Daily Fetch",
+          topics: [],
+          customTopics: [],
+          time: "08:00",
+          days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+          wordCount: 200,
+          isEnabled: false,
+          createdAt: new Date().toISOString(),
+          lastRun: null
+        };
+        
+        scheduledSummaries = [defaultSummary];
+        user.scheduledSummaries = scheduledSummaries;
+        await fallbackAuth.updatePreferences(user, { scheduledSummaries });
+      } else if (scheduledSummaries.length > 1) {
+        // If more than one, keep only the first one
+        scheduledSummaries = [scheduledSummaries[0]];
+        user.scheduledSummaries = scheduledSummaries;
+        await fallbackAuth.updatePreferences(user, { scheduledSummaries });
+      }
     }
     
     res.json({ scheduledSummaries });
@@ -233,13 +311,6 @@ router.post('/', authenticateToken, async (req, res) => {
   try {
     const { name, topics, customTopics, time, days, wordCount, isEnabled } = req.body;
     
-    // Reload user fresh from database to ensure we have the latest version
-    // This prevents version conflicts from stale user objects
-    let user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
     if (!time) {
       return res.status(400).json({ error: 'Time is required' });
     }
@@ -247,64 +318,134 @@ router.post('/', authenticateToken, async (req, res) => {
     const topicsArray = Array.isArray(topics) ? topics : (topics ? [topics] : []);
     const customTopicsArray = Array.isArray(customTopics) ? customTopics : (customTopics ? [customTopics] : []);
     
-    // Get existing summary or create default
-    let scheduledSummaries = user.scheduledSummaries || [];
-    let existingSummary = scheduledSummaries[0];
+    let user;
+    let existingSummary;
     
-    if (!existingSummary) {
-      // Create default if none exists
-      existingSummary = {
-        id: Date.now().toString(),
-        name: name || "Daily Fetch",
-        topics: [],
-        customTopics: [],
-        time: "08:00",
-        days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
-        wordCount: 200,
-        isEnabled: false,
-        createdAt: new Date().toISOString(),
-        lastRun: null
-      };
+    // Check if MongoDB is connected
+    if (mongoose.connection.readyState === 1) {
+      // Reload user fresh from database to ensure we have the latest version
+      // This prevents version conflicts from stale user objects
+      user = await User.findById(req.user._id);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      
+      // Get existing summary or create default
+      let scheduledSummaries = user.scheduledSummaries || [];
+      existingSummary = scheduledSummaries[0];
+      
+      if (!existingSummary) {
+        // Create default if none exists
+        existingSummary = {
+          id: Date.now().toString(),
+          name: name || "Daily Fetch",
+          topics: [],
+          customTopics: [],
+          time: "08:00",
+          days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+          wordCount: 200,
+          isEnabled: false,
+          createdAt: new Date().toISOString(),
+          lastRun: null
+        };
+      }
+      
+      // Update the existing summary with provided values
+      if (name !== undefined) existingSummary.name = name;
+      // Always update topics and customTopics (even if empty arrays)
+      if (topics !== undefined) {
+        existingSummary.topics = topicsArray;
+      }
+      if (customTopics !== undefined) {
+        existingSummary.customTopics = customTopicsArray;
+      }
+      existingSummary.time = time;
+      if (days !== undefined) {
+        existingSummary.days = Array.isArray(days) ? days : (days ? [days] : []);
+      }
+      if (wordCount !== undefined) existingSummary.wordCount = wordCount;
+      if (isEnabled !== undefined) {
+        existingSummary.isEnabled = isEnabled;
+        console.log(`[SCHEDULED_SUMMARY] Setting isEnabled to ${isEnabled} for ${user.email}`);
+      }
+      existingSummary.updatedAt = new Date().toISOString();
+      
+      // Keep only this one summary
+      user.scheduledSummaries = [existingSummary];
+      
+      // Mark the array as modified so Mongoose knows to save it
+      user.markModified('scheduledSummaries');
+      
+      // Save user to database with retry logic for version conflicts
+      const savedUser = await saveUserWithRetry(user);
+      
+      // Safety check: ensure savedUser is valid
+      if (!savedUser) {
+        throw new Error('Failed to save user: savedUser is undefined');
+      }
+      
+      // Get the updated summary from the saved user
+      const updatedSummary = savedUser.scheduledSummaries?.[0] || existingSummary;
+      
+      res.status(200).json({ 
+        message: 'Scheduled fetch updated successfully',
+        scheduledSummary: updatedSummary 
+      });
+    } else {
+      // Use fallback authentication
+      user = req.user;
+      
+      // Get existing summary or create default
+      let scheduledSummaries = user.scheduledSummaries || [];
+      existingSummary = scheduledSummaries[0];
+      
+      if (!existingSummary) {
+        // Create default if none exists
+        existingSummary = {
+          id: Date.now().toString(),
+          name: name || "Daily Fetch",
+          topics: [],
+          customTopics: [],
+          time: "08:00",
+          days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+          wordCount: 200,
+          isEnabled: false,
+          createdAt: new Date().toISOString(),
+          lastRun: null
+        };
+      }
+      
+      // Update the existing summary with provided values
+      if (name !== undefined) existingSummary.name = name;
+      // Always update topics and customTopics (even if empty arrays)
+      if (topics !== undefined) {
+        existingSummary.topics = topicsArray;
+      }
+      if (customTopics !== undefined) {
+        existingSummary.customTopics = customTopicsArray;
+      }
+      existingSummary.time = time;
+      if (days !== undefined) {
+        existingSummary.days = Array.isArray(days) ? days : (days ? [days] : []);
+      }
+      if (wordCount !== undefined) existingSummary.wordCount = wordCount;
+      if (isEnabled !== undefined) {
+        existingSummary.isEnabled = isEnabled;
+        console.log(`[SCHEDULED_SUMMARY] Setting isEnabled to ${isEnabled} for ${user.email}`);
+      }
+      existingSummary.updatedAt = new Date().toISOString();
+      
+      // Keep only this one summary
+      user.scheduledSummaries = [existingSummary];
+      
+      // Save to fallback auth
+      await fallbackAuth.updatePreferences(user, { scheduledSummaries: user.scheduledSummaries });
+      
+      res.status(200).json({ 
+        message: 'Scheduled fetch updated successfully',
+        scheduledSummary: existingSummary 
+      });
     }
-    
-    // Update the existing summary with provided values
-    if (name !== undefined) existingSummary.name = name;
-    // Always update topics and customTopics (even if empty arrays)
-    if (topics !== undefined) {
-      existingSummary.topics = topicsArray;
-    }
-    if (customTopics !== undefined) {
-      existingSummary.customTopics = customTopicsArray;
-    }
-    existingSummary.time = time;
-    if (days !== undefined) {
-      existingSummary.days = Array.isArray(days) ? days : (days ? [days] : []);
-    }
-    if (wordCount !== undefined) existingSummary.wordCount = wordCount;
-    if (isEnabled !== undefined) existingSummary.isEnabled = isEnabled;
-    existingSummary.updatedAt = new Date().toISOString();
-    
-    // Keep only this one summary
-    user.scheduledSummaries = [existingSummary];
-    
-    // Mark the array as modified so Mongoose knows to save it
-    user.markModified('scheduledSummaries');
-    
-    // Save user to database with retry logic for version conflicts
-    const savedUser = await saveUserWithRetry(user);
-    
-    // Safety check: ensure savedUser is valid
-    if (!savedUser) {
-      throw new Error('Failed to save user: savedUser is undefined');
-    }
-    
-    // Get the updated summary from the saved user
-    const updatedSummary = savedUser.scheduledSummaries?.[0] || existingSummary;
-    
-    res.status(200).json({ 
-      message: 'Scheduled fetch updated successfully',
-      scheduledSummary: updatedSummary 
-    });
   } catch (error) {
     console.error('Create/Update scheduled fetch error:', error);
     // Log detailed error information for version conflicts
@@ -326,84 +467,157 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { name, topics, customTopics, time, days, wordCount, isEnabled, timezone } = req.body;
     
-    // Reload user fresh from database to ensure we have the latest version
-    // This prevents version conflicts from stale user objects
-    let user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    let user;
+    let existingSummary;
     
-    // Update timezone if provided
-    if (timezone) {
-      if (!user.preferences) {
-        user.preferences = {};
+    // Check if MongoDB is connected
+    if (mongoose.connection.readyState === 1) {
+      // Reload user fresh from database to ensure we have the latest version
+      // This prevents version conflicts from stale user objects
+      user = await User.findById(req.user._id);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
       }
-      user.preferences.timezone = timezone;
-      user.markModified('preferences');
+      
+      // Update timezone if provided
+      if (timezone) {
+        if (!user.preferences) {
+          user.preferences = {};
+        }
+        user.preferences.timezone = timezone;
+        user.markModified('preferences');
+      }
+      
+      let scheduledSummaries = user.scheduledSummaries || [];
+      existingSummary = scheduledSummaries[0];
+      
+      // If no summary exists, create a default one (ignore the id parameter)
+      if (!existingSummary) {
+        existingSummary = {
+          id: Date.now().toString(),
+          name: "Daily Fetch",
+          topics: [],
+          customTopics: [],
+          time: "08:00",
+          days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+          wordCount: 200,
+          isEnabled: false,
+          createdAt: new Date().toISOString(),
+          lastRun: null
+        };
+      }
+      
+      // Update the scheduled fetch with all provided fields
+      if (name !== undefined) existingSummary.name = name;
+      // Always update topics and customTopics (even if empty arrays)
+      // Important: topics and customTopics should always be arrays
+      if (topics !== undefined) {
+        existingSummary.topics = Array.isArray(topics) ? topics : (topics ? [topics] : []);
+        console.log(`[SCHEDULED_SUMMARY] Updating topics for ${user.email}: ${existingSummary.topics.length} topics - ${JSON.stringify(existingSummary.topics)}`);
+      }
+      if (customTopics !== undefined) {
+        existingSummary.customTopics = Array.isArray(customTopics) ? customTopics : (customTopics ? [customTopics] : []);
+        console.log(`[SCHEDULED_SUMMARY] Updating customTopics for ${user.email}: ${existingSummary.customTopics.length} topics - ${JSON.stringify(existingSummary.customTopics)}`);
+      }
+      if (time !== undefined) existingSummary.time = time;
+      if (days !== undefined) {
+        existingSummary.days = Array.isArray(days) ? days : (days ? [days] : []);
+      }
+      if (wordCount !== undefined) existingSummary.wordCount = wordCount;
+      if (isEnabled !== undefined) {
+        existingSummary.isEnabled = isEnabled;
+        console.log(`[SCHEDULED_SUMMARY] Setting isEnabled to ${isEnabled} for ${user.email}`);
+      }
+      
+      existingSummary.updatedAt = new Date().toISOString();
+      
+      // Keep only this one summary
+      user.scheduledSummaries = [existingSummary];
+      
+      // Mark the array as modified so Mongoose knows to save it
+      user.markModified('scheduledSummaries');
+      
+      // Save user to database with retry logic for version conflicts
+      const savedUser = await saveUserWithRetry(user);
+      
+      // Safety check: ensure savedUser is valid
+      if (!savedUser) {
+        throw new Error('Failed to save user: savedUser is undefined');
+      }
+      
+      // Get the updated summary from the saved user
+      const updatedSummary = savedUser.scheduledSummaries?.[0] || existingSummary;
+      
+      // Log final state for debugging
+      console.log(`[SCHEDULED_SUMMARY] Updated scheduled fetch for ${savedUser.email} - topics: ${updatedSummary.topics?.length || 0}, customTopics: ${updatedSummary.customTopics?.length || 0}, isEnabled: ${updatedSummary.isEnabled}, timezone: ${savedUser.preferences?.timezone || 'not set'}`);
+      
+      // Return the scheduled summary directly (frontend expects this format)
+      res.json(updatedSummary);
+    } else {
+      // Use fallback authentication
+      user = req.user;
+      
+      // Update timezone if provided
+      if (timezone) {
+        if (!user.preferences) {
+          user.preferences = {};
+        }
+        user.preferences.timezone = timezone;
+      }
+      
+      let scheduledSummaries = user.scheduledSummaries || [];
+      existingSummary = scheduledSummaries[0];
+      
+      // If no summary exists, create a default one (ignore the id parameter)
+      if (!existingSummary) {
+        existingSummary = {
+          id: Date.now().toString(),
+          name: "Daily Fetch",
+          topics: [],
+          customTopics: [],
+          time: "08:00",
+          days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+          wordCount: 200,
+          isEnabled: false,
+          createdAt: new Date().toISOString(),
+          lastRun: null
+        };
+      }
+      
+      // Update the scheduled fetch with all provided fields
+      if (name !== undefined) existingSummary.name = name;
+      if (topics !== undefined) {
+        existingSummary.topics = Array.isArray(topics) ? topics : (topics ? [topics] : []);
+        console.log(`[SCHEDULED_SUMMARY] Updating topics for ${user.email}: ${existingSummary.topics.length} topics - ${JSON.stringify(existingSummary.topics)}`);
+      }
+      if (customTopics !== undefined) {
+        existingSummary.customTopics = Array.isArray(customTopics) ? customTopics : (customTopics ? [customTopics] : []);
+        console.log(`[SCHEDULED_SUMMARY] Updating customTopics for ${user.email}: ${existingSummary.customTopics.length} topics - ${JSON.stringify(existingSummary.customTopics)}`);
+      }
+      if (time !== undefined) existingSummary.time = time;
+      if (days !== undefined) {
+        existingSummary.days = Array.isArray(days) ? days : (days ? [days] : []);
+      }
+      if (wordCount !== undefined) existingSummary.wordCount = wordCount;
+      if (isEnabled !== undefined) {
+        existingSummary.isEnabled = isEnabled;
+        console.log(`[SCHEDULED_SUMMARY] Setting isEnabled to ${isEnabled} for ${user.email}`);
+      }
+      
+      existingSummary.updatedAt = new Date().toISOString();
+      
+      // Keep only this one summary
+      user.scheduledSummaries = [existingSummary];
+      
+      // Save to fallback auth
+      await fallbackAuth.updatePreferences(user, { scheduledSummaries: user.scheduledSummaries });
+      
+      // Log final state for debugging
+      console.log(`[SCHEDULED_SUMMARY] Updated scheduled fetch for ${user.email} (fallback) - topics: ${existingSummary.topics?.length || 0}, customTopics: ${existingSummary.customTopics?.length || 0}, isEnabled: ${existingSummary.isEnabled}, timezone: ${user.preferences?.timezone || 'not set'}`);
+      
+      // Return the scheduled summary directly (frontend expects this format)
+      res.json(existingSummary);
     }
-    
-    let scheduledSummaries = user.scheduledSummaries || [];
-    let existingSummary = scheduledSummaries[0];
-    
-    // If no summary exists, create a default one (ignore the id parameter)
-    if (!existingSummary) {
-      existingSummary = {
-        id: Date.now().toString(),
-        name: "Daily Fetch",
-        topics: [],
-        customTopics: [],
-        time: "08:00",
-        days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
-        wordCount: 200,
-        isEnabled: false,
-        createdAt: new Date().toISOString(),
-        lastRun: null
-      };
-    }
-    
-    // Update the scheduled fetch with all provided fields
-    if (name !== undefined) existingSummary.name = name;
-    // Always update topics and customTopics (even if empty arrays)
-    // Important: topics and customTopics should always be arrays
-    if (topics !== undefined) {
-      existingSummary.topics = Array.isArray(topics) ? topics : (topics ? [topics] : []);
-      console.log(`[SCHEDULED_SUMMARY] Updating topics for ${user.email}: ${existingSummary.topics.length} topics - ${JSON.stringify(existingSummary.topics)}`);
-    }
-    if (customTopics !== undefined) {
-      existingSummary.customTopics = Array.isArray(customTopics) ? customTopics : (customTopics ? [customTopics] : []);
-      console.log(`[SCHEDULED_SUMMARY] Updating customTopics for ${user.email}: ${existingSummary.customTopics.length} topics - ${JSON.stringify(existingSummary.customTopics)}`);
-    }
-    if (time !== undefined) existingSummary.time = time;
-    if (days !== undefined) {
-      existingSummary.days = Array.isArray(days) ? days : (days ? [days] : []);
-    }
-    if (wordCount !== undefined) existingSummary.wordCount = wordCount;
-    if (isEnabled !== undefined) existingSummary.isEnabled = isEnabled;
-    
-    existingSummary.updatedAt = new Date().toISOString();
-    
-    // Keep only this one summary
-    user.scheduledSummaries = [existingSummary];
-    
-    // Mark the array as modified so Mongoose knows to save it
-    user.markModified('scheduledSummaries');
-    
-    // Save user to database with retry logic for version conflicts
-    const savedUser = await saveUserWithRetry(user);
-    
-    // Safety check: ensure savedUser is valid
-    if (!savedUser) {
-      throw new Error('Failed to save user: savedUser is undefined');
-    }
-    
-    // Get the updated summary from the saved user
-    const updatedSummary = savedUser.scheduledSummaries?.[0] || existingSummary;
-    
-    // Log final state for debugging
-    console.log(`[SCHEDULED_SUMMARY] Updated scheduled fetch for ${savedUser.email} - topics: ${updatedSummary.topics?.length || 0}, customTopics: ${updatedSummary.customTopics?.length || 0}, timezone: ${savedUser.preferences?.timezone || 'not set'}`);
-    
-    // Return the scheduled summary directly (frontend expects this format)
-    res.json(updatedSummary);
   } catch (error) {
     console.error('Update scheduled fetch error:', error);
     // Log detailed error information for version conflicts
@@ -424,26 +638,48 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Reload user fresh from database to ensure we have the latest version
-    // This prevents version conflicts from stale user objects
-    let user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+    let user;
+    
+    // Check if MongoDB is connected
+    if (mongoose.connection.readyState === 1) {
+      // Reload user fresh from database to ensure we have the latest version
+      // This prevents version conflicts from stale user objects
+      user = await User.findById(req.user._id);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      
+      const scheduledSummaries = user.scheduledSummaries || [];
+      
+      const summaryIndex = scheduledSummaries.findIndex(s => s.id === id);
+      if (summaryIndex === -1) {
+        return res.status(404).json({ error: 'Scheduled fetch not found' });
+      }
+      
+      // Remove the scheduled summary
+      scheduledSummaries.splice(summaryIndex, 1);
+      user.scheduledSummaries = scheduledSummaries;
+      
+      // Save user to database with retry logic for version conflicts
+      await saveUserWithRetry(user);
+    } else {
+      // Use fallback authentication
+      user = req.user;
+      
+      const scheduledSummaries = user.scheduledSummaries || [];
+      
+      const summaryIndex = scheduledSummaries.findIndex(s => s.id === id);
+      if (summaryIndex === -1) {
+        return res.status(404).json({ error: 'Scheduled fetch not found' });
+      }
+      
+      // Remove the scheduled summary
+      scheduledSummaries.splice(summaryIndex, 1);
+      user.scheduledSummaries = scheduledSummaries;
+      
+      // Save to fallback auth
+      await fallbackAuth.updatePreferences(user, { scheduledSummaries: user.scheduledSummaries });
     }
-    
-    const scheduledSummaries = user.scheduledSummaries || [];
-    
-    const summaryIndex = scheduledSummaries.findIndex(s => s.id === id);
-    if (summaryIndex === -1) {
-      return res.status(404).json({ error: 'Scheduled fetch not found' });
-    }
-    
-    // Remove the scheduled summary
-    scheduledSummaries.splice(summaryIndex, 1);
-    user.scheduledSummaries = scheduledSummaries;
-    
-    // Save user to database with retry logic for version conflicts
-    await saveUserWithRetry(user);
     
     res.json({ message: 'Scheduled fetch deleted successfully' });
   } catch (error) {
@@ -698,8 +934,11 @@ async function executeScheduledSummary(user, summary) {
           .replace(/\s+/g, " ")
           .trim();
         
-        const maxLength = 4090;
-        const finalText = cleaned.length > maxLength ? cleaned.slice(0, maxLength - 3) + "..." : cleaned;
+        // Split text into chunks if it exceeds OpenAI's 4096 character limit
+        const maxChunkLength = 4000;
+        const textChunks = splitTextIntoChunks(cleaned, maxChunkLength);
+        
+        console.log(`[SCHEDULER] TTS processing ${textChunks.length} chunk(s) for total ${cleaned.length} characters`);
         
         // Generate TTS
         const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -707,29 +946,77 @@ async function executeScheduledSummary(user, summary) {
         const availableVoices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
         const voiceToUse = availableVoices.includes(normalizedVoice) ? normalizedVoice : "alloy";
         
-        let speech;
-        const attempts = [
-          { model: "tts-1", voice: voiceToUse },
-          { model: "tts-1-hd", voice: voiceToUse },
-        ];
+        const modelPriority = ["tts-1", "tts-1-hd"];
+        let finalBuffer = null;
+        let lastErr = null;
         
-        for (const { model, voice } of attempts) {
-          try {
-            speech = await openai.audio.speech.create({
-              model,
-              voice,
-              input: finalText,
-              format: "mp3",
-            });
-            if (speech) break;
-          } catch (e) {
-            console.error(`[SCHEDULER] TTS attempt failed with ${model}/${voice}:`, e.message);
+        // Generate audio for each chunk
+        for (let chunkIndex = 0; chunkIndex < textChunks.length; chunkIndex++) {
+          const chunk = textChunks[chunkIndex];
+          console.log(`[SCHEDULER] Generating audio for chunk ${chunkIndex + 1}/${textChunks.length} (${chunk.length} chars)`);
+          
+          let chunkSpeech = null;
+          
+          // Try models in order for this chunk
+          for (const model of modelPriority) {
+            try {
+              console.log(`[SCHEDULER] TTS Attempt - Chunk ${chunkIndex + 1}, Model: ${model}, Voice: ${voiceToUse}`);
+              chunkSpeech = await openai.audio.speech.create({
+                model,
+                voice: voiceToUse,
+                input: chunk,
+                format: "mp3",
+              });
+              if (chunkSpeech) {
+                console.log(`[SCHEDULER] TTS Success - Chunk ${chunkIndex + 1}, Model: ${model}`);
+                break;
+              }
+            } catch (e) {
+              lastErr = e;
+              console.error(`[SCHEDULER] TTS chunk ${chunkIndex + 1} failed with ${model}/${voiceToUse}:`, e.message);
+            }
+          }
+          
+          // If selected voice failed, try fallback to alloy
+          if (!chunkSpeech && voiceToUse !== "alloy") {
+            console.log(`[SCHEDULER] TTS Fallback - Chunk ${chunkIndex + 1}, trying alloy voice`);
+            for (const model of modelPriority) {
+              try {
+                chunkSpeech = await openai.audio.speech.create({
+                  model,
+                  voice: "alloy",
+                  input: chunk,
+                  format: "mp3",
+                });
+                if (chunkSpeech) {
+                  console.log(`[SCHEDULER] TTS Fallback Success - Chunk ${chunkIndex + 1}, Model: ${model}`);
+                  break;
+                }
+              } catch (e) {
+                lastErr = e;
+                console.error(`[SCHEDULER] TTS chunk ${chunkIndex + 1} fallback failed with ${model}/alloy:`, e.message);
+              }
+            }
+          }
+          
+          if (!chunkSpeech) {
+            throw lastErr || new Error(`Failed to generate audio for chunk ${chunkIndex + 1}`);
+          }
+          
+          // Convert to buffer and concatenate
+          const chunkBuffer = Buffer.from(await chunkSpeech.arrayBuffer());
+          
+          if (finalBuffer === null) {
+            finalBuffer = chunkBuffer;
+          } else {
+            // Concatenate MP3 buffers
+            finalBuffer = Buffer.concat([finalBuffer, chunkBuffer]);
           }
         }
         
-        if (speech) {
+        if (finalBuffer) {
           // Save audio file
-          const buffer = Buffer.from(await speech.arrayBuffer());
+          const buffer = finalBuffer;
           const fileBase = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
           
           // Upload to B2 if configured, otherwise save locally
