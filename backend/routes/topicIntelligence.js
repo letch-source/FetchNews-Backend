@@ -5,7 +5,7 @@
 
 const express = require('express');
 const router = express.Router();
-const auth = require('../middleware/auth');
+const { authenticateToken } = require('../middleware/auth');
 const topicIntelligence = require('../services/topicIntelligence');
 
 /**
@@ -13,7 +13,7 @@ const topicIntelligence = require('../services/topicIntelligence');
  * Analyze a single topic for specificity
  * Returns suggestions for improvement
  */
-router.post('/analyze', auth, async (req, res) => {
+router.post('/analyze', authenticateToken, async (req, res) => {
   try {
     const { topic } = req.body;
     const user = req.user;
@@ -50,7 +50,7 @@ router.post('/analyze', auth, async (req, res) => {
  * POST /api/topics/analyze-batch
  * Analyze multiple topics at once (useful for onboarding)
  */
-router.post('/analyze-batch', auth, async (req, res) => {
+router.post('/analyze-batch', authenticateToken, async (req, res) => {
   try {
     const { topics } = req.body;
     const user = req.user;
@@ -87,7 +87,7 @@ router.post('/analyze-batch', auth, async (req, res) => {
  * Analyze user feedback for a topic and suggest refinements
  * This can be called periodically or when user has significant feedback
  */
-router.post('/learn-from-feedback', auth, async (req, res) => {
+router.post('/learn-from-feedback', authenticateToken, async (req, res) => {
   try {
     const { topic } = req.body;
     const user = req.user;
@@ -131,7 +131,7 @@ router.post('/learn-from-feedback', auth, async (req, res) => {
  * GET /api/topics/suggestions/:topic
  * Quick endpoint to get suggestions for a topic (can be called as user types)
  */
-router.get('/suggestions/:topic', auth, async (req, res) => {
+router.get('/suggestions/:topic', authenticateToken, async (req, res) => {
   try {
     const topic = decodeURIComponent(req.params.topic);
     const user = req.user;
