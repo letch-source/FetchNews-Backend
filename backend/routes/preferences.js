@@ -5,6 +5,38 @@ const fallbackAuth = require('../utils/fallbackAuth');
 
 const router = express.Router();
 
+// Debug endpoint to check preferences persistence
+router.get('/debug', authenticateToken, async (req, res) => {
+  try {
+    const user = req.user;
+    const isMongoConnected = mongoose.connection.readyState === 1;
+    
+    let dbUser = null;
+    if (isMongoConnected) {
+      const User = require('../models/User');
+      dbUser = await User.findById(user._id);
+    }
+    
+    res.json({
+      isMongoConnected,
+      middlewareUser: {
+        email: user.email,
+        selectedVoice: user.selectedVoice,
+        _id: user._id
+      },
+      databaseUser: dbUser ? {
+        email: dbUser.email,
+        selectedVoice: dbUser.selectedVoice,
+        _id: dbUser._id
+      } : null,
+      match: dbUser && dbUser.selectedVoice === user.selectedVoice
+    });
+  } catch (error) {
+    console.error('Debug preferences error:', error);
+    res.status(500).json({ error: 'Debug failed', message: error.message });
+  }
+});
+
 // Get user preferences
 router.get('/', authenticateToken, async (req, res) => {
   try {

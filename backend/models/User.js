@@ -471,10 +471,12 @@ userSchema.methods.updatePreferences = async function(preferences) {
   while (retries > 0) {
     try {
       await this.save();
+      console.log(`[USER] Successfully saved preferences for ${this.email} - selectedVoice: ${this.selectedVoice}`);
       return this.getPreferences();
     } catch (error) {
-      if (error.name === 'VersionError' && retries > 1) {
-        console.log(`[USER] Version conflict, retrying... (${retries - 1} retries left)`);
+      retries--;
+      if (error.name === 'VersionError' && retries > 0) {
+        console.log(`[USER] Version conflict, retrying... (${retries} retries left)`);
         // Reload the document to get the latest version
         const freshUser = await this.constructor.findById(this._id);
         if (freshUser) {
@@ -512,13 +514,24 @@ userSchema.methods.updatePreferences = async function(preferences) {
           // This prevents version conflicts when both routes try to save at the same time
           
           // Save the fresh user and copy to this instance
-          await freshUser.save();
-          Object.assign(this, freshUser.toObject());
-          return this.getPreferences();
+          try {
+            await freshUser.save();
+            Object.assign(this, freshUser.toObject());
+            console.log(`[USER] Successfully saved preferences on retry for ${freshUser.email} - selectedVoice: ${freshUser.selectedVoice}`);
+            return this.getPreferences();
+          } catch (retryError) {
+            console.error(`[USER] Retry save failed for ${freshUser.email}:`, retryError.message);
+            if (retries === 0) {
+              throw retryError;
+            }
+            // Continue to next retry
+          }
         } else {
+          console.error(`[USER] Could not find user ${this._id} during retry`);
           throw error;
         }
       } else {
+        console.error(`[USER] Failed to save preferences for ${this.email}:`, error.message);
         throw error;
       }
     }
