@@ -151,7 +151,17 @@ async function runCategorizationJob() {
           const settings = await GlobalSettings.getOrCreate();
           await settings.updateTrendingTopics(trendingTopics, {});
           
-          console.log(`✅ Updated trending topics: ${trendingTopics.join(', ')}`);
+          console.log(`✅ Updated trending topics in MongoDB: ${trendingTopics.join(', ')}`);
+          
+          // Reload the main server's in-memory cache so changes are immediately visible
+          try {
+            const { loadTrendingTopics } = require('../index');
+            await loadTrendingTopics();
+            console.log('✅ Reloaded trending topics cache in main server');
+          } catch (reloadError) {
+            console.warn('⚠️  Could not reload main server cache (this is OK if running standalone):', reloadError.message);
+          }
+          
           stats.trendingTopics = trendingTopics;
         } else {
           console.log('⚠️  No trending topics extracted');

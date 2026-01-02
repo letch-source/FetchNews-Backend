@@ -4861,7 +4861,7 @@ function startServer() {
   });
 }
 
-// Export functions for use by other modules (like scheduled summaries)
+// Export functions for use by other modules (like scheduled summaries and categorization job)
 module.exports = {
   fetchArticlesForTopic,
   summarizeArticles,
@@ -4871,6 +4871,7 @@ module.exports = {
   isUpliftingNews,
   normalizeSourceName,
   isSourceAllowedForUS,
-  getUSNewsAPISources
+  getUSNewsAPISources,
+  loadTrendingTopics
 };
 
