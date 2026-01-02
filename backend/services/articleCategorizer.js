@@ -10,16 +10,47 @@ const openai = new OpenAI({
   apiKey: OPENAI_API_KEY
 });
 
-// Core categories (always included)
-const CORE_CATEGORIES = [
-  'general',      // General news, current events
-  'business',     // Business, finance, markets, economy
-  'technology',   // Tech products, software, AI, computing
-  'sports',       // Sports, athletes, games, competitions
-  'entertainment',// Movies, music, celebrities, TV
-  'health',       // Medical news, wellness, diseases, treatments
-  'science'       // Research, discoveries, space, environment
-];
+// Core categories with subtopics for better categorization
+const CORE_CATEGORIES_WITH_SUBTOPICS = {
+  'general': {
+    name: 'general',
+    description: 'General news and current events',
+    subtopics: ['breaking news', 'current events', 'local news', 'national news', 'world news']
+  },
+  'business': {
+    name: 'business',
+    description: 'Business, finance, and economy',
+    subtopics: ['markets', 'stocks', 'finance', 'economy', 'companies', 'startups', 'cryptocurrency', 'real estate', 'banking', 'investing']
+  },
+  'technology': {
+    name: 'technology',
+    description: 'Technology and computing',
+    subtopics: ['AI', 'artificial intelligence', 'software', 'hardware', 'gadgets', 'apps', 'social media', 'cybersecurity', 'internet', 'tech companies', 'innovation', 'robotics', 'gaming']
+  },
+  'sports': {
+    name: 'sports',
+    description: 'Sports and athletics',
+    subtopics: ['football', 'basketball', 'baseball', 'soccer', 'tennis', 'olympics', 'athletes', 'teams', 'competitions', 'championships', 'sports news']
+  },
+  'entertainment': {
+    name: 'entertainment',
+    description: 'Entertainment and pop culture',
+    subtopics: ['movies', 'films', 'TV shows', 'television', 'music', 'celebrities', 'actors', 'musicians', 'awards', 'Hollywood', 'streaming', 'concerts', 'box office', 'albums', 'pop culture', 'fashion']
+  },
+  'health': {
+    name: 'health',
+    description: 'Health and wellness',
+    subtopics: ['medical news', 'diseases', 'treatments', 'hospitals', 'doctors', 'mental health', 'fitness', 'nutrition', 'wellness', 'healthcare', 'medicine', 'vaccines', 'public health']
+  },
+  'science': {
+    name: 'science',
+    description: 'Science and research',
+    subtopics: ['research', 'discoveries', 'space', 'NASA', 'astronomy', 'physics', 'chemistry', 'biology', 'climate', 'environment', 'nature', 'studies', 'experiments', 'scientists']
+  }
+};
+
+// Core category names (for backward compatibility)
+const CORE_CATEGORIES = Object.keys(CORE_CATEGORIES_WITH_SUBTOPICS);
 
 /**
  * Helper to slugify custom topic names for use as category keys
@@ -60,12 +91,17 @@ async function categorizeArticlesBatch(articles, customTopics = [], model = 'gpt
   const slugifiedCustomTopics = customTopics.map(slugify);
   const allCategories = [...CORE_CATEGORIES, ...slugifiedCustomTopics];
 
-  // Build prompt with core categories and custom topics
-  let categorySection = `CORE CATEGORIES:\n`;
-  categorySection += CORE_CATEGORIES.map(cat => `- ${cat}`).join('\n');
+  // Build prompt with core categories (including subtopics) and custom topics
+  let categorySection = `CORE CATEGORIES (with subtopics to help you categorize):\n\n`;
+  
+  CORE_CATEGORIES.forEach(catName => {
+    const cat = CORE_CATEGORIES_WITH_SUBTOPICS[catName];
+    categorySection += `- ${cat.name}: ${cat.description}\n`;
+    categorySection += `  Examples: ${cat.subtopics.join(', ')}\n\n`;
+  });
   
   if (slugifiedCustomTopics.length > 0) {
-    categorySection += `\n\nUSER CUSTOM TOPICS (match these if relevant):\n`;
+    categorySection += `USER CUSTOM TOPICS (match these if the article is specifically about these topics):\n`;
     categorySection += slugifiedCustomTopics.map(cat => `- ${cat}`).join('\n');
   }
 
@@ -75,11 +111,18 @@ ${categorySection}
 
 Rules:
 - An article can have multiple categories (e.g., a tech company's stock news could be both "business" and "technology")
-- Use "general" for articles that don't fit other categories
+- Use the subtopics/examples to guide your categorization (e.g., if an article mentions "celebrities" or "actors", it should be categorized as "entertainment")
+- If an article mentions anything in the subtopics list, include that core category
+- Use "general" ONLY for articles that don't fit any other categories
 - ALWAYS include at least one core category
-- Add custom topics when they match the article content
-- Be specific: health articles about medical breakthroughs should include "science"
-- Business news about tech companies should include both "business" and "technology"
+- Add custom topics when they specifically match the article content
+- Examples:
+  * Article about Taylor Swift → "entertainment" (celebrities, music)
+  * Article about a movie premiere → "entertainment" (movies, films)
+  * Article about SpaceX → "technology" and "science" (space, companies)
+  * Article about a medical breakthrough → "health" and "science" (medical news, research)
+  * Article about stock market → "business" (markets, stocks)
+  * Article about Instagram update → "technology" (social media, apps)
 
 Articles to categorize:
 ${articlesForPrompt.map(a => `${a.id}. "${a.title}" - ${a.description}`).join('\n\n')}
@@ -257,5 +300,6 @@ module.exports = {
   categorizeAllArticles,
   validateCategories,
   slugify,
-  CORE_CATEGORIES
+  CORE_CATEGORIES,
+  CORE_CATEGORIES_WITH_SUBTOPICS
 };
