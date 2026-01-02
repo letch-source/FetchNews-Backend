@@ -31,15 +31,21 @@ router.put('/', authenticateToken, async (req, res) => {
     const preferences = req.body;
     
     console.log(`[PREFERENCES] Updating preferences for user ${user.email}`);
+    console.log(`[PREFERENCES] MongoDB readyState: ${mongoose.connection.readyState}`);
+    console.log(`[PREFERENCES] selectedVoice received: ${preferences.selectedVoice}`);
     console.log(`[PREFERENCES] selectedTopics received: ${JSON.stringify(preferences.selectedTopics)}`);
     console.log(`[PREFERENCES] selectedTopics count: ${preferences.selectedTopics?.length || 0}`);
     
     let updatedPreferences;
     if (mongoose.connection.readyState === 1) {
+      console.log(`[PREFERENCES] Using MongoDB for user ${user.email}`);
       updatedPreferences = await user.updatePreferences(preferences);
       console.log(`[PREFERENCES] After update - selectedTopics count: ${updatedPreferences.selectedTopics?.length || 0}`);
+      console.log(`[PREFERENCES] After update - selectedVoice: ${updatedPreferences.selectedVoice}`);
     } else {
+      console.log(`[PREFERENCES] Using fallback auth for user ${user.email}`);
       updatedPreferences = await fallbackAuth.updatePreferences(user, preferences);
+      console.log(`[PREFERENCES] After fallback update - selectedVoice: ${updatedPreferences.selectedVoice}`);
     }
     
     res.json(updatedPreferences);
