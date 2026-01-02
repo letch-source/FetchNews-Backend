@@ -9,6 +9,7 @@ const jwt = require("jsonwebtoken");
 const path = require("path");
 const fs = require("fs");
 const OpenAI = require("openai");
+const { tavily } = require("@tavily/core");
 const rateLimit = require("express-rate-limit");
 const cache = require("./cache");
 const mongoose = require("mongoose");
@@ -646,6 +647,7 @@ if (!JWT_SECRET) {
 }
 const NEWSAPI_KEY = process.env.NEWSAPI_KEY || "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY || "";
 const DISABLE_NEWSAPI_FALLBACK = process.env.DISABLE_NEWSAPI_FALLBACK === 'true'; // Emergency kill switch to stop NewsAPI calls
 
 // --- In-memory data store fallback (replace with SQLite later) ---
@@ -3656,6 +3658,11 @@ ${fetchContext.summary}
 **Available articles:**
 ${articlesList}
 
+**Your capabilities:**
+- You have access to the user's current fetch (shown above)
+- You can search the web for current information when needed
+- Use the search function when you need: latest news, current events, real-time data, or info not in the fetch
+
 **Your role:**
 - Answer questions about the news in this fetch
 - Provide specific details from the articles when relevant
@@ -3664,7 +3671,9 @@ ${articlesList}
 - You can reference article numbers (e.g., "Article 3 discusses...")
 - When the user asks vague questions like "this" or "that", use their audio position context to understand what they're likely referring to
 - If they say things like "what about this?" or "is the government doing anything?" and you know their position in the audio, infer the topic they mean
-- If information isn't in this fetch, politely say so`;
+- When using web search results, clearly label them: "According to recent reports..." or "The latest information shows..."
+- If information isn't in this fetch AND a web search would help, use the search function
+- Prioritize fetch content first, then supplement with web search if beneficial`;
 
     // Build conversation messages for OpenAI
     const messages = [
@@ -3687,14 +3696,118 @@ ${articlesList}
     
     console.log(`[AI ASSISTANT] Processing question for fetch ${fetchId}: "${userMessage}"`);
     
-    const completion = await openai.chat.completions.create({
+    // Define the web search function for OpenAI
+    const tools = TAVILY_API_KEY ? [
+      {
+        type: "function",
+        function: {
+          name: "search_web",
+          description: "Search the web for current information, latest news, or real-time data not available in the fetch. Use this when the user asks for recent updates, current events, or information beyond what's in their fetch.",
+          parameters: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "The search query. Be specific and include relevant keywords."
+              },
+              max_results: {
+                type: "integer",
+                description: "Maximum number of results to return (1-5). Default is 3.",
+                default: 3
+              }
+            },
+            required: ["query"]
+          }
+        }
+      }
+    ] : [];
+    
+    // First completion - may request function calls
+    let completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: messages,
       temperature: 0.7,
-      max_tokens: 300
+      max_tokens: 500,
+      tools: tools.length > 0 ? tools : undefined,
+      tool_choice: tools.length > 0 ? "auto" : undefined
     });
     
-    const assistantResponse = completion.choices[0]?.message?.content?.trim();
+    let responseMessage = completion.choices[0].message;
+    
+    // Check if AI wants to call the search function
+    if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
+      console.log(`[AI ASSISTANT] AI requested ${responseMessage.tool_calls.length} web search(es)`);
+      
+      // Add AI's message to conversation
+      messages.push(responseMessage);
+      
+      // Execute each function call
+      for (const toolCall of responseMessage.tool_calls) {
+        if (toolCall.function.name === "search_web") {
+          const args = JSON.parse(toolCall.function.arguments);
+          const searchQuery = args.query;
+          const maxResults = args.max_results || 3;
+          
+          console.log(`[AI ASSISTANT] Searching web for: "${searchQuery}"`);
+          
+          try {
+            // Perform web search with Tavily
+            const tvly = tavily({ apiKey: TAVILY_API_KEY });
+            const searchResults = await tvly.search(searchQuery, {
+              maxResults: Math.min(maxResults, 5),
+              searchDepth: "basic",
+              includeAnswer: true,
+              includeRawContent: false
+            });
+            
+            // Format search results
+            let searchResultText = "";
+            if (searchResults.answer) {
+              searchResultText += `Quick Answer: ${searchResults.answer}\n\n`;
+            }
+            
+            if (searchResults.results && searchResults.results.length > 0) {
+              searchResultText += "Search Results:\n";
+              searchResults.results.forEach((result, idx) => {
+                searchResultText += `${idx + 1}. ${result.title}\n`;
+                searchResultText += `   ${result.content}\n`;
+                searchResultText += `   Source: ${result.url}\n\n`;
+              });
+            } else {
+              searchResultText = "No search results found.";
+            }
+            
+            console.log(`[AI ASSISTANT] Found ${searchResults.results?.length || 0} results`);
+            
+            // Add function result to messages
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: searchResultText
+            });
+          } catch (searchError) {
+            console.error(`[AI ASSISTANT] Search error:`, searchError.message);
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: "Search failed. Please answer based on the fetch content only."
+            });
+          }
+        }
+      }
+      
+      // Get final response with search results
+      completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: messages,
+        temperature: 0.7,
+        max_tokens: 500
+      });
+      
+      responseMessage = completion.choices[0].message;
+    }
+    
+    const assistantResponse = responseMessage.content?.trim();
     
     if (!assistantResponse) {
       throw new Error("No response from AI");
@@ -3711,7 +3824,7 @@ ${articlesList}
       suggestedQuestions.push(
         "What are the key takeaways?",
         "Tell me more about " + (fetchContext.topics[0] || "the main topic"),
-        "Which article has the most detail?"
+        "What's the latest on this?"
       );
     }
     

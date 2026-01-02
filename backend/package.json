@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.926.0",
+    "@tavily/core": "^0.6.4",
     "apn": "^2.2.0",
     "bcryptjs": "^3.0.2",
     "compression": "^1.8.1",
