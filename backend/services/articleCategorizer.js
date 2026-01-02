@@ -295,11 +295,109 @@ function validateCategories(categories) {
   return valid.length > 0 ? valid : ['general'];
 }
 
+/**
+ * Extract trending topics from articles using GPT
+ * Analyzes article titles and descriptions to identify the most relevant topics
+ * @param {Array} articles - Array of articles to analyze
+ * @param {number} topCount - Number of trending topics to extract (default: 8)
+ * @param {string} model - OpenAI model to use
+ * @returns {Array} Array of trending topic strings
+ */
+async function extractTrendingTopics(articles, topCount = 8, model = 'gpt-4o-mini') {
+  if (!OPENAI_API_KEY) {
+    console.error('[TRENDING] OpenAI API key not configured');
+    return [];
+  }
+
+  if (!articles || articles.length === 0) {
+    console.log('[TRENDING] No articles to analyze');
+    return [];
+  }
+
+  // Use a sample of articles for analysis (max 100 for token efficiency)
+  const sampleSize = Math.min(articles.length, 100);
+  const sample = articles
+    .sort(() => 0.5 - Math.random()) // Shuffle
+    .slice(0, sampleSize)
+    .map(article => ({
+      title: article.title || '',
+      description: (article.description || '').substring(0, 200)
+    }));
+
+  const prompt = `Analyze these ${sample.length} recent news articles and extract the ${topCount} most important and relevant trending topics/keywords.
+
+Guidelines:
+- Focus on specific topics, events, people, or themes that appear frequently
+- Topics should be 1-3 words maximum (e.g., "AI Development", "Taylor Swift", "Climate Crisis")
+- Prioritize topics that would interest news readers
+- Avoid generic terms like "news", "update", "report"
+- Include a mix of: current events, trending people/celebrities, technology trends, political topics, sports events
+- Topics should be appropriate for a general news app audience
+
+Articles:
+${sample.map((a, i) => `${i + 1}. "${a.title}" - ${a.description}`).join('\n\n')}
+
+Return ONLY a JSON object with a "topics" array of ${topCount} strings, ordered by relevance:
+{
+  "topics": ["Topic 1", "Topic 2", "Topic 3", ...]
+}`;
+
+  try {
+    console.log(`[TRENDING] Analyzing ${sample.length} articles to extract ${topCount} trending topics...`);
+    const startTime = Date.now();
+    
+    const response = await openai.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a news analyst expert at identifying trending topics from news articles. Return only valid JSON.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0.5, // Moderate creativity for diverse topics
+      max_tokens: 500,
+      response_format: { type: "json_object" }
+    });
+
+    const duration = Date.now() - startTime;
+    const usage = response.usage;
+    
+    console.log(`[TRENDING] GPT analysis complete in ${duration}ms`);
+    console.log(`[TRENDING] Tokens used: ${usage.total_tokens} (cost: $${estimateCost(usage, model)})`);
+
+    const content = response.choices[0].message.content;
+    const parsed = JSON.parse(content);
+    const topics = parsed.topics || [];
+
+    if (!Array.isArray(topics)) {
+      console.error('[TRENDING] GPT did not return an array');
+      return [];
+    }
+
+    // Validate and clean topics
+    const validTopics = topics
+      .filter(t => typeof t === 'string' && t.length > 0 && t.length <= 50)
+      .slice(0, topCount);
+
+    console.log(`[TRENDING] ✅ Extracted ${validTopics.length} trending topics: ${validTopics.join(', ')}`);
+    
+    return validTopics;
+  } catch (error) {
+    console.error('[TRENDING] Error extracting trending topics:', error.message);
+    return [];
+  }
+}
+
 module.exports = {
   categorizeArticlesBatch,
   categorizeAllArticles,
   validateCategories,
   slugify,
+  extractTrendingTopics,
   CORE_CATEGORIES,
   CORE_CATEGORIES_WITH_SUBTOPICS
 };

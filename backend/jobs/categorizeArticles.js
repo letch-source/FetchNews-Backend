@@ -7,8 +7,9 @@
 const cron = require('node-cron');
 const ArticleCache = require('../models/ArticleCache');
 const User = require('../models/User');
+const GlobalSettings = require('../models/GlobalSettings');
 const { fetchAllArticles, normalizeArticle } = require('../services/articleFetcher');
-const { categorizeAllArticles, validateCategories } = require('../services/articleCategorizer');
+const { categorizeAllArticles, validateCategories, extractTrendingTopics } = require('../services/articleCategorizer');
 
 let isRunning = false;
 let lastRunTime = null;
@@ -130,7 +131,40 @@ async function runCategorizationJob() {
       }
     }
 
-    // Step 6: Get final statistics
+    // Step 6: Update trending topics from all cached articles
+    console.log('\n🔥 Step 6: Updating trending topics...');
+    try {
+      // Get recent articles from cache (last 24 hours for trending analysis)
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const recentArticles = await ArticleCache.find({
+        fetchedAt: { $gte: oneDayAgo },
+        expiresAt: { $gt: new Date() }
+      }).select('title description').limit(200).lean();
+      
+      console.log(`[TRENDING] Analyzing ${recentArticles.length} recent articles...`);
+      
+      if (recentArticles.length > 0) {
+        const trendingTopics = await extractTrendingTopics(recentArticles, 8, 'gpt-4o-mini');
+        
+        if (trendingTopics && trendingTopics.length > 0) {
+          // Save to MongoDB
+          const settings = await GlobalSettings.getOrCreate();
+          await settings.updateTrendingTopics(trendingTopics, {});
+          
+          console.log(`✅ Updated trending topics: ${trendingTopics.join(', ')}`);
+          stats.trendingTopics = trendingTopics;
+        } else {
+          console.log('⚠️  No trending topics extracted');
+        }
+      } else {
+        console.log('⚠️  No recent articles available for trending analysis');
+      }
+    } catch (trendingError) {
+      console.error('❌ Error updating trending topics:', trendingError.message);
+      // Don't fail the entire job if trending update fails
+    }
+    
+    // Step 7: Get final statistics
     const cacheStats = await ArticleCache.getStats();
     
     stats.duration = Date.now() - startTime;
@@ -144,6 +178,9 @@ async function runCategorizationJob() {
     console.log(`Articles fetched: ${stats.articlesFetched}`);
     console.log(`New articles processed: ${stats.articlesProcessed}`);
     console.log(`Articles saved: ${stats.articlesSaved}`);
+    if (stats.trendingTopics) {
+      console.log(`Trending topics: ${stats.trendingTopics.join(', ')}`);
+    }
     console.log(`\nCache Statistics:`);
     console.log(`  Total articles in cache: ${cacheStats.total}`);
     console.log(`  Oldest article: ${cacheStats.oldestArticle?.toISOString()}`);
