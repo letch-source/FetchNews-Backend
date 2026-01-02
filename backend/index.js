@@ -25,6 +25,7 @@ const { fetchAllUSSources } = require("./routes/newsSources");
 const trendingAdminRoutes = require("./routes/trendingAdmin");
 const notificationsRoutes = require("./routes/notifications");
 const articleFeedbackRoutes = require("./routes/articleFeedback");
+const topicIntelligenceRoutes = require("./routes/topicIntelligence");
 const { sendEngagementReminder, sendFetchReadyNotification } = require("./utils/notifications");
 const fallbackAuth = require("./utils/fallbackAuth");
 const { uploadAudioToB2, isB2Configured } = require("./utils/b2Storage");
@@ -177,6 +178,9 @@ app.use("/api/notifications", notificationsRoutes);
 
 // Article feedback routes
 app.use("/api/article-feedback", articleFeedbackRoutes);
+
+// Topic Intelligence routes (analyze topic specificity, get suggestions)
+app.use("/api/topics", topicIntelligenceRoutes);
 
 // --- Article Categorization Admin Endpoints ---
 
@@ -600,6 +604,10 @@ app.post("/api/auth/timezone", authenticateToken, async (req, res) => {
 // Scheduled summaries routes
 const scheduledSummariesRoutes = require("./routes/scheduledSummaries");
 app.use("/api/scheduled-summaries", scheduledSummariesRoutes);
+
+// Scheduler health and monitoring routes
+const schedulerHealthRoutes = require("./routes/schedulerHealth");
+app.use("/api/scheduler", schedulerHealthRoutes);
 
 // Serve admin website
 // Admin directory is located in backend/admin (relative to this file)
@@ -1449,37 +1457,73 @@ async function fetchArticlesForTopic(topic, geo, maxResults, selectedSources = [
     if (cachedArticles.length === 0 && !coreCategories.includes(normalizedTopic)) {
       console.log(`🔍 [CONTENT SEARCH] No category match, trying content-based search for: ${topic}`);
       
-      // Build MongoDB text search for multi-word topics
-      // Escape special regex characters and create flexible search
-      const escapedTopic = normalizedTopic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // 🧠 SMART SEARCH: Use topic intelligence to expand search terms for specific topics
+      const topicIntelligence = require('./services/topicIntelligence');
+      let searchTerms = [normalizedTopic];
       
-      // Use case-insensitive regex that matches the phrase anywhere in title/description
-      const searchRegex = new RegExp(escapedTopic, 'i');
+      try {
+        // Quick analysis to get expanded terms (uses fallback if GPT unavailable)
+        const context = {
+          userCountry: geo?.countryCode || geo?.country || 'us'
+        };
+        const analysis = await topicIntelligence.analyzeTopicSpecificity(topic, context);
+        
+        if (analysis.specificity === 'too_specific' && analysis.expandedTerms.length > 1) {
+          // For specific topics, expand search to include related terms
+          searchTerms = analysis.expandedTerms;
+          console.log(`🎯 [SMART SEARCH] Expanding specific topic "${topic}" to: ${searchTerms.join(', ')}`);
+        } else if (analysis.specificity === 'too_broad' && context.userCountry) {
+          // For broad topics, add location context
+          searchTerms = [normalizedTopic, `${context.userCountry} ${normalizedTopic}`];
+          console.log(`🌍 [SMART SEARCH] Adding location context to broad topic "${topic}"`);
+        }
+      } catch (error) {
+        console.warn(`⚠️  [SMART SEARCH] Failed to analyze topic, using simple search:`, error.message);
+      }
+      
+      // Build MongoDB search with expanded terms
+      const searchConditions = searchTerms.map(term => {
+        const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(escapedTerm, 'i');
+        return {
+          $or: [
+            { title: regex },
+            { description: regex }
+          ]
+        };
+      });
       
       cachedArticles = await ArticleCache.find({
-        $or: [
-          { title: searchRegex },
-          { description: searchRegex }
-        ],
+        $or: searchConditions,
         expiresAt: { $gt: new Date() }
-      }).sort({ publishedAt: -1 }).limit(maxResults * 2); // Get more results for content search
+      }).sort({ publishedAt: -1 }).limit(maxResults * 3); // Get more results for expanded search
       
-      // Score articles by relevance (title matches are better than description matches)
+      // Score articles by relevance
       if (cachedArticles.length > 0) {
         const scored = cachedArticles.map(article => {
-          const titleMatch = (article.title || '').toLowerCase().includes(normalizedTopic);
-          const descMatch = (article.description || '').toLowerCase().includes(normalizedTopic);
-          return {
-            article,
-            score: (titleMatch ? 10 : 0) + (descMatch ? 1 : 0)
-          };
+          const titleLower = (article.title || '').toLowerCase();
+          const descLower = (article.description || '').toLowerCase();
+          
+          let score = 0;
+          // Primary term (original topic) gets highest score
+          if (titleLower.includes(normalizedTopic)) score += 10;
+          if (descLower.includes(normalizedTopic)) score += 5;
+          
+          // Expanded terms get lower score
+          searchTerms.slice(1).forEach(term => {
+            const termLower = term.toLowerCase();
+            if (titleLower.includes(termLower)) score += 3;
+            if (descLower.includes(termLower)) score += 1;
+          });
+          
+          return { article, score };
         });
         
         // Sort by score and take top results
         scored.sort((a, b) => b.score - a.score);
         cachedArticles = scored.slice(0, maxResults).map(s => s.article);
         
-        console.log(`✅ [CONTENT MATCH] Found ${cachedArticles.length} articles by content search for: ${topic}`);
+        console.log(`✅ [CONTENT MATCH] Found ${cachedArticles.length} articles by smart search for: ${topic}`);
       }
     }
     
@@ -1855,6 +1899,8 @@ Articles:
 ${articleTexts}
 
 Requirements:
+- DO NOT include any topic headers, titles, or labels (e.g. "**Donald Trump News Summary**")
+- Start directly with the news content
 - Include specific names, numbers, facts (avoid vague statements like "there are developments")
 - Identify people with context (e.g., "CEO of Tesla" not just "John")
 - Use \\n\\n for paragraph breaks (2-4 sentences each)
@@ -1873,7 +1919,7 @@ After summary add:
       messages: [
         {
           role: "system",
-          content: "Professional news presenter. Create engaging, factual summaries with specific details (names, numbers, facts). Never write vague meta-commentary. Always identify people with context. Use \\n\\n for paragraph breaks. Include metadata as JSON."
+          content: "Professional news presenter. Create engaging, factual summaries with specific details (names, numbers, facts). Never write vague meta-commentary. Always identify people with context. Use \\n\\n for paragraph breaks. Include metadata as JSON. NEVER include topic headers or titles in the summary - start directly with the news content."
         },
         {
           role: "user",
@@ -2019,6 +2065,81 @@ function combineTopicSummaries(summariesWithTopics) {
   
   // Join with double newlines to create paragraph breaks between topics
   return parts.join("\n\n");
+}
+
+// Helper function to generate a catchy title using ChatGPT
+async function generateCatchyTitle(topics) {
+  // Fallback for single or no topics
+  if (!topics || topics.length === 0) {
+    return "News Summary";
+  }
+  if (topics.length === 1) {
+    return `${topics[0].charAt(0).toUpperCase() + topics[0].slice(1)} Summary`;
+  }
+  
+  // For multiple topics, use ChatGPT to generate a catchy title
+  if (!OPENAI_API_KEY) {
+    return "Mixed Summary";
+  }
+  
+  try {
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    const topicsList = topics.slice(0, 5).join(", "); // Limit to first 5 topics for brevity
+    
+    const prompt = `Create a short, catchy title (5-7 words max) for a news summary covering these topics: ${topicsList}
+
+Examples of good titles:
+- "Zohran becomes mayor, Fatal New Years fire, and more"
+- "Trump trial, Market rally, Tech layoffs"
+- "Election results, Climate summit updates"
+
+Requirements:
+- Be specific and mention key topics
+- End with "and more" if covering 3+ diverse topics
+- Use present tense for ongoing stories
+- Keep it under 7 words
+- Be newsworthy and engaging
+
+Return ONLY the title, no quotes or extra text.`;
+    
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "You are a news editor creating catchy, concise headlines. Return only the title, nothing else."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      max_tokens: 30,
+      temperature: 0.7,
+    });
+    
+    let title = completion.choices[0]?.message?.content?.trim();
+    
+    // Remove quotes if ChatGPT added them
+    if (title) {
+      title = title.replace(/^["']|["']$/g, '');
+      // Ensure title isn't too long (truncate if needed)
+      if (title.length > 60) {
+        const words = title.split(' ');
+        title = words.slice(0, 7).join(' ');
+        if (!title.match(/[.!,]$/)) {
+          title += '...';
+        }
+      }
+      console.log(`[TITLE GENERATION] Generated title: "${title}" for topics: ${topicsList}`);
+      return title;
+    }
+  } catch (error) {
+    console.error('[TITLE GENERATION] Error generating title:', error.message);
+  }
+  
+  // Fallback to Mixed Summary if anything fails
+  return "Mixed Summary";
 }
 
 // Helper function to add intro and outro to final summary
@@ -2747,12 +2868,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     }
 
     // Generate a better title based on topics
-    let title = "Summary";
-    if (topics.length === 1) {
-      title = `${topics[0].charAt(0).toUpperCase() + topics[0].slice(1)} Summary`;
-    } else if (topics.length > 1) {
-      title = "Mixed Summary";
-    }
+    let title = await generateCatchyTitle(topics);
 
     // Send notification if user is not in app and has device token (after response is sent)
     // Check appInForeground from query params or body (defaults to true for backward compatibility)
@@ -2791,8 +2907,28 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
           
           if (userWithToken && userWithToken.deviceToken) {
             console.log(`[NOTIFICATIONS] Sending Fetch-ready notification to user ${userWithToken.email} with token ${userWithToken.deviceToken.substring(0, 8)}...`);
-            await sendFetchReadyNotification(userWithToken.deviceToken, title);
-            console.log(`[NOTIFICATIONS] ✅ Successfully sent Fetch-ready notification to user ${userWithToken.email}`);
+            const notifResult = await sendFetchReadyNotification(userWithToken.deviceToken, title);
+            
+            if (notifResult === 'BAD_TOKEN') {
+              console.log(`[NOTIFICATIONS] ⚠️  Invalid device token detected, clearing token for user ${userWithToken.email}`);
+              // Clear the invalid token
+              if (mongoose.connection.readyState === 1) {
+                const freshUser = await User.findById(userWithToken._id || userWithToken.id);
+                if (freshUser) {
+                  freshUser.deviceToken = null;
+                  await freshUser.save();
+                }
+              } else {
+                if (userWithToken.preferences) {
+                  userWithToken.preferences.deviceToken = null;
+                  await fallbackAuth.updatePreferences(userWithToken, userWithToken.preferences);
+                }
+              }
+            } else if (notifResult) {
+              console.log(`[NOTIFICATIONS] ✅ Successfully sent Fetch-ready notification to user ${userWithToken.email}`);
+            } else {
+              console.log(`[NOTIFICATIONS] ⚠️  Failed to send notification to user ${userWithToken.email}`);
+            }
           } else {
             console.log(`[NOTIFICATIONS] ⚠️  No device token found for user ${userWithToken?.email || req.user.email}, skipping notification`);
           }
@@ -3064,12 +3200,7 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
         combinedText = addIntroAndOutro(combinedText, topics, goodNewsOnly, req.user);
 
         // Generate a better title based on topics
-        let title = "Summary";
-        if (topics.length === 1) {
-          title = `${topics[0].charAt(0).toUpperCase() + topics[0].slice(1)} Summary`;
-        } else if (topics.length > 1) {
-          title = "Mixed Summary";
-        }
+        let title = await generateCatchyTitle(topics);
 
         return {
           items,
@@ -3124,15 +3255,30 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
             // Generate title from first batch topics
             const firstBatch = batches[0];
             const firstTopics = Array.isArray(firstBatch.topics) ? firstBatch.topics : [];
-            let title = "Summary";
-            if (firstTopics.length === 1) {
-              title = `${firstTopics[0].charAt(0).toUpperCase() + firstTopics[0].slice(1)} Summary`;
-            } else if (firstTopics.length > 1) {
-              title = "Mixed Summary";
-            }
+            let title = await generateCatchyTitle(firstTopics);
             
-            await sendFetchReadyNotification(userWithToken.deviceToken, title);
-            console.log(`[NOTIFICATIONS] Sent Fetch-ready notification to user ${userWithToken.email} (batch)`);
+            const notifResult = await sendFetchReadyNotification(userWithToken.deviceToken, title);
+            
+            if (notifResult === 'BAD_TOKEN') {
+              console.log(`[NOTIFICATIONS] ⚠️  Invalid device token detected, clearing token for user ${userWithToken.email}`);
+              // Clear the invalid token
+              if (mongoose.connection.readyState === 1) {
+                const freshUser = await User.findById(userWithToken._id || userWithToken.id);
+                if (freshUser) {
+                  freshUser.deviceToken = null;
+                  await freshUser.save();
+                }
+              } else {
+                if (userWithToken.preferences) {
+                  userWithToken.preferences.deviceToken = null;
+                  await fallbackAuth.updatePreferences(userWithToken, userWithToken.preferences);
+                }
+              }
+            } else if (notifResult) {
+              console.log(`[NOTIFICATIONS] ✅ Sent Fetch-ready notification to user ${userWithToken.email} (batch)`);
+            } else {
+              console.log(`[NOTIFICATIONS] ⚠️  Failed to send notification to user ${userWithToken.email} (batch)`);
+            }
           }
         } catch (notifError) {
           // Don't fail the request if notification fails
@@ -3152,6 +3298,48 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
 });
 
 // Note: Usage endpoint is now handled by /api/auth/usage in auth routes
+
+// Helper function to split text into chunks at sentence boundaries
+function splitTextIntoChunks(text, maxChunkSize = 4000) {
+  if (text.length <= maxChunkSize) {
+    return [text];
+  }
+  
+  const chunks = [];
+  let currentChunk = '';
+  
+  // Split by sentences (., !, ?)
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+  
+  for (const sentence of sentences) {
+    // If a single sentence is too long, split it by clauses (commas)
+    if (sentence.length > maxChunkSize) {
+      const clauses = sentence.split(/,\s*/);
+      for (const clause of clauses) {
+        if ((currentChunk + clause).length > maxChunkSize) {
+          if (currentChunk) chunks.push(currentChunk.trim());
+          currentChunk = clause;
+        } else {
+          currentChunk += (currentChunk ? ', ' : '') + clause;
+        }
+      }
+    } else {
+      // Normal sentence handling
+      if ((currentChunk + sentence).length > maxChunkSize) {
+        if (currentChunk) chunks.push(currentChunk.trim());
+        currentChunk = sentence;
+      } else {
+        currentChunk += ' ' + sentence;
+      }
+    }
+  }
+  
+  if (currentChunk) {
+    chunks.push(currentChunk.trim());
+  }
+  
+  return chunks;
+}
 
 // --- TTS endpoint (OpenAI) ---
 app.post("/api/tts", async (req, res) => {
@@ -3178,49 +3366,69 @@ app.post("/api/tts", async (req, res) => {
       .replace(/\s+/g, " ") // Normalize whitespace
       .trim();
     
-    // OpenAI TTS has a 4096 character limit, so we'll use a reasonable limit
-    const maxLength = 4090; // Use most of the available limit
-    const finalText = cleaned.length > maxLength ? cleaned.slice(0, maxLength - 3) + "..." : cleaned;
+    // Split text into chunks if it exceeds OpenAI's 4096 character limit
+    const maxChunkLength = 4000; // Leave buffer for safety
+    const textChunks = splitTextIntoChunks(cleaned, maxChunkLength);
     
-    // Log if text was truncated
-    if (cleaned.length > maxLength) {
-      console.log(`TTS text truncated from ${cleaned.length} to ${finalText.length} characters`);
-    }
+    console.log(`TTS processing ${textChunks.length} chunk(s) for total ${cleaned.length} characters`);
+    
+    // For single chunk, use the original cache key logic
+    if (textChunks.length === 1) {
+      const finalText = textChunks[0];
 
-    // Check cache first (using final processed text)
-    const cacheKey = cache.getTTSKey(finalText, voice, speed);
-    const cached = await cache.get(cacheKey);
+      // Check cache first (using final processed text)
+      const cacheKey = cache.getTTSKey(finalText, voice, speed);
+      const cached = await cache.get(cacheKey);
+      
+      // Cache is enabled for better performance
+      const disableCache = false;
+      
+      if (cached && !disableCache) {
+        // If B2 is configured, only use cached URLs that are B2 URLs
+        // This prevents using stale local file URLs that may have been deleted
+        const isB2Url = cached.audioUrl && cached.audioUrl.includes('backblazeb2.com');
+        const shouldUseCache = !isB2Configured() || isB2Url;
+        
+        if (shouldUseCache) {
+          console.log(`TTS cache hit for ${finalText.substring(0, 50)}... with voice: ${voice}`);
+          // Ensure cached URL is absolute
+          const baseUrl = req.protocol + '://' + req.get('host');
+          const audioUrl = cached.audioUrl.startsWith('http') ? cached.audioUrl : `${baseUrl}${cached.audioUrl}`;
+          return res.json({ audioUrl });
+        } else {
+          console.log(`TTS cache skipped - B2 configured but cached URL is local (may be stale)`);
+        }
+      }
+      
+      console.log(`TTS cache miss - generating new audio with voice: ${voice}`);
+    }
     
-    // Cache is enabled for better performance
-    const disableCache = false;
+    // For multi-chunk text, check cache with combined key
+    const combinedCacheKey = cache.getTTSKey(cleaned, voice, speed);
+    const cachedCombined = await cache.get(combinedCacheKey);
     
-    if (cached && !disableCache) {
-      // If B2 is configured, only use cached URLs that are B2 URLs
-      // This prevents using stale local file URLs that may have been deleted
-      const isB2Url = cached.audioUrl && cached.audioUrl.includes('backblazeb2.com');
+    if (cachedCombined && textChunks.length > 1) {
+      const isB2Url = cachedCombined.audioUrl && cachedCombined.audioUrl.includes('backblazeb2.com');
       const shouldUseCache = !isB2Configured() || isB2Url;
       
       if (shouldUseCache) {
-        console.log(`TTS cache hit for ${finalText.substring(0, 50)}... with voice: ${voice}`);
-        // Ensure cached URL is absolute
+        console.log(`TTS multi-chunk cache hit for ${cleaned.length} characters with voice: ${voice}`);
         const baseUrl = req.protocol + '://' + req.get('host');
-        const audioUrl = cached.audioUrl.startsWith('http') ? cached.audioUrl : `${baseUrl}${cached.audioUrl}`;
+        const audioUrl = cachedCombined.audioUrl.startsWith('http') ? cachedCombined.audioUrl : `${baseUrl}${cachedCombined.audioUrl}`;
         return res.json({ audioUrl });
-      } else {
-        console.log(`TTS cache skipped - B2 configured but cached URL is local (may be stale)`);
       }
     }
-    
-    console.log(`TTS cache miss - generating new audio with voice: ${voice}`);
 
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    async function tryModel(model, voice) {
+    // Helper function to generate speech for a text chunk
+    async function generateSpeechForChunk(textChunk, model, voiceParam) {
       return await openai.audio.speech.create({
         model,
-        voice,
-        input: finalText,
+        voice: voiceParam,
+        input: textChunk,
         format: "mp3",
+        speed: speed,
       });
     }
 
@@ -3233,70 +3441,72 @@ app.post("/api/tts", async (req, res) => {
     
     console.log(`TTS Request - Original voice: "${voice}", Normalized: "${normalizedVoice}", Selected: "${selectedVoice}"`);
 
-    // Try the requested voice with different models in parallel for faster response
-    const attempts = [
-      { model: "tts-1", voice: selectedVoice },
-      { model: "tts-1-hd", voice: selectedVoice },
-    ];
+    // Try the requested voice with different models
+    const modelPriority = ["tts-1", "tts-1-hd"];
     
-    // Try all models in parallel and use the first successful one
-    let speech = null;
+    let finalBuffer = null;
     let lastErr = null;
     
-    const attemptPromises = attempts.map(async ({ model, voice: attemptVoice }) => {
-      try {
-        console.log(`TTS Attempt - Model: ${model}, Voice: ${attemptVoice}`);
-        const result = await tryModel(model, attemptVoice);
-        return { success: true, model, voice: attemptVoice, result };
-      } catch (e) {
-        const msg = e?.message || String(e);
-        console.warn(`/api/tts attempt failed (model=${model}, voice=${attemptVoice}):`, msg);
-        return { success: false, model, voice: attemptVoice, error: e };
-      }
-    });
-    
-    // Wait for all attempts and find the first successful one
-    const results = await Promise.all(attemptPromises);
-    const successful = results.find(r => r.success);
-    
-    if (successful) {
-      speech = successful.result;
-      console.log(`TTS Success - Model: ${successful.model}, Voice: ${successful.voice}`);
-    } else {
-      // If requested voice failed, try fallback models in parallel
-      console.log(`TTS Fallback - Requested voice "${selectedVoice}" failed, trying alloy`);
-      const fallbackAttempts = [
-        { model: "tts-1", voice: "alloy" },
-        { model: "tts-1-hd", voice: "alloy" },
-      ];
+    // Generate audio for each chunk
+    for (let chunkIndex = 0; chunkIndex < textChunks.length; chunkIndex++) {
+      const chunk = textChunks[chunkIndex];
+      console.log(`Generating audio for chunk ${chunkIndex + 1}/${textChunks.length} (${chunk.length} chars)`);
       
-      const fallbackPromises = fallbackAttempts.map(async ({ model, voice: attemptVoice }) => {
+      let chunkSpeech = null;
+      
+      // Try models in order for this chunk
+      for (const model of modelPriority) {
         try {
-          console.log(`TTS Fallback Attempt - Model: ${model}, Voice: ${attemptVoice}`);
-          const result = await tryModel(model, attemptVoice);
-          return { success: true, model, voice: attemptVoice, result };
+          console.log(`TTS Attempt - Chunk ${chunkIndex + 1}, Model: ${model}, Voice: ${selectedVoice}`);
+          chunkSpeech = await generateSpeechForChunk(chunk, model, selectedVoice);
+          if (chunkSpeech) {
+            console.log(`TTS Success - Chunk ${chunkIndex + 1}, Model: ${model}`);
+            break;
+          }
         } catch (e) {
-          console.warn(`/api/tts fallback failed (model=${model}, voice=${attemptVoice}):`, e?.message || String(e));
-          return { success: false, model, voice: attemptVoice, error: e };
+          lastErr = e;
+          const msg = e?.message || String(e);
+          console.warn(`/api/tts chunk ${chunkIndex + 1} failed (model=${model}):`, msg);
         }
-      });
+      }
       
-      const fallbackResults = await Promise.all(fallbackPromises);
-      const fallbackSuccessful = fallbackResults.find(r => r.success);
+      // If selected voice failed, try fallback to alloy
+      if (!chunkSpeech && selectedVoice !== "alloy") {
+        console.log(`TTS Fallback - Chunk ${chunkIndex + 1}, trying alloy voice`);
+        for (const model of modelPriority) {
+          try {
+            chunkSpeech = await generateSpeechForChunk(chunk, model, "alloy");
+            if (chunkSpeech) {
+              console.log(`TTS Fallback Success - Chunk ${chunkIndex + 1}, Model: ${model}`);
+              break;
+            }
+          } catch (e) {
+            lastErr = e;
+            console.warn(`/api/tts chunk ${chunkIndex + 1} fallback failed (model=${model}):`, e?.message || String(e));
+          }
+        }
+      }
       
-      if (fallbackSuccessful) {
-        speech = fallbackSuccessful.result;
-        console.log(`TTS Fallback Success - Model: ${fallbackSuccessful.model}, Voice: ${fallbackSuccessful.voice}`);
+      if (!chunkSpeech) {
+        throw lastErr || new Error(`Failed to generate audio for chunk ${chunkIndex + 1}`);
+      }
+      
+      // Convert to buffer and concatenate
+      const chunkBuffer = Buffer.from(await chunkSpeech.arrayBuffer());
+      
+      if (finalBuffer === null) {
+        finalBuffer = chunkBuffer;
       } else {
-        lastErr = fallbackResults[0]?.error || results[0]?.error;
+        // Concatenate MP3 buffers
+        finalBuffer = Buffer.concat([finalBuffer, chunkBuffer]);
       }
     }
 
-    if (!speech) {
+    if (!finalBuffer) {
       throw lastErr || new Error("All TTS attempts failed");
     }
 
-    const buffer = Buffer.from(await speech.arrayBuffer());
+    const buffer = finalBuffer;
     const fileBase = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
     
     let audioUrl;
@@ -3324,8 +3534,11 @@ app.post("/api/tts", async (req, res) => {
     }
     
     // Cache the TTS result for 24 hours
-    await cache.set(cacheKey, { audioUrl }, 86400);
+    // Use the appropriate cache key depending on whether it was chunked
+    const finalCacheKey = textChunks.length === 1 ? cache.getTTSKey(textChunks[0], voice, speed) : combinedCacheKey;
+    await cache.set(finalCacheKey, { audioUrl }, 86400);
     
+    console.log(`TTS completed - Generated ${textChunks.length} chunk(s) for ${cleaned.length} characters`);
     res.json({ audioUrl });
   } catch (e) {
     try {
@@ -3344,35 +3557,91 @@ app.post("/api/tts", async (req, res) => {
 // Check if scheduler is disabled via environment variable
 const SCHEDULER_ENABLED = process.env.SCHEDULER_ENABLED !== 'false'; // Default to enabled unless explicitly disabled
 
+// Import safeguards
+const SchedulerLock = require('./models/SchedulerLock');
+const SchedulerExecution = require('./models/SchedulerExecution');
+const CircuitBreaker = require('./utils/circuitBreaker');
+const { getQueue } = require('./utils/schedulerQueue');
+
+// Initialize safeguards
+const os = require('os');
+const SERVER_ID = process.env.RENDER_INSTANCE_ID || `${os.hostname()}-${process.pid}`;
+const schedulerCircuitBreaker = new CircuitBreaker({
+  failureThreshold: 5,
+  successThreshold: 2,
+  timeout: 120000, // 2 minutes per execution
+  resetTimeout: 30 * 60 * 1000 // 30 minutes
+});
+const schedulerQueue = getQueue({ concurrency: 1 });
+
 // Lock to prevent concurrent scheduler executions
 let schedulerRunning = false;
 let schedulerTimeout = null;
 
+// Export circuit breaker for monitoring
+function getCircuitBreaker() {
+  return schedulerCircuitBreaker;
+}
+
 // Helper function to save user with retry logic for version conflicts (for scheduler use)
-async function saveUserWithRetryForScheduler(user, retries = 3) {
+async function saveUserWithRetryForScheduler(user, retries = 5) {
+  let attempt = 0;
+  const maxRetries = retries;
+  
   while (retries > 0) {
     try {
       await user.save();
       return;
     } catch (error) {
       if (error.name === 'VersionError' && retries > 1) {
-        console.log(`[SCHEDULER] Version conflict, retrying... (${retries - 1} retries left)`);
+        retries--;
+        attempt++;
+        
+        // Add exponential backoff with jitter
+        const baseDelay = 100 * Math.pow(2, attempt - 1); // 100ms, 200ms, 400ms, 800ms, 1600ms
+        const jitter = Math.random() * baseDelay * 0.5;
+        const delay = baseDelay + jitter;
+        
+        console.log(`[SCHEDULER] Version conflict, retrying in ${Math.round(delay)}ms... (${retries} retries left)`);
+        
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
         // Reload the document to get the latest version
         const freshUser = await User.findById(user._id);
         if (freshUser) {
-          // Preserve all changes from the current user object before reloading
+          // Only preserve scheduler-related fields to avoid conflicts with auth operations
+          const schedulerFields = ['scheduledSummaries'];
+          
           const modifiedPaths = user.modifiedPaths();
           const changesToPreserve = {};
           
-          // Store all modified values
+          // Store only scheduler-related modified values
           for (const path of modifiedPaths) {
-            changesToPreserve[path] = user.get(path);
+            const isRelevantField = schedulerFields.some(field => 
+              path === field || path.startsWith(field + '.')
+            );
+            
+            if (isRelevantField) {
+              try {
+                const value = user.get(path);
+                if (value !== undefined) {
+                  changesToPreserve[path] = value;
+                }
+              } catch (err) {
+                console.warn(`[SCHEDULER] Could not preserve path ${path}:`, err.message);
+              }
+            } else {
+              console.log(`[SCHEDULER] Skipping non-scheduler field during retry: ${path}`);
+            }
           }
           
-          // Also check for common fields that might have been modified
-          if (user.isModified('scheduledSummaries')) {
+          // Also check for scheduledSummaries field explicitly
+          if (user.isModified('scheduledSummaries') && !changesToPreserve['scheduledSummaries']) {
             changesToPreserve['scheduledSummaries'] = user.scheduledSummaries;
           }
+          
+          console.log(`[SCHEDULER] Preserving ${Object.keys(changesToPreserve).length} field(s): ${Object.keys(changesToPreserve).join(', ')}`);
           
           // Copy the fresh user data to the original user object
           Object.assign(user, freshUser.toObject());
@@ -3383,12 +3652,19 @@ async function saveUserWithRetryForScheduler(user, retries = 3) {
             user.markModified(path);
           }
           
-          retries--;
           continue;
         } else {
           throw error;
         }
       } else {
+        if (error.name === 'VersionError') {
+          console.error(`[SCHEDULER] VersionError after all retries:`, {
+            userId: user._id,
+            version: error.version,
+            modifiedPaths: error.modifiedPaths || [],
+            retriesLeft: retries
+          });
+        }
         throw error;
       }
     }
@@ -3404,13 +3680,38 @@ async function checkScheduledSummaries() {
     return;
   }
   
-  // Prevent concurrent executions
-  if (schedulerRunning) {
-    console.log(`[SCHEDULER] Scheduler already running, skipping concurrent execution`);
+  // Check circuit breaker
+  if (!schedulerCircuitBreaker.isAvailable()) {
+    const status = schedulerCircuitBreaker.getStatus();
+    console.log(`[SCHEDULER] Circuit breaker is ${status.state}, skipping check`);
     return;
   }
   
+  // Prevent concurrent executions (local check)
+  if (schedulerRunning) {
+    console.log(`[SCHEDULER] Scheduler already running locally, skipping concurrent execution`);
+    return;
+  }
+  
+  // Try to acquire distributed lock
+  const lockAcquired = await SchedulerLock.acquireLock('scheduler-main', SERVER_ID, 5 * 60 * 1000);
+  if (!lockAcquired) {
+    console.log(`[SCHEDULER] Could not acquire distributed lock (held by another instance)`);
+    return;
+  }
+  
+  console.log(`[SCHEDULER] Acquired distributed lock for instance: ${SERVER_ID}`);
   schedulerRunning = true;
+  
+  // Set up heartbeat interval to keep lock alive
+  const heartbeatInterval = setInterval(async () => {
+    try {
+      await SchedulerLock.heartbeat('scheduler-main', SERVER_ID, 5 * 60 * 1000);
+      console.log(`[SCHEDULER] Lock heartbeat updated`);
+    } catch (err) {
+      console.error(`[SCHEDULER] Failed to update lock heartbeat:`, err);
+    }
+  }, 2 * 60 * 1000); // Every 2 minutes
   
   try {
     const now = new Date();
@@ -3596,18 +3897,60 @@ async function checkScheduledSummaries() {
             }
           }
           
-          console.log(`[SCHEDULER] Executing scheduled fetch "${summary.name}" for user ${user.email} on ${currentDay}`);
+          // Check idempotency - has this execution already been processed?
+          const scheduledDate = now.toISOString().split('T')[0]; // YYYY-MM-DD
+          const { execution, isNew, shouldExecute } = await SchedulerExecution.getOrCreate(
+            freshUser._id,
+            freshSummary.id,
+            scheduledDate,
+            [...(freshSummary.topics || []), ...(freshSummary.customTopics || [])]
+          );
           
-          try {
-            // Import and call the execution function directly
-            const { executeScheduledSummary } = require('./routes/scheduledSummaries');
-            await executeScheduledSummary(freshUser, freshSummary);
-            console.log(`[SCHEDULER] Successfully executed scheduled fetch "${summary.name}" for user ${user.email}`);
-            executedCount++;
-          } catch (error) {
-            console.error(`[SCHEDULER] Failed to execute scheduled fetch "${summary.name}" for user ${user.email}:`, error);
-            // Note: lastRun was already updated, so this won't retry until tomorrow
+          if (!shouldExecute) {
+            console.log(`[SCHEDULER] Execution already completed today for "${summary.name}" - ${user.email} (idempotency check)`);
+            continue;
           }
+          
+          console.log(`[SCHEDULER] Queuing scheduled fetch "${summary.name}" for user ${user.email} on ${currentDay}`);
+          
+          // Add to queue for processing with circuit breaker
+          schedulerQueue.add({
+            id: execution.executionId,
+            userId: freshUser._id,
+            summaryId: freshSummary.id,
+            userEmail: user.email,
+            summaryName: summary.name,
+            execute: async () => {
+              // Mark as started
+              await SchedulerExecution.markStarted(execution.executionId);
+              
+              // Execute through circuit breaker
+              return await schedulerCircuitBreaker.execute(async () => {
+                const { executeScheduledSummary } = require('./routes/scheduledSummaries');
+                await executeScheduledSummary(freshUser, freshSummary);
+                
+                // Mark as completed
+                await SchedulerExecution.markCompleted(execution.executionId);
+                
+                console.log(`[SCHEDULER] Successfully executed scheduled fetch "${summary.name}" for user ${user.email}`);
+                return { success: true };
+              }, async () => {
+                // Fallback: Circuit breaker is open
+                await SchedulerExecution.markFailed(execution.executionId, new Error('Circuit breaker is OPEN'));
+                console.error(`[SCHEDULER] Circuit breaker OPEN, skipping execution for "${summary.name}" - ${user.email}`);
+                return { success: false, reason: 'circuit_breaker_open' };
+              });
+            },
+            maxRetries: 1
+          }).then((result) => {
+            if (result?.success) {
+              executedCount++;
+            }
+          }).catch(async (error) => {
+            console.error(`[SCHEDULER] Failed to execute scheduled fetch "${summary.name}" for user ${user.email}:`, error);
+            await SchedulerExecution.markFailed(execution.executionId, error);
+            // Note: lastRun was already updated, so this won't retry until tomorrow
+          });
         }
       }
       
@@ -3638,6 +3981,19 @@ async function checkScheduledSummaries() {
     console.log(`[SCHEDULER] Next check in 10 minutes`);
     console.log(`[SCHEDULER] ============================================`);
   } finally {
+    // Clear heartbeat interval
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+    }
+    
+    // Release distributed lock
+    try {
+      await SchedulerLock.releaseLock('scheduler-main', SERVER_ID);
+      console.log(`[SCHEDULER] Released distributed lock for instance: ${SERVER_ID}`);
+    } catch (lockError) {
+      console.error(`[SCHEDULER] Error releasing lock:`, lockError);
+    }
+    
     schedulerRunning = false;
   }
 }
@@ -3950,9 +4306,22 @@ async function checkEngagementReminders() {
         }
         
         // Send engagement reminder
-        const success = await sendEngagementReminder(deviceToken);
+        const result = await sendEngagementReminder(deviceToken);
         
-        if (success) {
+        if (result === 'BAD_TOKEN') {
+          // Invalid token - clear it from user record
+          console.log(`[ENGAGEMENT] ⚠️  Invalid device token detected, clearing token for user ${user.email}`);
+          if (mongoose.connection.readyState === 1) {
+            user.deviceToken = null;
+            await user.save();
+          } else {
+            if (user.preferences) {
+              user.preferences.deviceToken = null;
+              await fallbackAuth.updatePreferences(user, user.preferences);
+            }
+          }
+          remindersSkipped++;
+        } else if (result) {
           // Update last reminder sent time
           if (!user.notificationPreferences) {
             user.notificationPreferences = {};
@@ -4874,11 +5243,13 @@ module.exports = {
   summarizeArticles,
   addIntroAndOutro,
   combineTopicSummaries,
+  generateCatchyTitle,
   filterRelevantArticles,
   isUpliftingNews,
   normalizeSourceName,
   isSourceAllowedForUS,
   getUSNewsAPISources,
-  loadTrendingTopics
+  loadTrendingTopics,
+  getCircuitBreaker
 };
 
