@@ -898,12 +898,24 @@ async function executeScheduledSummary(user, summary) {
     // Process all topics in parallel for better performance
     const topicResults = await Promise.all(allTopics.map(topic => processTopic(topic)));
     
+    // Build topic sections with IDs (for per-topic display)
+    const topicSections = [];
+    
     // Combine results from parallel processing, tracking which summary belongs to which topic
     for (let i = 0; i < topicResults.length; i++) {
       const result = topicResults[i];
       const topic = allTopics[i];
       if (result.summary) {
         summariesWithTopics.push({ summary: result.summary, topic: topic });
+        
+        // Create topic section (audio will be added later)
+        topicSections.push({
+          id: `scheduled-${topic.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}-${i}`,
+          topic: topic,
+          summary: result.summary,
+          articles: result.sourceItems,
+          audioUrl: null // Will be generated below
+        });
       }
       items.push(...result.sourceItems);
     }
@@ -950,11 +962,35 @@ async function executeScheduledSummary(user, summary) {
       lengthCategory = 'medium';
     }
     
-    // Generate audio for the summary
+    // Generate per-topic audio (instead of combined audio)
+    console.log(`[SCHEDULER] 🎤 Generating audio for ${topicSections.length} topics...`);
+    
+    const { generateTTS } = require('../index');
+    
+    // Generate TTS for each topic in parallel
+    const ttsPromises = topicSections.map(async (section, index) => {
+      try {
+        console.log(`[SCHEDULER]    Generating audio for topic: ${section.topic}`);
+        const audioData = await generateTTS(section.summary, selectedVoice, playbackRate);
+        section.audioUrl = audioData.audioUrl;
+        console.log(`[SCHEDULER]    ✅ Audio generated for ${section.topic}`);
+      } catch (ttsError) {
+        console.error(`[SCHEDULER]    ❌ Failed to generate audio for ${section.topic}:`, ttsError);
+        section.audioUrl = null;
+      }
+    });
+    
+    // Wait for all TTS to complete
+    await Promise.all(ttsPromises);
+    console.log(`[SCHEDULER] 🎤 Completed audio generation for all topics`);
+    
+    // No longer generating combined audio - use per-topic audio instead
     let audioUrl = null;
+    
+    // LEGACY CODE BELOW (for backward compatibility if needed):
     try {
       const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-      if (OPENAI_API_KEY) {
+      if (false && OPENAI_API_KEY) { // Disabled - using per-topic audio now
         // Clean and prepare text for TTS
         const cleaned = String(combinedText)
           .replace(/[\n\r\u2018\u2019\u201C\u201D]/g, (match) => {
@@ -1094,9 +1130,15 @@ async function executeScheduledSummary(user, summary) {
       summary: combinedText,
       topics: allTopics,
       length: lengthCategory,
-      audioUrl: audioUrl,
+      audioUrl: audioUrl, // Legacy - no longer used
+      topicSections: topicSections, // NEW: Per-topic sections with individual audio
       sources: items.slice(0, 10) // Keep top 10 sources
     };
+    
+    console.log(`[SCHEDULER] 📊 Saving summary with ${topicSections.length} topic sections to history`);
+    for (const section of topicSections) {
+      console.log(`[SCHEDULER]    - ${section.topic}: ${section.articles.length} articles, Audio: ${section.audioUrl ? 'YES' : 'NO'}`);
+    }
     
     if (mongoose.connection.readyState === 1) {
       // Add to history and increment usage, then save once
@@ -1108,6 +1150,7 @@ async function executeScheduledSummary(user, summary) {
         length: summaryData.length,
         timestamp: new Date(),
         audioUrl: summaryData.audioUrl,
+        topicSections: summaryData.topicSections, // NEW: Include topic sections
         sources: summaryData.sources
       });
       
