@@ -44,7 +44,9 @@ struct HomeView: View {
     }
 
     /// Title uses last fetched topics, not live selected topics.
-    private var fetchedTitle: String { userNewsTitle(from: vm.lastFetchedTopics) }
+    private var fetchedTitle: String { 
+        vm.nowPlayingTitle.isEmpty ? userNewsTitle(from: vm.lastFetchedTopics) : vm.nowPlayingTitle
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -102,6 +104,7 @@ struct HomeView: View {
                     .disabled(vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty)
                     .opacity((vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty) ? 0.6 : 1.0)
                     .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 20)
                     .padding(.vertical, 16)
 
                     // Reset Button (if topics are selected)
@@ -306,7 +309,7 @@ struct SelectedTopicsSection: View {
                     ], alignment: .leading, spacing: 10) {
                         ForEach(allTopics, id: \.self) { topic in
                             TopicChip(
-                                title: topic.capitalized,
+                                title: smartCapitalized(topic),
                                 isActive: selectedTopics.contains(topic),
                                 minWidth: 140
                             ) { onTopicToggle(topic) }
@@ -319,7 +322,7 @@ struct SelectedTopicsSection: View {
                         HStack(spacing: 10) {
                             ForEach(allTopics, id: \.self) { topic in
                                 TopicChip(
-                                    title: topic.capitalized,
+                                    title: smartCapitalized(topic),
                                     isActive: selectedTopics.contains(topic),
                                     minWidth: 140
                                 ) { onTopicToggle(topic) }
@@ -383,7 +386,7 @@ struct TrendingTopicsSection: View {
                 ], alignment: .leading, spacing: 10) {
                     ForEach(trendingTopics, id: \.self) { topic in
                         TopicChip(
-                            title: topic.capitalized,
+                            title: smartCapitalized(topic),
                             isActive: selectedTopics.contains(topic.lowercased()),
                             minWidth: 140
                         ) { onTopicToggle(topic.lowercased()) }
@@ -396,7 +399,7 @@ struct TrendingTopicsSection: View {
                     HStack(spacing: 10) {
                         ForEach(trendingTopics, id: \.self) { topic in
                             TopicChip(
-                                title: topic.capitalized,
+                                title: smartCapitalized(topic),
                                 isActive: selectedTopics.contains(topic.lowercased()),
                                 minWidth: 140
                             ) { onTopicToggle(topic.lowercased()) }
@@ -416,15 +419,26 @@ struct CustomTopicsSection: View {
     let onAddCustom: (String) -> Void
     @Binding var showAll: Bool
     let vm: NewsVM
-    @State private var customTopicText = ""
+    @State private var showingTopicBrowser = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("My Topics")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.primary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("My Topics")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                    
+                    // "More topics" link
+                    Button(action: {
+                        showingTopicBrowser = true
+                    }) {
+                        Text("More topics")
+                            .font(.subheadline)
+                            .foregroundColor(.blue)
+                    }
+                }
                 Spacer()
                 HStack(spacing: 12) {
                     // Delete button for selected custom topics
@@ -446,33 +460,6 @@ struct CustomTopicsSection: View {
                         .font(.subheadline)
                         .foregroundColor(.blue)
                     }
-                }
-            }
-            .padding(.horizontal, 20)
-            
-            // Custom topic input - matches mockup styling
-            HStack(spacing: 12) {
-                TextField("Add custom topic", text: $customTopicText)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .onSubmit {
-                        if !customTopicText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            onAddCustom(customTopicText.trimmingCharacters(in: .whitespacesAndNewlines))
-                            customTopicText = ""
-                        }
-                    }
-                
-                Button(action: {
-                    if !customTopicText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        onAddCustom(customTopicText.trimmingCharacters(in: .whitespacesAndNewlines))
-                        customTopicText = ""
-                    }
-                }) {
-                    Image(systemName: "plus")
-                        .font(.title2)
-                        .foregroundColor(.blue)
-                        .frame(width: 36, height: 36)
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(8)
                 }
             }
             .padding(.horizontal, 20)
@@ -508,11 +495,17 @@ struct CustomTopicsSection: View {
                         .padding(.horizontal, 20)
                     }
                 }
+            } else {
+                // Show placeholder when no topics
+                Text("Browse and add topics that interest you")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 20)
             }
         }
-        .onTapGesture {
-            // Dismiss keyboard when tapping outside text fields
-            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        .sheet(isPresented: $showingTopicBrowser) {
+            TopicBrowserView()
+                .environmentObject(vm)
         }
     }
 }

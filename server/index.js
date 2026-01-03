@@ -1079,6 +1079,48 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
 
 // Note: Usage endpoint is now handled by /api/auth/usage in auth routes
 
+// Helper function to split text into chunks at sentence boundaries
+function splitTextIntoChunks(text, maxChunkSize = 4000) {
+  if (text.length <= maxChunkSize) {
+    return [text];
+  }
+  
+  const chunks = [];
+  let currentChunk = '';
+  
+  // Split by sentences (., !, ?)
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+  
+  for (const sentence of sentences) {
+    // If a single sentence is too long, split it by clauses (commas)
+    if (sentence.length > maxChunkSize) {
+      const clauses = sentence.split(/,\s*/);
+      for (const clause of clauses) {
+        if ((currentChunk + clause).length > maxChunkSize) {
+          if (currentChunk) chunks.push(currentChunk.trim());
+          currentChunk = clause;
+        } else {
+          currentChunk += (currentChunk ? ', ' : '') + clause;
+        }
+      }
+    } else {
+      // Normal sentence handling
+      if ((currentChunk + sentence).length > maxChunkSize) {
+        if (currentChunk) chunks.push(currentChunk.trim());
+        currentChunk = sentence;
+      } else {
+        currentChunk += ' ' + sentence;
+      }
+    }
+  }
+  
+  if (currentChunk) {
+    chunks.push(currentChunk.trim());
+  }
+  
+  return chunks;
+}
+
 // --- TTS endpoint (OpenAI) ---
 app.post("/api/tts", async (req, res) => {
   try {
@@ -1104,35 +1146,55 @@ app.post("/api/tts", async (req, res) => {
       .replace(/\s+/g, " ") // Normalize whitespace
       .trim();
     
-    // OpenAI TTS has a 4096 character limit, so we'll use a reasonable limit
-    const maxLength = 4000; // Leave some buffer for safety
-    const finalText = cleaned.length > maxLength ? cleaned.slice(0, maxLength - 3) + "..." : cleaned;
+    // Split text into chunks if it exceeds OpenAI's 4096 character limit
+    const maxChunkLength = 4000; // Leave buffer for safety
+    const textChunks = splitTextIntoChunks(cleaned, maxChunkLength);
+    
+    console.log(`TTS processing ${textChunks.length} chunk(s) for total ${cleaned.length} characters`);
+    
+    // For single chunk, use the original cache key logic
+    if (textChunks.length === 1) {
+      const finalText = textChunks[0];
 
-    // Check cache first (using final processed text)
-    const cacheKey = cache.getTTSKey(finalText, voice, speed);
-    const cached = await cache.get(cacheKey);
-    
-    // Temporarily disable cache for voice testing
-    const disableCache = true; // Set to false to re-enable caching
-    
-    if (cached && !disableCache) {
-      console.log(`TTS cache hit for ${finalText.substring(0, 50)}... with voice: ${voice}`);
-      // Ensure cached URL is absolute
-      const baseUrl = req.protocol + '://' + req.get('host');
-      const audioUrl = cached.audioUrl.startsWith('http') ? cached.audioUrl : `${baseUrl}${cached.audioUrl}`;
-      return res.json({ audioUrl });
+      // Check cache first (using final processed text)
+      const cacheKey = cache.getTTSKey(finalText, voice, speed);
+      const cached = await cache.get(cacheKey);
+      
+      // Cache enabled for better performance
+      const disableCache = false;
+      
+      if (cached && !disableCache) {
+        console.log(`TTS cache hit for ${finalText.substring(0, 50)}... with voice: ${voice}`);
+        // Ensure cached URL is absolute
+        const baseUrl = req.protocol + '://' + req.get('host');
+        const audioUrl = cached.audioUrl.startsWith('http') ? cached.audioUrl : `${baseUrl}${cached.audioUrl}`;
+        return res.json({ audioUrl });
+      }
+      
+      console.log(`TTS cache miss - generating new audio with voice: ${voice}`);
     }
     
-    console.log(`TTS cache miss - generating new audio with voice: ${voice}`);
+    // For multi-chunk text, check cache with combined key
+    const combinedCacheKey = cache.getTTSKey(cleaned, voice, speed);
+    const cachedCombined = await cache.get(combinedCacheKey);
+    
+    if (cachedCombined && textChunks.length > 1) {
+      console.log(`TTS multi-chunk cache hit for ${cleaned.length} characters with voice: ${voice}`);
+      const baseUrl = req.protocol + '://' + req.get('host');
+      const audioUrl = cachedCombined.audioUrl.startsWith('http') ? cachedCombined.audioUrl : `${baseUrl}${cachedCombined.audioUrl}`;
+      return res.json({ audioUrl });
+    }
 
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    async function tryModel(model, voice) {
+    // Helper function to generate speech for a text chunk
+    async function generateSpeechForChunk(textChunk, model, voiceParam) {
       return await openai.audio.speech.create({
         model,
-        voice,
-        input: finalText,
+        voice: voiceParam,
+        input: textChunk,
         format: "mp3",
+        speed: speed,
       });
     }
 
@@ -1144,68 +1206,79 @@ app.post("/api/tts", async (req, res) => {
     const selectedVoice = availableVoices.includes(normalizedVoice) ? normalizedVoice : "alloy";
     
     console.log(`TTS Request - Original voice: "${voice}", Normalized: "${normalizedVoice}", Selected: "${selectedVoice}"`);
-    
-    let speech;
-    let lastErr;
-    
+
     // Try the requested voice with different models
-    const attempts = [
-      { model: "tts-1", voice: selectedVoice },
-      { model: "tts-1-hd", voice: selectedVoice },
-      { model: "gpt-4o-mini-tts", voice: selectedVoice },
-    ];
+    const modelPriority = ["tts-1", "tts-1-hd"];
     
-    // Only fall back to alloy if the requested voice completely fails
-    const fallbackAttempts = [
-      { model: "tts-1", voice: "alloy" },
-      { model: "tts-1-hd", voice: "alloy" },
-    ];
+    let finalBuffer = null;
+    let lastErr = null;
     
-    // Try requested voice first
-    for (const { model, voice: attemptVoice } of attempts) {
-      try {
-        console.log(`TTS Attempt - Model: ${model}, Voice: ${attemptVoice}`);
-        speech = await tryModel(model, attemptVoice);
-        if (speech) {
-          console.log(`TTS Success - Model: ${model}, Voice: ${attemptVoice}`);
-          break;
-        }
-      } catch (e) {
-        lastErr = e;
+    // Generate audio for each chunk
+    for (let chunkIndex = 0; chunkIndex < textChunks.length; chunkIndex++) {
+      const chunk = textChunks[chunkIndex];
+      console.log(`Generating audio for chunk ${chunkIndex + 1}/${textChunks.length} (${chunk.length} chars)`);
+      
+      let chunkSpeech = null;
+      
+      // Try models in order for this chunk
+      for (const model of modelPriority) {
         try {
-          const msg = e?.message || String(e);
-          console.warn(`/api/tts attempt failed (model=${model}, voice=${attemptVoice}):`, msg);
-          if (e?.response) {
-            const body = await e.response.text().catch(() => "");
-            console.warn("OpenAI response:", body);
-          }
-        } catch {}
-      }
-    }
-    
-    // If requested voice failed, try fallback
-    if (!speech) {
-      console.log(`TTS Fallback - Requested voice "${selectedVoice}" failed, trying alloy`);
-      for (const { model, voice: attemptVoice } of fallbackAttempts) {
-        try {
-          console.log(`TTS Fallback Attempt - Model: ${model}, Voice: ${attemptVoice}`);
-          speech = await tryModel(model, attemptVoice);
-          if (speech) {
-            console.log(`TTS Fallback Success - Model: ${model}, Voice: ${attemptVoice}`);
+          console.log(`TTS Attempt - Chunk ${chunkIndex + 1}, Model: ${model}, Voice: ${selectedVoice}`);
+          chunkSpeech = await generateSpeechForChunk(chunk, model, selectedVoice);
+          if (chunkSpeech) {
+            console.log(`TTS Success - Chunk ${chunkIndex + 1}, Model: ${model}`);
             break;
           }
         } catch (e) {
           lastErr = e;
-          console.warn(`/api/tts fallback failed (model=${model}, voice=${attemptVoice}):`, e?.message || String(e));
+          const msg = e?.message || String(e);
+          console.warn(`/api/tts chunk ${chunkIndex + 1} failed (model=${model}):`, msg);
+          if (e?.response) {
+            try {
+              const body = await e.response.text().catch(() => "");
+              console.warn("OpenAI response:", body);
+            } catch {}
+          }
         }
+      }
+      
+      // If selected voice failed, try fallback to alloy
+      if (!chunkSpeech && selectedVoice !== "alloy") {
+        console.log(`TTS Fallback - Chunk ${chunkIndex + 1}, trying alloy voice`);
+        for (const model of modelPriority) {
+          try {
+            chunkSpeech = await generateSpeechForChunk(chunk, model, "alloy");
+            if (chunkSpeech) {
+              console.log(`TTS Fallback Success - Chunk ${chunkIndex + 1}, Model: ${model}`);
+              break;
+            }
+          } catch (e) {
+            lastErr = e;
+            console.warn(`/api/tts chunk ${chunkIndex + 1} fallback failed (model=${model}):`, e?.message || String(e));
+          }
+        }
+      }
+      
+      if (!chunkSpeech) {
+        throw lastErr || new Error(`Failed to generate audio for chunk ${chunkIndex + 1}`);
+      }
+      
+      // Convert to buffer and concatenate
+      const chunkBuffer = Buffer.from(await chunkSpeech.arrayBuffer());
+      
+      if (finalBuffer === null) {
+        finalBuffer = chunkBuffer;
+      } else {
+        // Concatenate MP3 buffers
+        finalBuffer = Buffer.concat([finalBuffer, chunkBuffer]);
       }
     }
 
-    if (!speech) {
+    if (!finalBuffer) {
       throw lastErr || new Error("All TTS attempts failed");
     }
 
-    const buffer = Buffer.from(await speech.arrayBuffer());
+    const buffer = finalBuffer;
     const fileBase = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
     const outPath = path.join(MEDIA_DIR, fileBase);
     fs.writeFileSync(outPath, buffer);
@@ -1215,8 +1288,11 @@ app.post("/api/tts", async (req, res) => {
     const audioUrl = `${baseUrl}/media/${fileBase}`;
     
     // Cache the TTS result for 24 hours
-    await cache.set(cacheKey, { audioUrl }, 86400);
+    // Use the appropriate cache key depending on whether it was chunked
+    const finalCacheKey = textChunks.length === 1 ? cache.getTTSKey(textChunks[0], voice, speed) : combinedCacheKey;
+    await cache.set(finalCacheKey, { audioUrl }, 86400);
     
+    console.log(`TTS completed - Generated ${textChunks.length} chunk(s) for ${cleaned.length} characters`);
     res.json({ audioUrl });
   } catch (e) {
     try {

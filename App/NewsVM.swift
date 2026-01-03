@@ -118,6 +118,12 @@ final class NewsVM: ObservableObject {
     // Timing (for progress bar)
     @Published var currentTime: Double = 0     // seconds
     @Published var duration: Double = 0        // seconds
+    
+    // Topic feed coordination
+    @Published var currentTopicIndex: Int = 0  // Current topic in feed
+    @Published var shouldAutoScroll: Bool = false // Trigger for auto-scroll to next topic
+    @Published var currentTopicAudioUrl: String? = nil // Current topic's audio URL
+    private var topicAudioPlayers: [String: AVPlayer] = [:] // Cache of audio players per topic
 
     // Settings (with UserDefaults persistence)
     @Published var playbackRate: Double = 1.0 {
@@ -168,6 +174,8 @@ final class NewsVM: ObservableObject {
                 // Load new user's data when they log in
                 await self?.initializeIfNeeded()
                 await self?.checkForScheduledSummary()
+                // Ensure automatic 6am/6pm fetches are set up
+                await self?.ensureAutomaticFetchSchedule()
             }
         }
     }
@@ -200,6 +208,9 @@ final class NewsVM: ObservableObject {
             await customTopicsTask
             await settingsTask
             await historyTask // Ensure lastFetchedTopics is loaded from history
+            
+            // Ensure automatic 6am/6pm fetches are set up
+            await ensureAutomaticFetchSchedule()
             
             // Load news sources for premium users in parallel
             if let authVM = authVM, authVM.currentUser?.isPremium == true {
@@ -579,7 +590,8 @@ final class NewsVM: ObservableObject {
                     id: combined!.id,
                     title: combined!.title,
                     summary: combined!.summary,
-                    audioUrl: audioUrl
+                    audioUrl: audioUrl,
+                    topicSections: combined!.topicSections
                 )
                 prepareAudio(urlString: audioUrl, title: combined!.title)
                 // Update the voice tracking
@@ -697,7 +709,9 @@ final class NewsVM: ObservableObject {
 
                 // Handle empty or missing summary
                 let rawSummary = resp.combined?.summary ?? resp.items.first?.summary ?? ""
-                let cleanedCombinedSummary = rawSummary.isEmpty ? "(No summary provided.)" : rawSummary.htmlStripped().condenseWhitespace()
+                // Note: Don't call htmlStripped() on combined summary - it's already plain text from ChatGPT
+                // and htmlStripped() can destroy paragraph breaks (\n\n)
+                let cleanedCombinedSummary = rawSummary.isEmpty ? "(No summary provided.)" : rawSummary.condenseWhitespace()
 
                 // Only create combined if we have actual content
                 if !cleanedCombinedSummary.isEmpty && cleanedCombinedSummary != "(No summary provided.)" {
@@ -706,7 +720,8 @@ final class NewsVM: ObservableObject {
                         id: resp.combined?.id ?? resp.items.first?.id ?? "combined",
                         title: summaryTitle,
                         summary: cleanedCombinedSummary,
-                        audioUrl: nil
+                        audioUrl: nil,
+                        topicSections: resp.combined?.topicSections
                     )
                     // Set now playing title for playback bar
                     self.nowPlayingTitle = summaryTitle
@@ -715,6 +730,9 @@ final class NewsVM: ObservableObject {
                     // Reset voice tracking for new summary
                     self.currentSummaryVoice = self.selectedVoice
                     self.needsNewAudio = false
+                    // Reset topic feed to start
+                    self.currentTopicIndex = 0
+                    self.shouldAutoScroll = false
                 } else {
                     self.combined = nil
                     self.fetchCreatedAt = nil
@@ -754,7 +772,8 @@ final class NewsVM: ObservableObject {
                             id: self.combined!.id,
                             title: self.combined!.title,
                             summary: self.combined!.summary,
-                            audioUrl: audioUrl
+                            audioUrl: audioUrl,
+                            topicSections: self.combined!.topicSections
                         )
                         self.prepareAudio(urlString: audioUrl, title: self.combined!.title)
                         // Record the voice used for this summary
@@ -952,6 +971,8 @@ final class NewsVM: ObservableObject {
                 if let dur = p.currentItem?.duration.seconds, dur.isFinite {
                     self.duration = dur
                 }
+                // Force view update to ensure UI refreshes
+                self.objectWillChange.send()
             }
         }
 
@@ -966,6 +987,9 @@ final class NewsVM: ObservableObject {
                 self.isPlaying = false
                 self.currentTime = self.duration
                 self.updateNowPlaying(isPlaying: false)
+                
+                // Trigger auto-scroll to next topic in feed
+                self.shouldAutoScroll = true
             }
         }
 
@@ -1027,6 +1051,57 @@ final class NewsVM: ObservableObject {
         }
     }
     
+    // MARK: - Per-Topic Audio
+    
+    /// Play audio for a specific topic section
+    func playTopicAudio(for topicSection: TopicSection) {
+        guard let audioUrl = topicSection.audioUrl else {
+            print("⚠️ No audio URL for topic: \(topicSection.topic)")
+            return
+        }
+        
+        // Stop current player
+        player?.pause()
+        
+        // Prepare and play topic audio
+        prepareAudio(urlString: audioUrl, title: topicSection.topic.capitalized)
+        currentTopicAudioUrl = audioUrl
+        
+        // Auto-play
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.playPause()
+        }
+    }
+    
+    /// Stop audio for current topic
+    func stopTopicAudio() {
+        if isPlaying {
+            player?.pause()
+            isPlaying = false
+            updateNowPlaying(isPlaying: false)
+        }
+    }
+    
+    /// Switch to a different topic's audio
+    func switchToTopicAudio(for topicSection: TopicSection, autoPlay: Bool = false) {
+        guard let audioUrl = topicSection.audioUrl else { return }
+        
+        // Only switch if it's a different audio URL
+        if currentTopicAudioUrl != audioUrl {
+            let wasPlaying = isPlaying
+            stopTopicAudio()
+            prepareAudio(urlString: audioUrl, title: topicSection.topic.capitalized)
+            currentTopicAudioUrl = audioUrl
+            
+            // Resume playing if it was playing before or autoPlay is true
+            if wasPlaying || autoPlay {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    self?.playPause()
+                }
+            }
+        }
+    }
+    
     // MARK: - Subscription UI
     
     func showSubscriptionView() {
@@ -1035,6 +1110,72 @@ final class NewsVM: ObservableObject {
     
     func showNewsSourcesSettings() {
         showingNewsSourcesSettings = true
+    }
+    
+    // MARK: - Automatic Fetch Schedule
+    
+    /// Ensures user has automatic 6am and 6pm fetch schedules set up
+    /// This creates two scheduled summaries if they don't exist
+    func ensureAutomaticFetchSchedule() async {
+        guard ApiClient.isAuthenticated else { return }
+        
+        do {
+            // Load existing scheduled summaries
+            let existingSummaries = try await ApiClient.getScheduledSummaries()
+            
+            // Check if we already have 6am and 6pm schedules
+            let has6am = existingSummaries.contains { $0.time == "06:00" && $0.isEnabled }
+            let has6pm = existingSummaries.contains { $0.time == "18:00" && $0.isEnabled }
+            
+            // Create 6am schedule if missing
+            if !has6am {
+                let morning = ScheduledSummary(
+                    id: UUID().uuidString,
+                    name: "Morning News",
+                    time: "06:00",
+                    topics: Array(selectedTopics.isEmpty ? ["general"] : selectedTopics),
+                    customTopics: [],
+                    days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+                    isEnabled: true,
+                    createdAt: ISO8601DateFormatter().string(from: Date()),
+                    lastRun: nil
+                )
+                
+                _ = try await ApiClient.createScheduledSummary(morning)
+                print("✅ Created automatic 6am fetch schedule")
+            }
+            
+            // Create 6pm schedule if missing
+            if !has6pm {
+                let evening = ScheduledSummary(
+                    id: UUID().uuidString,
+                    name: "Evening News",
+                    time: "18:00",
+                    topics: Array(selectedTopics.isEmpty ? ["general"] : selectedTopics),
+                    customTopics: [],
+                    days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+                    isEnabled: true,
+                    createdAt: ISO8601DateFormatter().string(from: Date()),
+                    lastRun: nil
+                )
+                
+                _ = try await ApiClient.createScheduledSummary(evening)
+                print("✅ Created automatic 6pm fetch schedule")
+            }
+            
+            // Reload scheduled summaries to update UI
+            if !has6am || !has6pm {
+                let updatedSummaries = try await ApiClient.getScheduledSummaries()
+                await MainActor.run {
+                    self.scheduledSummaries = updatedSummaries
+                }
+            }
+            
+            print("✅ Automatic fetch schedules verified (6am & 6pm)")
+        } catch {
+            print("⚠️ Failed to ensure automatic fetch schedules: \(error)")
+            // Silently fail - user can manually set up schedules if needed
+        }
     }
     
     // MARK: - Custom Topics Management
@@ -1363,11 +1504,13 @@ final class NewsVM: ObservableObject {
     func loadSummaryFromHistory(_ entry: SummaryHistoryEntry) async {
         await MainActor.run {
             // Set combined summary
+            // Note: History entries don't have topicSections, so feedback won't be available for historical fetches
             combined = Combined(
                 id: entry.id,
                 title: entry.title,
                 summary: entry.summary,
-                audioUrl: entry.audioUrl
+                audioUrl: entry.audioUrl,
+                topicSections: nil
             )
             
             // Set last fetched topics from the fetch's topics
@@ -1422,8 +1565,20 @@ extension String {
         return self.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
     }
     func condenseWhitespace() -> String {
-        let squashed = replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        return squashed.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Preserve paragraph breaks (\n\n) while condensing inline whitespace
+        // Split by paragraph breaks, condense whitespace in each paragraph, then rejoin
+        let paragraphs = self.components(separatedBy: "\n\n")
+        let condensedParagraphs = paragraphs.map { paragraph in
+            // Condense multiple spaces/tabs within a line, but preserve single line breaks
+            let lines = paragraph.components(separatedBy: "\n")
+            let condensedLines = lines.map { line in
+                line.replacingOccurrences(of: "[ \\t]+", with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespaces)
+            }
+            return condensedLines.joined(separator: "\n")
+        }
+        return condensedParagraphs.joined(separator: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

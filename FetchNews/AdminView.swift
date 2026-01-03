@@ -240,7 +240,7 @@ struct AdminView: View {
         case "reset_usage":
             return "Reset Usage"
         default:
-            return action.capitalized
+            return smartCapitalized(action)
         }
     }
     

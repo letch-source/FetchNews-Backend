@@ -44,7 +44,7 @@ func firstWords(_ text: String, count: Int) -> String {
 
 /// Builds "Topic News" / "Topic and Topic News" / "A, B, and C News"
 func userNewsTitle(from topics: Set<String>) -> String {
-    let arr = Array(topics).sorted().map { $0.capitalized }
+    let arr = Array(topics).sorted().map { smartCapitalized($0) }
     switch arr.count {
     case 0:
         return "News"
@@ -85,8 +85,10 @@ struct ContentView: View {
         }
     }
 
-    /// Title uses last fetched topics, not live selected topics.
-    private var fetchedTitle: String { userNewsTitle(from: vm.lastFetchedTopics) }
+    /// Title uses backend-generated title if available, otherwise client-side generation from topics
+    private var fetchedTitle: String { 
+        vm.nowPlayingTitle.isEmpty ? userNewsTitle(from: vm.lastFetchedTopics) : vm.nowPlayingTitle
+    }
 
     /// Only show items that actually have previewable text.
     private var displayableItems: [Item] {
@@ -112,7 +114,7 @@ struct ContentView: View {
                                         .font(.headline)
                                         .foregroundColor(.white)
                                     
-                                    Text(Array(vm.lastFetchedTopics).sorted().map { $0.capitalized }.joined(separator: ", "))
+                                    Text(Array(vm.lastFetchedTopics).sorted().map { smartCapitalized($0) }.joined(separator: ", "))
                                         .font(.caption)
                                         .foregroundColor(.white.opacity(0.8))
                                         .lineLimit(2)
@@ -135,7 +137,7 @@ struct ContentView: View {
                         // Predefined topics
                         ForEach(ALL_TOPICS, id: \.self) { t in
                             TopicChip(
-                                title: t.capitalized,
+                                title: smartCapitalized(t),
                                 isActive: vm.selectedTopics.contains(t),
                                 minWidth: 140
                             ) { vm.toggle(t) }
@@ -496,6 +498,8 @@ struct CompactNowPlayingBubble: View {
     let onScrubChange: (Double) -> Void
     let onScrubEdit: (Bool) -> Void
     var onTap: (() -> Void)? = nil
+    var onAIAssistant: (() -> Void)? = nil
+    let hasContent: Bool
 
     private var displayTitle: String {
         title.isEmpty ? "Summary" : title
@@ -523,12 +527,31 @@ struct CompactNowPlayingBubble: View {
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(Color(.systemGray4), lineWidth: 0.5)
             )
+            
+            // AI Assistant button
+            if hasContent, let aiAction = onAIAssistant {
+                Button { aiAction() } label: {
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .frame(width: 28, height: 28)
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(6)
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(.systemGray4), lineWidth: 0.5)
+                )
+            }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(displayTitle)
-                    .font(.caption).bold()
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                ScrollingText(
+                    displayTitle,
+                    font: .caption,
+                    fontWeight: .bold,
+                    color: .primary
+                )
+                .frame(height: 16)
 
                 HStack(spacing: 6) {
                     Slider(

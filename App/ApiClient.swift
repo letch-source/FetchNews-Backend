@@ -320,6 +320,28 @@ final class ApiClient {
         }
     }
     
+    // MARK: - Predefined Topics
+    
+    static func getPredefinedTopics() async throws -> PredefinedTopicsResponse {
+        let endpoint = "/api/custom-topics/predefined"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(PredefinedTopicsResponse.self, from: data)
+        } else {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+    }
+    
     // MARK: - Trending Topics
     
     static func getTrendingTopics() async throws -> TrendingTopicsResponse {
@@ -336,28 +358,6 @@ final class ApiClient {
         
         if httpResponse.statusCode == 200 {
             return try JSONDecoder().decode(TrendingTopicsResponse.self, from: data)
-        } else {
-            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
-            throw NetworkError.serverError(errorResponse.error)
-        }
-    }
-    
-    // MARK: - Recommended Topics
-    
-    static func getRecommendedTopics() async throws -> RecommendedTopicsResponse {
-        let endpoint = "/api/recommended-topics"
-        var req = URLRequest(url: base.appendingPathComponent(endpoint))
-        req.httpMethod = "GET"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let (data, response) = try await session.data(for: req)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError.invalidResponse
-        }
-        
-        if httpResponse.statusCode == 200 {
-            return try JSONDecoder().decode(RecommendedTopicsResponse.self, from: data)
         } else {
             let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
             throw NetworkError.serverError(errorResponse.error)
@@ -491,6 +491,176 @@ final class ApiClient {
         if httpResponse.statusCode != 200 {
             let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
             throw NetworkError.serverError(errorResponse.error)
+        }
+    }
+    
+    // MARK: - Saved Summaries API
+    
+    static func getSavedSummaries() async throws -> [SummaryHistoryEntry] {
+        let endpoint = "/api/saved-summaries"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            
+            do {
+                struct SavedSummariesResponse: Codable {
+                    let savedSummaries: [SummaryHistoryEntry]
+                }
+                let response = try decoder.decode(SavedSummariesResponse.self, from: data)
+                return response.savedSummaries
+            } catch {
+                return []
+            }
+        } else {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+    }
+    
+    static func saveSummary(summary: Combined, items: [Item], topics: [String], length: String) async throws {
+        let endpoint = "/api/saved-summaries"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        // Break up expression to help compiler - map items to sources
+        var sources: [[String: Any]] = []
+        for item in items {
+            let sourceDict: [String: Any] = [
+                "id": item.id,
+                "title": item.title,
+                "summary": item.summary,
+                "source": item.source ?? "",
+                "url": item.url ?? "",
+                "topic": item.topic ?? ""
+            ]
+            sources.append(sourceDict)
+        }
+        
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let audioUrl = summary.audioUrl ?? ""
+        
+        let summaryData: [String: Any] = [
+            "id": summary.id,
+            "title": summary.title,
+            "summary": summary.summary,
+            "topics": topics,
+            "length": length,
+            "timestamp": timestamp,
+            "audioUrl": audioUrl,
+            "sources": sources
+        ]
+        
+        let body: [String: Any] = ["summaryData": summaryData]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode != 200 {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+    }
+    
+    static func unsaveSummary(summaryId: String) async throws {
+        let endpoint = "/api/saved-summaries/\(summaryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? summaryId)"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "DELETE"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode != 200 {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+    }
+    
+    static func checkIfSummarySaved(summaryId: String) async throws -> Bool {
+        let endpoint = "/api/saved-summaries/check/\(summaryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? summaryId)"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            struct SavedCheckResponse: Codable {
+                let isSaved: Bool
+            }
+            let response = try JSONDecoder().decode(SavedCheckResponse.self, from: data)
+            return response.isSaved
+        } else {
+            return false
+        }
+    }
+    
+    // MARK: - Recommended Topics API
+    
+    static func getRecommendedTopics() async throws -> [TopicSection] {
+        let endpoint = "/api/recommended-topics"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            struct RecommendedTopicsResponse: Codable {
+                let topicSections: [TopicSection]
+            }
+            let decoder = JSONDecoder()
+            let response = try decoder.decode(RecommendedTopicsResponse.self, from: data)
+            return response.topicSections
+        } else {
+            let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse?.error ?? "Failed to fetch recommended topics")
         }
     }
     
@@ -1115,6 +1285,126 @@ final class ApiClient {
             print("[NOTIFICATIONS] Failed to send notification: \(errorResponse?.error ?? "Unknown error")")
             // Don't throw - notification failure shouldn't break the app
         }
+    }
+    
+    // MARK: - Article Feedback
+    
+    static func submitArticleFeedbackWithComment(
+        articleId: String,
+        url: String?,
+        title: String?,
+        source: String?,
+        topic: String?,
+        feedback: String,
+        comment: String?
+    ) async throws {
+        let endpoint = "/api/article-feedback/with-comment"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let body: [String: Any?] = [
+            "articleId": articleId,
+            "url": url,
+            "title": title,
+            "source": source,
+            "topic": topic,
+            "feedback": feedback,
+            "comment": comment
+        ]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body.compactMapValues { $0 })
+        
+        let (data, response) = try await session.data(for: req)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode != 200 {
+            let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse?.error ?? "Failed to submit feedback")
+        }
+    }
+    
+    // MARK: - AI Assistant Methods
+    
+    /// Ask the AI assistant about a fetch
+    static func askFetchAssistant(
+        fetchId: String,
+        message: String,
+        conversationHistory: [[String: String]],
+        audioProgress: Int? = nil,
+        currentTime: String? = nil,
+        totalDuration: String? = nil
+    ) async throws -> AssistantResponse {
+        let endpoint = "/api/fetch-assistant"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        guard let token = authToken else {
+            throw NetworkError.authenticationError("Not authenticated")
+        }
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        var body: [String: Any] = [
+            "fetchId": fetchId,
+            "userMessage": message,
+            "conversationHistory": conversationHistory
+        ]
+        
+        // Add audio position context if available
+        if let progress = audioProgress {
+            body["audioProgress"] = progress
+        }
+        if let time = currentTime {
+            body["currentTime"] = time
+        }
+        if let duration = totalDuration {
+            body["totalDuration"] = duration
+        }
+        
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await session.data(for: req)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode != 200 {
+            let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse?.error ?? "Failed to get assistant response")
+        }
+        
+        let decoder = JSONDecoder()
+        return try decoder.decode(AssistantResponse.self, from: data)
+    }
+    
+    /// Convert text to speech using the TTS endpoint
+    static func textToSpeech(text: String, voice: String, speed: Double = 1.0) async throws -> URL {
+        guard let audioPath = try await tts(text: text, voice: voice, speed: speed) else {
+            throw NetworkError.serverError("No audio URL returned")
+        }
+        
+        // If it's a full URL, return it directly
+        if let url = URL(string: audioPath), url.scheme != nil {
+            return url
+        }
+        
+        // Otherwise, construct the full URL from the base
+        var path = audioPath
+        if !path.hasPrefix("/") {
+            path = "/" + path
+        }
+        
+        guard let url = URL(string: base.absoluteString + path) else {
+            throw NetworkError.serverError("Invalid audio URL")
+        }
+        
+        return url
     }
     
 }

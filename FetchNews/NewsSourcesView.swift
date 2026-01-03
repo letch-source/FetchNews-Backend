@@ -75,21 +75,21 @@ struct NewsSourcesView: View {
                             .background(Color(.systemGray6))
                             .cornerRadius(10)
                             
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    ForEach(categories, id: \.self) { category in
-                                        Button(category.capitalized) {
-                                            selectedCategory = category
-                                        }
-                                        .buttonStyle(.bordered)
-                                        .controlSize(.small)
-                                        .foregroundColor(selectedCategory == category ? .white : .primary)
-                                        .background(selectedCategory == category ? Color.accentColor : Color(.systemGray6))
-                                        .cornerRadius(8)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(categories, id: \.self) { category in
+                                    Button(smartCapitalized(category)) {
+                                        selectedCategory = category
                                     }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .foregroundColor(selectedCategory == category ? .white : .primary)
+                                    .background(selectedCategory == category ? Color.accentColor : Color(.systemGray6))
+                                    .cornerRadius(8)
                                 }
-                                .padding(.horizontal)
                             }
+                            .padding(.horizontal)
+                        }
                         }
                         .padding()
                         .background(Color.darkGreyBackground)
@@ -195,7 +195,7 @@ struct NewsSourceRow: View {
                 
                 // Category and country
                 HStack {
-                    Text(source.category.capitalized)
+                    Text(smartCapitalized(source.category))
                         .font(.caption2)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)

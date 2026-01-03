@@ -147,13 +147,8 @@ struct PersonalizeView: View {
                 // Scheduled fetch topics should persist unless explicitly changed by user
                 guard !newValue.isEmpty || !oldValue.isEmpty else { return }
                 
-                Task {
-                    // Ensure we have loaded the summary first
-                    if vm.scheduledSummaries.isEmpty {
-                        await loadScheduledSummary()
-                    }
-                    await saveScheduledSummary()
-                }
+                // Use debounced save to prevent rapid consecutive saves
+                debouncedSave()
             }
             .onChange(of: scheduledCustomTopics) { oldValue, newValue in
                 // Only save if this is a user-initiated change, not a load from backend
@@ -163,13 +158,8 @@ struct PersonalizeView: View {
                 // Scheduled fetch topics should persist unless explicitly changed by user
                 guard !newValue.isEmpty || !oldValue.isEmpty || !scheduledTopics.isEmpty else { return }
                 
-                Task {
-                    // Ensure we have loaded the summary first
-                    if vm.scheduledSummaries.isEmpty {
-                        await loadScheduledSummary()
-                    }
-                    await saveScheduledSummary()
-                }
+                // Use debounced save to prevent rapid consecutive saves
+                debouncedSave()
             }
             .sheet(isPresented: $vm.showingSubscriptionView) {
                 SubscriptionView()
@@ -424,8 +414,16 @@ struct DailyFetchSection: View {
                         .font(.title3)
                         .foregroundColor(.blue)
                     
-                    let topicCount = scheduledTopics.count + scheduledCustomTopics.count
-                    Text(topicCount > 0 ? "\(topicCount) Topics Selected" : "Select Topics")
+                    // Calculate unique topics by combining both sets
+                    // Use union to avoid double counting topics that appear in both sets
+                    let allSelectedTopics = scheduledTopics.union(scheduledCustomTopics)
+                    let uniqueTopicCount = allSelectedTopics.count
+                    
+                    #if DEBUG
+                    let _ = print("📊 Topic Count - scheduledTopics: \(scheduledTopics.sorted()), scheduledCustomTopics: \(scheduledCustomTopics.sorted()), union count: \(uniqueTopicCount)")
+                    #endif
+                    
+                    Text(uniqueTopicCount > 0 ? "\(uniqueTopicCount) Topics Selected" : "Select Topics")
                         .font(.subheadline)
                         .fontWeight(.medium)
                         .foregroundColor(.blue)
@@ -463,22 +461,25 @@ struct ScheduledTopicsSelectorView: View {
                 if !vm.trendingTopics.isEmpty {
                     Section(header: Text("Trending Topics")) {
                         ForEach(vm.trendingTopics, id: \.self) { topic in
-                            HStack {
-                                Text(topic.capitalized)
-                                Spacer()
-                                if selectedTopics.contains(topic) {
-                                    Image(systemName: "checkmark")
-                                        .foregroundColor(.blue)
-                                }
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                if selectedTopics.contains(topic) {
+                            let isSelected = selectedTopics.contains(topic)
+                            Button(action: {
+                                if isSelected {
                                     selectedTopics.remove(topic)
                                 } else {
                                     selectedTopics.insert(topic)
                                 }
+                            }) {
+                                HStack {
+                                    Text(smartCapitalized(topic))
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    if isSelected {
+                                        Image(systemName: "checkmark")
+                                            .foregroundColor(.blue)
+                                    }
+                                }
                             }
+                            .buttonStyle(PlainButtonStyle())
                         }
                     }
                 }
@@ -486,22 +487,25 @@ struct ScheduledTopicsSelectorView: View {
                 if !vm.customTopics.isEmpty {
                     Section(header: Text("My Topics")) {
                         ForEach(vm.customTopics, id: \.self) { topic in
-                            HStack {
-                                Text(topic)
-                                Spacer()
-                                if selectedCustomTopics.contains(topic) {
-                                    Image(systemName: "checkmark")
-                                        .foregroundColor(.blue)
-                                }
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                if selectedCustomTopics.contains(topic) {
+                            let isSelected = selectedCustomTopics.contains(topic)
+                            Button(action: {
+                                if isSelected {
                                     selectedCustomTopics.remove(topic)
                                 } else {
                                     selectedCustomTopics.insert(topic)
                                 }
+                            }) {
+                                HStack {
+                                    Text(topic)
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    if isSelected {
+                                        Image(systemName: "checkmark")
+                                            .foregroundColor(.blue)
+                                    }
+                                }
                             }
+                            .buttonStyle(PlainButtonStyle())
                         }
                     }
                 }

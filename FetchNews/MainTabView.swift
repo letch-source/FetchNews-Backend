@@ -13,7 +13,8 @@ struct MainTabView: View {
     @State private var selectedTab = 0
     @State private var isScrubbing = false
     @State private var scrubValue: Double = 0
-    @State private var showingFetchScreen = false
+    @State private var showAIAssistant = false
+    @State private var wasPlayingBeforeAssistant = false
     
     var body: some View {
         ZStack {
@@ -21,15 +22,15 @@ struct MainTabView: View {
             Group {
                 switch selectedTab {
                 case 0:
-                    HomeView()
+                    TopicFeedView()
                         .environmentObject(vm)
                         .environmentObject(authVM)
                 case 1:
-                    PersonalizeView()
+                    TopicsView()
                         .environmentObject(vm)
                         .environmentObject(authVM)
                 case 2:
-                    SummaryHistoryView()
+                    SavedView()
                         .environmentObject(vm)
                         .environmentObject(authVM)
                 case 3:
@@ -37,14 +38,14 @@ struct MainTabView: View {
                         .environmentObject(vm)
                         .environmentObject(authVM)
                 default:
-                    HomeView()
+                    TopicFeedView()
                         .environmentObject(vm)
                         .environmentObject(authVM)
                 }
             }
             .overlay(alignment: .bottom) {
-                // Gradient fade effect - starts higher, ends higher, then solid below
-                if vm.canPlay {
+                // Gradient fade effect - only on homepage (Tab 0)
+                if selectedTab == 0 && vm.canPlay {
                     VStack(spacing: 0) {
                         Spacer()
                         // Gradient fade that reaches 100% opacity earlier
@@ -76,11 +77,11 @@ struct MainTabView: View {
                     .ignoresSafeArea(edges: .bottom)
             }
             
-            // Now-playing bubble - persistent across all tabs
+            // Now-playing bubble - only on homepage (Tab 0)
             VStack {
                 Spacer()
-                // Show audio bar when there's content or when fetching
-                if vm.canPlay || vm.combined != nil || !vm.lastFetchedTopics.isEmpty || vm.isBusy || vm.shouldShowFetchScreen {
+                // Show audio bar only on homepage when there's content or when fetching
+                if selectedTab == 0 && (vm.canPlay || vm.combined != nil || !vm.lastFetchedTopics.isEmpty || vm.isBusy || vm.shouldShowFetchScreen) {
                     CompactNowPlayingBubble(
                         title: vm.nowPlayingTitle.isEmpty ? userNewsTitle(from: vm.lastFetchedTopics) : vm.nowPlayingTitle,
                         isPlaying: vm.isPlaying,
@@ -95,9 +96,16 @@ struct MainTabView: View {
                             isScrubbing = editing
                             if !editing { vm.seek(to: scrubValue) }
                         },
-                        onTap: {
-                            showingFetchScreen = true
-                        }
+                        onAIAssistant: vm.combined != nil ? {
+                            // Remember if audio was playing
+                            wasPlayingBeforeAssistant = vm.isPlaying
+                            // Pause audio before opening assistant
+                            if vm.isPlaying {
+                                vm.playPause()
+                            }
+                            showAIAssistant = true
+                        } : nil,
+                        hasContent: vm.combined != nil
                     )
                     .padding(.horizontal, 12)
                     .padding(.bottom, 80)
@@ -107,15 +115,27 @@ struct MainTabView: View {
         }
         .ignoresSafeArea(edges: .bottom)
         .ignoresSafeArea(.keyboard, edges: .bottom)
-        .fullScreenCover(isPresented: $showingFetchScreen) {
-            FetchScreen()
+        .sheet(isPresented: $showAIAssistant, onDismiss: {
+            // Resume audio if it was playing before opening assistant
+            if wasPlayingBeforeAssistant && !vm.isPlaying {
+                vm.playPause()
+            }
+            wasPlayingBeforeAssistant = false
+            
+            // Force UI refresh to restart time observer updates
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 second
+                vm.objectWillChange.send()
+            }
+        }) {
+            if let combined = vm.combined {
+                AIAssistantView(
+                    fetchId: combined.id,
+                    fetchSummary: combined.summary,
+                    fetchTopics: Array(vm.lastFetchedTopics)
+                )
                 .environmentObject(vm)
                 .environmentObject(authVM)
-        }
-        .onChange(of: vm.shouldShowFetchScreen) { _, newValue in
-            if newValue {
-                showingFetchScreen = true
-                vm.shouldShowFetchScreen = false // Reset the flag
             }
         }
     }
@@ -129,34 +149,34 @@ struct CustomBottomNavigation: View {
         ZStack(alignment: .bottom) {
             // Main navigation bar
             HStack(spacing: 0) {
-                // Home Tab
+                // Home Tab (Feed)
                 Button(action: { selectedTab = 0 }) {
                     Image(systemName: selectedTab == 0 ? "house.fill" : "house")
-                        .font(.system(size: 26))
+                        .font(.system(size: 24))
                         .foregroundColor(selectedTab == 0 ? .blue : .white.opacity(0.6))
                 }
                 .frame(maxWidth: .infinity)
                 
-                // Personalize Tab
+                // Topics Tab
                 Button(action: { selectedTab = 1 }) {
-                    Image(systemName: selectedTab == 1 ? "chart.bar.fill" : "chart.bar")
-                        .font(.system(size: 26))
+                    Image(systemName: selectedTab == 1 ? "tag.fill" : "tag")
+                        .font(.system(size: 24))
                         .foregroundColor(selectedTab == 1 ? .blue : .white.opacity(0.6))
                 }
                 .frame(maxWidth: .infinity)
                 
-                // History Tab
+                // Saved Tab
                 Button(action: { selectedTab = 2 }) {
-                    Image(systemName: selectedTab == 2 ? "clock.fill" : "clock")
-                        .font(.system(size: 26))
+                    Image(systemName: selectedTab == 2 ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: 24))
                         .foregroundColor(selectedTab == 2 ? .blue : .white.opacity(0.6))
                 }
                 .frame(maxWidth: .infinity)
                 
-                // Account Tab
+                // Settings Tab
                 Button(action: { selectedTab = 3 }) {
-                    Image(systemName: selectedTab == 3 ? "person.fill" : "person")
-                        .font(.system(size: 26))
+                    Image(systemName: selectedTab == 3 ? "gearshape.fill" : "gearshape")
+                        .font(.system(size: 24))
                         .foregroundColor(selectedTab == 3 ? .blue : .white.opacity(0.6))
                 }
                 .frame(maxWidth: .infinity)
@@ -206,7 +226,7 @@ struct AccountView: View {
             ScrollView {
                 VStack(spacing: 24) {
                     // Title
-                    Text("Account")
+                    Text("Settings")
                         .font(.title3)
                         .fontWeight(.semibold)
                         .foregroundColor(.primary)
@@ -270,7 +290,19 @@ struct AccountView: View {
                         }
                         .padding(.horizontal, 20)
                         
-                        // Sign Out Button - free floating, no box
+                        // Summary Length Section
+                        SummaryLengthSection()
+                        
+                        // Playback Speed Section
+                        PlaybackSpeedSection()
+                        
+                        // Voice Section
+                        VoiceSection()
+                        
+                        // Content Filter Section
+                        ContentFilterSection()
+                        
+                        // Sign Out Button
                         Button("Sign Out") {
                             authVM.logout()
                         }

@@ -20,6 +20,7 @@ const subscriptionRoutes = require("./routes/subscriptions");
 const customTopicsRoutes = require("./routes/customTopics");
 const summaryHistoryRoutes = require("./routes/summaryHistory");
 const savedSummariesRoutes = require("./routes/savedSummaries");
+const recommendedTopicsRoutes = require("./routes/recommendedTopics");
 const adminRoutes = require("./routes/adminActions");
 const preferencesRoutes = require("./routes/preferences");
 const newsSourcesRoutes = require("./routes/newsSources");
@@ -112,6 +113,9 @@ app.use("/api/summary-history", summaryHistoryRoutes);
 
 // Saved summaries routes
 app.use("/api/saved-summaries", savedSummariesRoutes);
+
+// Recommended topics routes
+app.use("/api/recommended-topics", recommendedTopicsRoutes);
 
 // Admin routes
 app.use("/api/admin", adminRoutes);
@@ -3884,7 +3888,8 @@ async function saveUserWithRetryForScheduler(user, retries = 5) {
   
   while (retries > 0) {
     try {
-      await user.save();
+      // Skip validation since we're only updating scheduledSummaries field
+      await user.save({ validateBeforeSave: false });
       return;
     } catch (error) {
       if (error.name === 'VersionError' && retries > 1) {

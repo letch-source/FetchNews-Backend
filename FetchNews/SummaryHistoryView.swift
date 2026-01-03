@@ -335,7 +335,7 @@ struct SummaryDetailView: View {
                                 GridItem(.adaptive(minimum: 80), spacing: 8)
                             ], spacing: 8) {
                                 ForEach(entry.topics, id: \.self) { topic in
-                                    Text(topic.capitalized)
+                                    Text(smartCapitalized(topic))
                                         .font(.caption)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)

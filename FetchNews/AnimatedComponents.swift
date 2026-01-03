@@ -48,44 +48,32 @@ struct DynamicFetchButton: View {
     
     var body: some View {
         Button(action: action) {
-            Group {
-                switch state {
-                case .noSummary:
-                    Image("NoSummary")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 90, height: 90)
-                        .clipShape(Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(Color(.systemBackground), lineWidth: 4)
-                        )
-                        .shadow(color: Color.primary.opacity(0.3), radius: 16, x: 0, y: 8)
-                    
-                case .fetching:
-                    // Animated pulsing effect with the Fetch image
-                    AnimatedFetchImage()
-                        .frame(width: 90, height: 90)
-                        .clipShape(Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(Color(.systemBackground), lineWidth: 4)
-                        )
-                        .shadow(color: Color.primary.opacity(0.3), radius: 16, x: 0, y: 8)
-                    
-                case .hasSummary:
-                    Image("Launch Logo")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 90, height: 90)
-                        .clipShape(Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(Color(.systemBackground), lineWidth: 4)
-                        )
-                        .shadow(color: Color.primary.opacity(0.3), radius: 16, x: 0, y: 8)
-                }
-            }
+            Text(buttonText)
+                .font(.title2.weight(.bold))
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
+                .background(buttonBackground)
+                .cornerRadius(14)
+                .shadow(color: Color.primary.opacity(0.2), radius: 8, x: 0, y: 4)
+        }
+    }
+    
+    private var buttonText: String {
+        switch state {
+        case .fetching:
+            return "Fetching..."
+        default:
+            return "Fetch News"
+        }
+    }
+    
+    private var buttonBackground: Color {
+        switch state {
+        case .fetching:
+            return Color.blue.opacity(0.7)
+        default:
+            return Color.blue
         }
     }
 }

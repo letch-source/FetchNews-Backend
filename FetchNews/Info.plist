@@ -37,5 +37,9 @@
 	<array>
 		<string>webcredentials:fetchnews-backend.onrender.com</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Fetch News needs access to your microphone to enable voice questions for the AI assistant.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Fetch News uses speech recognition to convert your voice questions into text for the AI assistant.</string>
 </dict>
 </plist>

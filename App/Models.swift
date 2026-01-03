@@ -70,7 +70,17 @@ struct Item: Identifiable, Codable {
         self.title = try container.decodeIfPresent(String.self, forKey: .title) ?? "Untitled"
         self.summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
         self.url = try container.decodeIfPresent(String.self, forKey: .url)
-        self.source = try container.decodeIfPresent(String.self, forKey: .source)
+        
+        // Handle source as either String or Object with name property
+        if let sourceString = try? container.decodeIfPresent(String.self, forKey: .source) {
+            self.source = sourceString
+        } else if let sourceDict = try? container.decodeIfPresent([String: String].self, forKey: .source),
+                  let sourceName = sourceDict["name"] {
+            self.source = sourceName
+        } else {
+            self.source = nil
+        }
+        
         self.topic = try container.decodeIfPresent(String.self, forKey: .topic)
         self.audioUrl = try container.decodeIfPresent(String.self, forKey: .audioUrl)
     }
@@ -92,26 +102,61 @@ struct Item: Identifiable, Codable {
     }
 }
 
+// Topic section with articles for feedback
+struct TopicSection: Codable, Identifiable {
+    let id: String
+    let topic: String
+    let summary: String
+    let articles: [Item]
+    let audioUrl: String? // Per-topic audio URL
+    
+    // Memberwise initializer
+    init(id: String, topic: String, summary: String, articles: [Item], audioUrl: String? = nil) {
+        self.id = id
+        self.topic = topic
+        self.summary = summary
+        self.articles = articles
+        self.audioUrl = audioUrl
+    }
+    
+    // Custom decoding
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        self.topic = try container.decodeIfPresent(String.self, forKey: .topic) ?? ""
+        self.summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        self.articles = try container.decodeIfPresent([Item].self, forKey: .articles) ?? []
+        self.audioUrl = try container.decodeIfPresent(String.self, forKey: .audioUrl)
+    }
+    
+    private enum CodingKeys: String, CodingKey {
+        case id, topic, summary, articles, audioUrl
+    }
+}
+
 struct Combined: Codable {
     let id: String
     let title: String
     let summary: String
     let audioUrl: String?
+    let topicSections: [TopicSection]? // New: structured topics for feedback
     
     // Memberwise initializer
-    init(id: String, title: String, summary: String, audioUrl: String?) {
+    init(id: String, title: String, summary: String, audioUrl: String?, topicSections: [TopicSection]? = nil) {
         self.id = id
         self.title = title
         self.summary = summary
         self.audioUrl = audioUrl
+        self.topicSections = topicSections
     }
     
     // Convenience initializer with default id
-    init(title: String, summary: String, audioUrl: String? = nil) {
+    init(title: String, summary: String, audioUrl: String? = nil, topicSections: [TopicSection]? = nil) {
         self.id = "combined"
         self.title = title
         self.summary = summary
         self.audioUrl = audioUrl
+        self.topicSections = topicSections
     }
     
     // Custom decoding to handle API response structure
@@ -131,6 +176,7 @@ struct Combined: Codable {
         }
         
         self.audioUrl = try container.decodeIfPresent(String.self, forKey: .audioUrl)
+        self.topicSections = try container.decodeIfPresent([TopicSection].self, forKey: .topicSections)
     }
     
     // Custom encoding to maintain consistency
@@ -140,10 +186,11 @@ struct Combined: Codable {
         try container.encode(title, forKey: .title)
         try container.encode(summary, forKey: .summary)
         try container.encodeIfPresent(audioUrl, forKey: .audioUrl)
+        try container.encodeIfPresent(topicSections, forKey: .topicSections)
     }
     
     private enum CodingKeys: String, CodingKey {
-        case id, title, summary, text, audioUrl
+        case id, title, summary, text, audioUrl, topicSections
     }
 }
 
@@ -449,6 +496,17 @@ struct RecommendedTopicsResponse: Codable {
     let lastUpdated: String?
 }
 
+struct PredefinedTopicsResponse: Codable {
+    let categories: [TopicCategory]
+}
+
+struct TopicCategory: Codable, Identifiable {
+    let name: String
+    let topics: [String]
+    
+    var id: String { name }
+}
+
 // MARK: - Scheduled Summaries
 
 struct ScheduledSummary: Codable, Identifiable {
@@ -518,4 +576,31 @@ struct ScheduledSummariesResponse: Codable {
 struct ScheduledSummaryTriggerResponse: Codable {
     let message: String
     let executedCount: Int
+}
+
+// MARK: - AI Assistant Models
+
+struct ChatMessage: Codable, Identifiable {
+    let id: String
+    let role: String // "user" or "assistant"
+    let content: String
+    let timestamp: Date
+    
+    init(id: String = UUID().uuidString, role: String, content: String, timestamp: Date = Date()) {
+        self.id = id
+        self.role = role
+        self.content = content
+        self.timestamp = timestamp
+    }
+}
+
+struct AssistantResponse: Codable {
+    let response: String
+    let suggestedQuestions: [String]?
+    let fetchContext: FetchContextInfo?
+}
+
+struct FetchContextInfo: Codable {
+    let summary: String
+    let topics: [String]
 }

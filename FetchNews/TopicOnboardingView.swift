@@ -28,7 +28,7 @@ struct TopicOnboardingView: View {
     
     // Combine all topics for display
     private var allTopics: [String] {
-        regularTopics.map { $0.capitalized } + predefinedTopics
+        regularTopics.map { smartCapitalized($0) } + predefinedTopics
     }
     
     private var canSubmit: Bool {

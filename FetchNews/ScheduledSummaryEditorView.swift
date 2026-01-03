@@ -45,44 +45,48 @@ struct ScheduledSummaryEditorView: View {
                 
                 Section(header: Text("Topics")) {
                     ForEach(allTopics, id: \.self) { topic in
-                        HStack {
-                            Text(topic.capitalized)
-                            Spacer()
-                            if selectedTopics.contains(topic) {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.blue)
-                            }
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
+                        Button(action: {
                             if selectedTopics.contains(topic) {
                                 selectedTopics.remove(topic)
                             } else {
                                 selectedTopics.insert(topic)
                             }
+                        }) {
+                            HStack {
+                                Text(smartCapitalized(topic))
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                if selectedTopics.contains(topic) {
+                                    Image(systemName: "checkmark")
+                                        .foregroundColor(.blue)
+                                }
+                            }
                         }
+                        .buttonStyle(PlainButtonStyle())
                     }
                 }
                 
                 if !vm.customTopics.isEmpty {
                     Section(header: Text("Custom Topics")) {
                         ForEach(vm.customTopics, id: \.self) { topic in
-                            HStack {
-                                Text(topic)
-                                Spacer()
-                                if selectedCustomTopics.contains(topic) {
-                                    Image(systemName: "checkmark")
-                                        .foregroundColor(.blue)
-                                }
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
+                            Button(action: {
                                 if selectedCustomTopics.contains(topic) {
                                     selectedCustomTopics.remove(topic)
                                 } else {
                                     selectedCustomTopics.insert(topic)
                                 }
+                            }) {
+                                HStack {
+                                    Text(topic)
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    if selectedCustomTopics.contains(topic) {
+                                        Image(systemName: "checkmark")
+                                            .foregroundColor(.blue)
+                                    }
+                                }
                             }
+                            .buttonStyle(PlainButtonStyle())
                         }
                     }
                 }
