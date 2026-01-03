@@ -1185,10 +1185,9 @@ final class NewsVM: ObservableObject {
             let topics = try await ApiClient.getCustomTopics()
             await MainActor.run {
                 self.customTopics = topics
-                // Sync customTopics to selectedTopics to ensure they're in sync
-                // Merge with existing selectedTopics to preserve any manually selected topics
-                let existingSelected = self.selectedTopics
-                self.selectedTopics = existingSelected.union(Set(topics))
+                // Don't merge with selectedTopics - they're separate concepts
+                // customTopics = user's saved topics
+                // selectedTopics = topics user wants to fetch
             }
         } catch {
             // Silently fail - custom topics are optional
@@ -1200,10 +1199,11 @@ final class NewsVM: ObservableObject {
             let updatedTopics = try await ApiClient.addCustomTopic(topic)
             await MainActor.run {
                 self.customTopics = updatedTopics
-                // Also add to selectedTopics to ensure it persists
+                // When adding from discovery, ALSO add to selectedTopics so it's actively fetched
+                // User can later unselect it if they don't want it fetched
                 self.selectedTopics.insert(topic)
             }
-            // Save to backend preferences immediately to ensure persistence
+            // Save to backend preferences immediately to persist selectedTopics
             await saveRemoteSettings()
         } catch {
             // Silently fail - user can try again
@@ -1215,7 +1215,8 @@ final class NewsVM: ObservableObject {
             let updatedTopics = try await ApiClient.removeCustomTopic(topic)
             await MainActor.run {
                 self.customTopics = updatedTopics
-                // Also remove from selectedTopics to keep them in sync
+                // When removing a custom topic, also remove from selectedTopics
+                // (user is removing it from their library entirely)
                 self.selectedTopics.remove(topic)
             }
             // Save to backend preferences immediately
