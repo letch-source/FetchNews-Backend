@@ -37,6 +37,7 @@ const GlobalSettings = require("./models/GlobalSettings");
 const ArticleCache = require("./models/ArticleCache");
 const { runCategorizationJob, scheduleCategorization, getJobStatus } = require("./jobs/categorizeArticles");
 const { getCacheHealth, fetchArticlesFromCache, fetchMultipleTopicsFromCache } = require("./services/cachedArticleFetcher");
+const { initializeAutoFetch, getJobStatus: getAutoFetchStatus, triggerManualFetch } = require("./jobs/autoFetchSummaries");
 
 // Connect to MongoDB
 connectDB();
@@ -621,6 +622,29 @@ app.use("/api/scheduler", schedulerHealthRoutes);
 // Manual testing routes (for testing fetch from cache)
 const testFetchRoutes = require("./routes/testFetch");
 app.use("/api/test-fetch", testFetchRoutes);
+
+// Auto-fetch job status and manual trigger
+app.get("/api/auto-fetch/status", authenticateToken, async (req, res) => {
+  try {
+    const status = getAutoFetchStatus();
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/auto-fetch/trigger", authenticateToken, async (req, res) => {
+  try {
+    // Only allow admins or in development
+    if (process.env.NODE_ENV === 'production' && !req.user.isAdmin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    const result = await triggerManualFetch();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Serve admin website
 // Admin directory is located in backend/admin (relative to this file)
@@ -5543,6 +5567,10 @@ function startServer() {
     // Schedule article categorization job (runs at 6am and 6pm daily)
     scheduleCategorization();
     console.log('✅ Article categorization job scheduled');
+    
+    // Initialize automatic fetch for all users (runs at 6am and 6pm daily)
+    initializeAutoFetch();
+    console.log('✅ Automatic fetch job initialized');
     const now = new Date();
     if (SCHEDULER_ENABLED) {
       const firstCheckIn = new Date(now.getTime() + (10 * 60 * 1000));

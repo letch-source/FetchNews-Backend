@@ -17,6 +17,8 @@ extension Notification.Name {
 final class ApiClient {
         // Production backend URL:
         static let base = URL(string: "https://fetchnews-backend.onrender.com")!
+        // Local development backend URL (doesn't work with iOS Simulator):
+        // static let base = URL(string: "http://localhost:3001")!
     private static var authToken: String?
     
     // MARK: - Authentication Methods
@@ -358,6 +360,32 @@ final class ApiClient {
         
         if httpResponse.statusCode == 200 {
             return try JSONDecoder().decode(TrendingTopicsResponse.self, from: data)
+        } else {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+    }
+    
+    // MARK: - Recommended Topics
+    
+    static func getRecommendedTopicNames() async throws -> RecommendedTopicsResponse {
+        let endpoint = "/api/recommended-topics/names"
+        var req = URLRequest(url: base.appendingPathComponent(endpoint))
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(RecommendedTopicsResponse.self, from: data)
         } else {
             let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
             throw NetworkError.serverError(errorResponse.error)
@@ -778,11 +806,25 @@ final class ApiClient {
             // Handle different response formats based on endpoint
             if topics.count == 1 {
                 // Single topic - use standard response format
-            return try JSONDecoder().decode(SummarizeResponse.self, from: data)
+                let response = try JSONDecoder().decode(SummarizeResponse.self, from: data)
+                print("📦 Single topic response - topicSections count: \(response.combined?.topicSections?.count ?? 0)")
+                return response
             } else {
                 // Multi-topic - use batch response format and convert
+                print("📦 Decoding batch response...")
                 let batchResponse = try JSONDecoder().decode(BatchSummarizeResponse.self, from: data)
-                return convertBatchResponseToSummarizeResponse(batchResponse)
+                print("📦 Batch response - results count: \(batchResponse.results.count)")
+                if let firstCombined = batchResponse.results.first?.combined {
+                    print("📦 First combined - topicSections count: \(firstCombined.topicSections?.count ?? 0)")
+                    if let sections = firstCombined.topicSections {
+                        for (i, section) in sections.enumerated() {
+                            print("   Section \(i): \(section.topic) - \(section.articles.count) articles")
+                        }
+                    }
+                }
+                let converted = convertBatchResponseToSummarizeResponse(batchResponse)
+                print("📦 Converted response - topicSections count: \(converted.combined?.topicSections?.count ?? 0)")
+                return converted
             }
         } catch {
             // Check if this is a cancellation - don't log or treat as error
@@ -820,24 +862,27 @@ final class ApiClient {
     private static func convertBatchResponseToSummarizeResponse(_ batchResponse: BatchSummarizeResponse) -> SummarizeResponse {
         // Flatten all items from all batch results
         let allItems = batchResponse.results.flatMap { $0.items }
-        
+
         // Try to find a combined summary from the batch results
-        // Look for the first non-nil combined summary, or create one from the first result
+        // Look for the first non-nil combined summary (with topicSections!)
         let combinedSummary: Combined?
         if let firstCombined = batchResponse.results.first(where: { $0.combined != nil })?.combined {
+            // Use the combined summary from the batch response - it includes topicSections
             combinedSummary = firstCombined
         } else if let firstResult = batchResponse.results.first, !firstResult.items.isEmpty {
             // Create a combined summary from the first item if no combined summary exists
             let firstItem = firstResult.items.first!
             combinedSummary = Combined(
+                id: "multi-topic-\(Date().timeIntervalSince1970)",
                 title: "Multi-Topic Summary",
                 summary: firstItem.summary,
-                audioUrl: firstItem.audioUrl
+                audioUrl: firstItem.audioUrl,
+                topicSections: nil // No topic sections in this fallback case
             )
         } else {
             combinedSummary = nil
         }
-        
+
         return SummarizeResponse(combined: combinedSummary, items: allItems)
     }
 

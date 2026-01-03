@@ -285,4 +285,154 @@ function extractKeywordsFromText(text) {
   return [...new Set(words)];
 }
 
+/**
+ * GET /api/recommended-topics/names
+ * Returns just the names of recommended topics (lightweight)
+ * Used for showing recommended topics after user views their summaries
+ */
+router.get('/names', authenticateToken, async (req, res) => {
+  try {
+    const user = req.user;
+    
+    console.log(`[RECOMMENDED_NAMES] Getting topic names for user ${user.email}`);
+    
+    // Get user preferences
+    const preferences = user.getPreferences ? user.getPreferences() : {};
+    
+    // Get user's selected topics to exclude them from recommendations
+    const selectedTopics = new Set((preferences.selectedTopics || []).map(t => t.toLowerCase()));
+    
+    // Generate recommended topics based on selected topics and user behavior
+    const recommendedTopicNames = await generateRecommendedTopicNames(user, selectedTopics);
+    
+    console.log(`[RECOMMENDED_NAMES] Returning ${recommendedTopicNames.length} recommendations: ${recommendedTopicNames.join(', ')}`);
+    
+    res.json({ 
+      recommendedTopics: recommendedTopicNames,
+      lastUpdated: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('[RECOMMENDED_NAMES] Error generating recommendations:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate recommendations',
+      recommendedTopics: []
+    });
+  }
+});
+
+/**
+ * Generate recommended topic names based on user's selected topics
+ * This is a lightweight version that returns topic names only (no summaries/audio)
+ * @param {Object} user - The user object
+ * @param {Set} excludeTopics - Topics to exclude (user's selected topics)
+ * @returns {Array<string>} - Array of recommended topic names
+ */
+async function generateRecommendedTopicNames(user, excludeTopics = new Set()) {
+  const recommendations = [];
+  
+  // Get user preferences
+  const preferences = user.getPreferences ? user.getPreferences() : {};
+  const selectedTopics = preferences.selectedTopics || [];
+  
+  // Define topic relationships - topics that are related to each other
+  const topicRelationships = {
+    'technology': ['AI & Machine Learning', 'Cybersecurity', 'Software Development', 'Tech Startups', 'Gadgets & Hardware'],
+    'ai': ['Technology', 'Robotics', 'Automation', 'Machine Learning', 'Ethics in AI'],
+    'artificial intelligence': ['Technology', 'Robotics', 'Machine Learning', 'AI Ethics', 'Future of Work'],
+    'sports': ['NFL', 'NBA', 'MLB', 'Soccer', 'Tennis', 'Olympics'],
+    'nfl': ['Sports', 'Football', 'Super Bowl', 'College Football'],
+    'nba': ['Sports', 'Basketball', 'March Madness', 'College Basketball'],
+    'politics': ['U.S. Politics', 'Elections', 'Congress', 'White House', 'International Relations'],
+    'business': ['Finance', 'Stock Market', 'Entrepreneurship', 'Economics', 'Corporate News'],
+    'finance': ['Business', 'Stock Market', 'Cryptocurrency', 'Banking', 'Personal Finance'],
+    'health': ['Medical Research', 'Mental Health', 'Fitness', 'Nutrition', 'Healthcare Policy'],
+    'science': ['Space Exploration', 'Climate Change', 'Physics', 'Biology', 'Medical Research'],
+    'entertainment': ['Movies', 'Music', 'TV Shows', 'Celebrities', 'Gaming'],
+    'climate change': ['Environment', 'Renewable Energy', 'Sustainability', 'Green Technology'],
+    'space': ['NASA', 'SpaceX', 'Astronomy', 'Space Exploration', 'Planetary Science'],
+    'cryptocurrency': ['Bitcoin', 'Ethereum', 'Blockchain', 'DeFi', 'NFTs'],
+    'environment': ['Climate Change', 'Conservation', 'Wildlife', 'Renewable Energy'],
+    'education': ['Higher Education', 'Online Learning', 'EdTech', 'Student Debt'],
+    'gaming': ['Video Games', 'Esports', 'Game Development', 'Gaming Industry'],
+    'food': ['Restaurants', 'Recipes', 'Food Industry', 'Nutrition', 'Cooking'],
+    'travel': ['Tourism', 'Airlines', 'Hotels', 'Destinations', 'Travel Tips'],
+    'music': ['Concerts', 'New Releases', 'Music Industry', 'Artists', 'Streaming'],
+    'movies': ['Box Office', 'Film Industry', 'Movie Reviews', 'Streaming Services'],
+  };
+  
+  // Get trending topics
+  const GlobalSettings = require('../models/GlobalSettings');
+  const globalSettings = await GlobalSettings.getOrCreate();
+  const trendingTopics = globalSettings.trendingTopics || [];
+  
+  // Build candidate topics based on user's selected topics
+  const candidateTopics = new Map(); // topic -> score
+  
+  // For each selected topic, add related topics
+  selectedTopics.forEach(selectedTopic => {
+    const topicLower = selectedTopic.toLowerCase();
+    
+    // Check if we have predefined relationships for this topic
+    if (topicRelationships[topicLower]) {
+      topicRelationships[topicLower].forEach(relatedTopic => {
+        const relatedLower = relatedTopic.toLowerCase();
+        if (!excludeTopics.has(relatedLower)) {
+          // Higher score for directly related topics
+          candidateTopics.set(relatedTopic, (candidateTopics.get(relatedTopic) || 0) + 2.0);
+        }
+      });
+    }
+    
+    // Also check reverse relationships (if a topic is mentioned in another's relationships)
+    for (const [key, relatedList] of Object.entries(topicRelationships)) {
+      if (relatedList.some(r => r.toLowerCase() === topicLower)) {
+        // Add the parent topic as a recommendation
+        const parentTopic = key.charAt(0).toUpperCase() + key.slice(1);
+        if (!excludeTopics.has(key)) {
+          candidateTopics.set(parentTopic, (candidateTopics.get(parentTopic) || 0) + 1.5);
+        }
+      }
+    }
+  });
+  
+  // Add trending topics with lower score if they're not already in candidates
+  trendingTopics.forEach(topic => {
+    const topicLower = topic.toLowerCase();
+    if (!excludeTopics.has(topicLower) && !candidateTopics.has(topic)) {
+      candidateTopics.set(topic, 0.5);
+    }
+  });
+  
+  // Analyze user's liked articles to boost relevant topics
+  const userInterests = analyzeUserInterests(user);
+  for (const [interest, strength] of Object.entries(userInterests)) {
+    for (const [topic, score] of candidateTopics.entries()) {
+      if (topic.toLowerCase().includes(interest) || interest.includes(topic.toLowerCase())) {
+        candidateTopics.set(topic, score + (strength * 0.5));
+      }
+    }
+  }
+  
+  // If we have very few candidates, add some popular defaults
+  if (candidateTopics.size < 5) {
+    const defaultTopics = ['Technology', 'Science', 'World News', 'Business', 'Entertainment'];
+    defaultTopics.forEach(topic => {
+      if (!excludeTopics.has(topic.toLowerCase()) && !candidateTopics.has(topic)) {
+        candidateTopics.set(topic, 0.3);
+      }
+    });
+  }
+  
+  // Sort by score and take top 5-8 recommendations
+  const sortedTopics = Array.from(candidateTopics.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([topic]) => topic);
+  
+  console.log(`[RECOMMENDED_NAMES] Generated ${sortedTopics.length} recommendations from ${selectedTopics.length} selected topics`);
+  
+  return sortedTopics;
+}
+
 module.exports = router;

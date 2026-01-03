@@ -17,8 +17,6 @@ struct TopicFeedView: View {
     @State private var isSaving: Bool = false
     @State private var recommendedTopics: [TopicSection] = []
     @State private var isLoadingRecommended: Bool = false
-    @State private var showAIAssistant = false
-    @State private var wasPlayingBeforeAssistant = false
     @State private var discoveryTopicIndex: Int = 0
     @State private var predefinedTopics: [TopicCategory] = []
     @State private var isLoadingPredefinedTopics = false
@@ -26,6 +24,11 @@ struct TopicFeedView: View {
     // Get topic sections from combined summary (My Topics)
     private var myTopicSections: [TopicSection] {
         let sections = vm.combined?.topicSections ?? []
+        
+        print("📱 TopicFeedView: myTopicSections - sections count: \(sections.count)")
+        if let combined = vm.combined {
+            print("   Combined exists - topicSections: \(combined.topicSections?.count ?? 0)")
+        }
         
         // FALLBACK: If we have a combined summary but no topic sections, create a single section
         // This happens with historical summaries from before per-topic feature
@@ -40,6 +43,7 @@ struct TopicFeedView: View {
             )]
         }
         
+        print("📱 Returning \(sections.count) topic sections")
         return sections
     }
     
@@ -69,14 +73,12 @@ struct TopicFeedView: View {
                 mainContentView
             }
         }
+        .onChange(of: currentPageIndex) { oldValue, newValue in
+            handlePageChange(from: oldValue, to: newValue)
+        }
         .sheet(item: $showingArticles) { topic in
             ArticlesSheetView(topicSection: topic)
                 .environmentObject(vm)
-        }
-        .sheet(isPresented: $showAIAssistant, onDismiss: {
-            handleAIAssistantDismiss()
-        }) {
-            aiAssistantSheet
         }
         .task(id: "loadInitialData") {
             await loadInitialData()
@@ -88,10 +90,9 @@ struct TopicFeedView: View {
                 if myTopicSections.isEmpty {
                     await loadRecommendedTopics()
                 }
+                // Reset to first page when new summary loads
+                currentPageIndex = 0
             }
-        }
-        .onChange(of: currentPageIndex) { oldValue, newValue in
-            handlePageChangeIfNeeded(from: oldValue, to: newValue)
         }
     }
     
@@ -100,54 +101,81 @@ struct TopicFeedView: View {
         if vm.isBusy || vm.phase != .idle {
             loadingStateView
         } else if !allTopics.isEmpty {
-            // Main feed with vertical paging (shows user topics + recommended topics)
+            // Main feed with simple page navigation (shows user topics + recommended topics)
             let _ = print("📱 Showing feed with \(myTopicSections.count) my topics + \(recommendedTopics.count) recommended topics")
-                    TabView(selection: $currentPageIndex) {
-                        ForEach(Array(allTopics.enumerated()), id: \.element.id) { index, topicSection in
-                            VerticalTopicPageView(
-                                topicSection: topicSection,
-                                topicIndex: index,
-                                totalTopics: allTopics.count,
-                                isMyTopic: index < myTopicSections.count,
-                                onArticlesButtonTap: {
-                                    showingArticles = topicSection
+            
+            ZStack {
+                // Current page
+                if let currentTopic = allTopics[safe: currentPageIndex] {
+                    VerticalTopicPageView(
+                        topicSection: currentTopic,
+                        topicIndex: currentPageIndex,
+                        totalTopics: allTopics.count,
+                        isMyTopic: currentPageIndex < myTopicSections.count,
+                        onArticlesButtonTap: {
+                            showingArticles = currentTopic
+                        },
+                        onSwipeNext: {
+                            if currentPageIndex < allTopics.count - 1 {
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                    currentPageIndex += 1
                                 }
-                            )
-                            .tag(index)
-                        }
-                    }
-                    .tabViewStyle(.page(indexDisplayMode: .never))
-                    .ignoresSafeArea()
-                    .onChange(of: currentPageIndex) { oldValue, newValue in
-                        handlePageChange(from: oldValue, to: newValue)
-                    }
-                    
-                    // Page indicator dots
-                    VStack {
-                        Spacer()
-                        
-                        // Topic position indicator
-                        HStack(spacing: 4) {
-                            if currentPageIndex < myTopicSections.count {
-                                Text("My Topics")
-                                    .font(.caption2)
-                                    .foregroundColor(.white.opacity(0.6))
-                                Circle()
-                                    .fill(Color.white.opacity(0.4))
-                                    .frame(width: 3, height: 3)
-                            } else {
-                                Text("Recommended")
-                                    .font(.caption2)
-                                    .foregroundColor(.white.opacity(0.6))
-                                Circle()
-                                    .fill(Color.white.opacity(0.4))
-                                    .frame(width: 3, height: 3)
                             }
-                            Text("\(currentPageIndex + 1) of \(allTopics.count)")
-                                .font(.caption2)
-                                .foregroundColor(.white.opacity(0.6))
+                        },
+                        onSwipePrevious: {
+                            if currentPageIndex > 0 {
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                    currentPageIndex -= 1
+                                }
+                            }
                         }
-                        .padding(.bottom, vm.canPlay ? 180 : 100)
+                    )
+                    .id(currentTopic.id)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .bottom),
+                        removal: .move(edge: .top)
+                    ))
+                }
+            }
+            .ignoresSafeArea()
+            .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { _ in
+                // Auto-advance to next topic when audio finishes
+                autoAdvanceToNextTopic()
+            }
+                    
+                    // Page indicator (right side for vertical scrolling)
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 12) {
+                            Spacer()
+                            
+                            // Visual dots
+                            VStack(spacing: 6) {
+                                ForEach(0..<min(allTopics.count, 5), id: \.self) { index in
+                                    Circle()
+                                        .fill(index == currentPageIndex ? Color.white : Color.white.opacity(0.3))
+                                        .frame(width: index == currentPageIndex ? 8 : 6, 
+                                               height: index == currentPageIndex ? 8 : 6)
+                                }
+                                if allTopics.count > 5 {
+                                    Text("⋮")
+                                        .foregroundColor(.white.opacity(0.6))
+                                        .font(.caption)
+                                }
+                            }
+                            
+                            // Topic label
+                            VStack(spacing: 2) {
+                                Text("\(currentPageIndex + 1)/\(allTopics.count)")
+                                    .font(.caption2)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.white)
+                            }
+                            
+                            Spacer()
+                        }
+                        .padding(.trailing, 16)
+                        .padding(.bottom, vm.canPlay ? 100 : 20)
                     }
                     
                     // Compact audio player at bottom
@@ -155,26 +183,43 @@ struct TopicFeedView: View {
                         VStack {
                             Spacer()
                             CompactTopicAudioPlayer(
-                                topicSection: allTopics[safe: currentPageIndex],
-                                onAIAssistant: vm.combined != nil ? {
-                                    // Remember if audio was playing
-                                    wasPlayingBeforeAssistant = vm.isPlaying
-                                    // Pause audio before opening assistant
-                                    if vm.isPlaying {
-                                        vm.playPause()
-                                    }
-                                    showAIAssistant = true
-                                } : nil
+                                topicSection: allTopics[safe: currentPageIndex]
                             )
                             .padding(.bottom, 80)
                         }
                     }
                     
-                    // Save button - top right corner
-                    if vm.combined != nil {
-                        VStack {
-                            HStack {
-                                Spacer()
+                    // Top buttons
+                    VStack {
+                        HStack {
+                            // Fetch button - top left corner (for testing)
+                            Button(action: fetchAllNews) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: vm.isBusy ? "arrow.clockwise" : "arrow.down.circle.fill")
+                                        .font(.system(size: 20, weight: .semibold))
+                                        .rotationEffect(vm.isBusy ? .degrees(360) : .degrees(0))
+                                        .animation(vm.isBusy ? Animation.linear(duration: 1).repeatForever(autoreverses: false) : .default, value: vm.isBusy)
+                                    Text("Fetch")
+                                        .font(.system(size: 15, weight: .semibold))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(Color.blue.opacity(0.8))
+                                .clipShape(Capsule())
+                                .overlay(
+                                    Capsule()
+                                        .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                                )
+                            }
+                            .disabled(vm.isBusy)
+                            .padding(.top, 60)
+                            .padding(.leading, 20)
+                            
+                            Spacer()
+                            
+                            // Save button - top right corner
+                            if vm.combined != nil {
                                 Button(action: {
                                     toggleSave()
                                 }) {
@@ -193,8 +238,8 @@ struct TopicFeedView: View {
                                 .padding(.top, 60)
                                 .padding(.trailing, 20)
                             }
-                            Spacer()
                         }
+                        Spacer()
                     }
         } else if vm.combined == nil {
             emptyStateView
@@ -231,10 +276,13 @@ struct TopicFeedView: View {
                     .foregroundColor(.secondary)
             }
         } else if !unselectedTopics.isEmpty {
-            // Topic discovery feed
+            // Topic discovery feed with button navigation
             let _ = print("📱 Showing topic discovery with \(unselectedTopics.count) topics")
-            TabView(selection: $discoveryTopicIndex) {
-                ForEach(discoveryTopicsList, id: \.topic) { item in
+            
+            ZStack {
+                // Current discovery card
+                if discoveryTopicIndex < discoveryTopicsList.count {
+                    let item = discoveryTopicsList[discoveryTopicIndex]
                     TopicDiscoveryCard(
                         topic: item.topic,
                         onAdd: {
@@ -243,14 +291,77 @@ struct TopicFeedView: View {
                         onFetchAll: fetchAllNews,
                         hasSelectedTopics: !vm.customTopics.isEmpty
                     )
-                    .tag(item.index)
+                    .id(item.topic)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .bottom),
+                        removal: .move(edge: .top)
+                    ))
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 100)
+                            .onEnded { value in
+                                let verticalMovement = value.translation.height
+                                let horizontalMovement = abs(value.translation.width)
+                                
+                                // Only respond to primarily vertical swipes
+                                if abs(verticalMovement) > horizontalMovement * 2 {
+                                    if verticalMovement > 0 {
+                                        // Swiped down -> go to previous page
+                                        if discoveryTopicIndex > 0 {
+                                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                                discoveryTopicIndex -= 1
+                                            }
+                                        }
+                                    } else {
+                                        // Swiped up -> go to next page
+                                        if discoveryTopicIndex < discoveryTopicsList.count - 1 {
+                                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                                discoveryTopicIndex += 1
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                    )
                 }
+                
+                // Top gradient fade (for status bar)
+                VStack {
+                    LinearGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: Color(.systemBackground), location: 0.0),
+                            .init(color: Color(.systemBackground).opacity(0.5), location: 0.4),
+                            .init(color: Color(.systemBackground).opacity(0.0), location: 1.0)
+                        ]),
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 80)
+                    .allowsHitTesting(false)
+                    
+                    Spacer()
+                }
+                
+                // Bottom gradient fade (for nav bar and buttons)
+                VStack {
+                    Spacer()
+                    
+                    LinearGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: Color(.systemBackground).opacity(0.0), location: 0.0),
+                            .init(color: Color(.systemBackground).opacity(0.5), location: 0.5),
+                            .init(color: Color(.systemBackground), location: 1.0)
+                        ]),
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 200)
+                    .allowsHitTesting(false)
+                }
+                
+                // Page indicator
+                discoveryPageIndicator
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea()
-                        
-            // Page indicator
-            discoveryPageIndicator
         } else {
             // Final fallback if no topics available
             VStack(spacing: 24) {
@@ -355,19 +466,6 @@ struct TopicFeedView: View {
         }
     }
     
-    @ViewBuilder
-    private var aiAssistantSheet: some View {
-        if let combined = vm.combined {
-            AIAssistantView(
-                fetchId: combined.id,
-                fetchSummary: combined.summary,
-                fetchTopics: Array(vm.lastFetchedTopics)
-            )
-            .environmentObject(vm)
-            .environmentObject(authVM)
-        }
-    }
-    
     // MARK: - Helper Functions
     
     private func loadInitialData() async {
@@ -381,17 +479,12 @@ struct TopicFeedView: View {
         await loadPredefinedTopicsForDiscovery()
         print("📱 TopicFeedView: Initial data load complete")
         print("   Final state: myTopics=\(myTopicSections.count), recommended=\(recommendedTopics.count), discovery=\(unselectedTopics.count)")
-    }
-    
-    private func handleAIAssistantDismiss() {
-        if wasPlayingBeforeAssistant && !vm.isPlaying {
-            vm.playPause()
-        }
-        wasPlayingBeforeAssistant = false
         
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            vm.objectWillChange.send()
+        // Ensure first topic's audio is loaded and ready to play
+        await MainActor.run {
+            if let firstTopic = allTopics.first {
+                vm.switchToTopicAudio(for: firstTopic, autoPlay: false)
+            }
         }
     }
     
@@ -512,9 +605,22 @@ struct TopicFeedView: View {
         print("📄 Page changed from \(oldIndex) to \(newIndex)")
         vm.currentTopicIndex = newIndex
         
-        // Switch audio to new topic
+        // Switch audio to new topic and auto-play
         if let topicSection = allTopics[safe: newIndex] {
-            vm.switchToTopicAudio(for: topicSection, autoPlay: vm.isPlaying)
+            vm.switchToTopicAudio(for: topicSection, autoPlay: true) // Auto-play when switching topics
+        }
+    }
+    
+    private func autoAdvanceToNextTopic() {
+        // Only auto-advance if we're not on the last topic
+        guard currentPageIndex < allTopics.count - 1 else {
+            print("📄 Reached last topic, not auto-advancing")
+            return
+        }
+        
+        print("📄 Audio finished, auto-advancing to next topic...")
+        withAnimation {
+            currentPageIndex += 1
         }
     }
     
@@ -622,11 +728,15 @@ struct VerticalTopicPageView: View {
     let totalTopics: Int
     let isMyTopic: Bool
     let onArticlesButtonTap: () -> Void
-    
+    let onSwipeNext: () -> Void
+    let onSwipePrevious: () -> Void
+
     @EnvironmentObject var vm: NewsVM
     @State private var scrollOffset: CGFloat = 0
     @State private var showStickyHeader: Bool = false
-    
+    @State private var isAtBottom: Bool = false
+    @State private var isAtTop: Bool = true
+
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .top) {
@@ -734,6 +844,15 @@ struct VerticalTopicPageView: View {
                         
                         // Bottom padding for audio player
                         Spacer(minLength: vm.canPlay ? 250 : 150)
+                        
+                        // Bottom detector
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: BottomReachedPreferenceKey.self,
+                                value: geo.frame(in: .named("scroll")).maxY < geometry.size.height + 100
+                            )
+                        }
+                        .frame(height: 1)
                     }
                 }
                 .coordinateSpace(name: "scroll")
@@ -743,7 +862,34 @@ struct VerticalTopicPageView: View {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         showStickyHeader = value < -20
                     }
+                    // Check if at top (within 50 points)
+                    isAtTop = value > -50
                 }
+                .onPreferenceChange(BottomReachedPreferenceKey.self) { value in
+                    isAtBottom = value
+                }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 100)
+                        .onEnded { value in
+                            let verticalMovement = value.translation.height
+                            let horizontalMovement = abs(value.translation.width)
+                            
+                            // Only respond to strong vertical swipes (not horizontal or small movements)
+                            if abs(verticalMovement) > 100 && abs(verticalMovement) > horizontalMovement * 2 {
+                                if verticalMovement > 0 {
+                                    // Swiped down -> go to previous page (only if at top)
+                                    if isAtTop {
+                                        onSwipePrevious()
+                                    }
+                                } else {
+                                    // Swiped up -> go to next page (only if at bottom)
+                                    if isAtBottom {
+                                        onSwipeNext()
+                                    }
+                                }
+                            }
+                        }
+                )
                 
                 // Sticky header (appears when scrolling)
                 if showStickyHeader {
@@ -763,11 +909,46 @@ struct VerticalTopicPageView: View {
                     }
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
+                
+                // Top gradient fade (for status bar)
+                VStack {
+                    LinearGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: Color(.systemBackground), location: 0.0),
+                            .init(color: Color(.systemBackground).opacity(0.5), location: 0.4),
+                            .init(color: Color(.systemBackground).opacity(0.0), location: 1.0)
+                        ]),
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 80)
+                    .allowsHitTesting(false)
+                    
+                    Spacer()
+                }
+                
+                // Bottom gradient fade (for nav bar and buttons)
+                VStack {
+                    Spacer()
+                    
+                    LinearGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: Color(.systemBackground).opacity(0.0), location: 0.0),
+                            .init(color: Color(.systemBackground).opacity(0.5), location: 0.5),
+                            .init(color: Color(.systemBackground), location: 1.0)
+                        ]),
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 200)
+                    .allowsHitTesting(false)
+                }
             }
         }
         .onAppear {
-            // Play audio for this topic when it appears
-            if let audioUrl = topicSection.audioUrl {
+            // Ensure audio is loaded for this topic when page appears
+            // autoPlay is controlled by the page navigation
+            if topicSection.audioUrl != nil {
                 vm.switchToTopicAudio(for: topicSection, autoPlay: false)
             }
         }
@@ -781,7 +962,6 @@ struct CompactTopicAudioPlayer: View {
     @EnvironmentObject var vm: NewsVM
     @State private var isScrubbing = false
     @State private var scrubValue: Double = 0
-    var onAIAssistant: (() -> Void)? = nil
     
     private func formatTime(_ seconds: Double) -> String {
         guard seconds.isFinite, seconds >= 0 else { return "0:00" }
@@ -797,16 +977,7 @@ struct CompactTopicAudioPlayer: View {
                 .background(Color(.separator))
             
             VStack(spacing: 12) {
-                // Topic name
-                if let topic = topicSection {
-                    Text(smartCapitalized(topic.topic))
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                }
-                
-                // Controls
+                // Controls (no title - user knows what they're listening to from the page)
                 HStack(spacing: 16) {
                     // Play/Pause button
                     Button(action: { vm.playPause() }) {
@@ -817,18 +988,6 @@ struct CompactTopicAudioPlayer: View {
                     }
                     .disabled(!vm.canPlay)
                     .opacity(vm.canPlay ? 1.0 : 0.5)
-                    
-                    // AI Assistant button
-                    if let aiAction = onAIAssistant, vm.combined != nil {
-                        Button(action: aiAction) {
-                            Image(systemName: "bubble.left.and.bubble.right.fill")
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundColor(.blue)
-                                .frame(width: 44, height: 44)
-                        }
-                        .disabled(!vm.canPlay || vm.combined == nil)
-                        .opacity(vm.canPlay && vm.combined != nil ? 1.0 : 0.5)
-                    }
                     
                     // Progress bar
                     VStack(spacing: 6) {
@@ -1048,7 +1207,7 @@ struct TopicDiscoveryCard: View {
                     Image(systemName: "chevron.up")
                         .font(.title3)
                         .foregroundColor(.white.opacity(0.5))
-                    Text("Swipe to see more topics")
+                    Text("Swipe up for more topics")
                         .font(.caption)
                         .foregroundColor(.white.opacity(0.5))
                 }
@@ -1084,6 +1243,15 @@ struct TopicDiscoveryCard: View {
         case let t where t.contains("ai"), let t where t.contains("artificial"): return "cpu"
         default: return "newspaper.fill"
         }
+    }
+}
+
+// MARK: - Preference Keys
+
+struct BottomReachedPreferenceKey: PreferenceKey {
+    static var defaultValue: Bool = false
+    static func reduce(value: inout Bool, nextValue: () -> Bool) {
+        value = nextValue()
     }
 }
 

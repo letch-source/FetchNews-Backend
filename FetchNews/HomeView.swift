@@ -107,10 +107,10 @@ struct HomeView: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
 
-                    // Reset Button (if topics are selected)
-                    if !vm.selectedTopics.isEmpty {
-                        Button("Reset") {
-                            vm.selectedTopics.removeAll()
+                    // Reset Button (if we have content to clear)
+                    if vm.combined != nil || !vm.items.isEmpty {
+                        Button("Clear Summary") {
+                            // Clear the summary and items, but keep selectedTopics so they persist
                             vm.items = []
                             vm.combined = nil
                             vm.isDirty = true

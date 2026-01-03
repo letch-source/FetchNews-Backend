@@ -571,6 +571,7 @@ userSchema.methods.updatePreferences = async function(preferences) {
     this.lastFetchedTopics = preferences.lastFetchedTopics;
   }
   if (preferences.selectedTopics !== undefined) {
+    console.log(`[USER] Updating selectedTopics for ${this.email}: ${JSON.stringify(preferences.selectedTopics)}`);
     this.selectedTopics = preferences.selectedTopics;
   }
   if (preferences.excludedNewsSources !== undefined) {
@@ -589,7 +590,7 @@ userSchema.methods.updatePreferences = async function(preferences) {
   while (retries > 0) {
     try {
       await this.save();
-      console.log(`[USER] Successfully saved preferences for ${this.email} - selectedVoice: ${this.selectedVoice}`);
+      console.log(`[USER] Successfully saved preferences for ${this.email} - selectedVoice: ${this.selectedVoice}, selectedTopics: ${JSON.stringify(this.selectedTopics)}`);
       return this.getPreferences();
     } catch (error) {
       retries--;
@@ -635,7 +636,7 @@ userSchema.methods.updatePreferences = async function(preferences) {
           try {
             await freshUser.save();
             Object.assign(this, freshUser.toObject());
-            console.log(`[USER] Successfully saved preferences on retry for ${freshUser.email} - selectedVoice: ${freshUser.selectedVoice}`);
+            console.log(`[USER] Successfully saved preferences on retry for ${freshUser.email} - selectedVoice: ${freshUser.selectedVoice}, selectedTopics: ${JSON.stringify(freshUser.selectedTopics)}`);
             return this.getPreferences();
           } catch (retryError) {
             console.error(`[USER] Retry save failed for ${freshUser.email}:`, retryError.message);

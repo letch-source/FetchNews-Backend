@@ -49,6 +49,9 @@ final class NewsVM: ObservableObject {
     // Trending topics (fetched from backend)
     @Published var trendingTopics: [String] = []
     
+    // Recommended topics (based on user's selected topics)
+    @Published var recommendedTopics: [String] = []
+    
     // Timer for automatic trending topics refresh
     private var trendingTopicsTimer: Timer?
     
@@ -85,12 +88,7 @@ final class NewsVM: ObservableObject {
     
     // News sources settings UI
     @Published var showingNewsSourcesSettings: Bool = false
-    
-    // Scheduled summaries
-    // scheduledSummaries should NOT trigger saveSettings - it's managed separately via /api/scheduled-summaries
-    @Published var scheduledSummaries: [ScheduledSummary] = []
-    @Published var showingScheduledSummariesSettings: Bool = false
-    
+
     // Results
     @Published var combined: Combined?
     @Published var items: [Item] = []
@@ -174,10 +172,33 @@ final class NewsVM: ObservableObject {
                 // Load new user's data when they log in
                 await self?.initializeIfNeeded()
                 await self?.checkForScheduledSummary()
-                // Ensure automatic 6am/6pm fetches are set up
-                await self?.ensureAutomaticFetchSchedule()
             }
         }
+        
+        // Observe app lifecycle to force save when backgrounded
+        #if canImport(UIKit)
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                print("📱 [LIFECYCLE] App will resign active - force saving preferences")
+                await self?.forceSaveSettings()
+            }
+        }
+        
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                print("📱 [LIFECYCLE] App entered background - force saving preferences")
+                await self?.forceSaveSettings()
+            }
+        }
+        #endif
     }
     
     // MARK: - Intents
@@ -209,9 +230,9 @@ final class NewsVM: ObservableObject {
             await settingsTask
             await historyTask // Ensure lastFetchedTopics is loaded from history
             
-            // Ensure automatic 6am/6pm fetches are set up
-            await ensureAutomaticFetchSchedule()
-            
+            // Fetch recommended topics based on user's selected topics
+            await fetchRecommendedTopics()
+
             // Load news sources for premium users in parallel
             if let authVM = authVM, authVM.currentUser?.isPremium == true {
                 async let availableSourcesTask = loadAvailableNewsSources()
@@ -226,8 +247,13 @@ final class NewsVM: ObservableObject {
     }
     
     func toggle(_ topic: String) {
-        if selectedTopics.contains(topic) { selectedTopics.remove(topic) }
-        else { selectedTopics.insert(topic) }
+        if selectedTopics.contains(topic) { 
+            selectedTopics.remove(topic)
+            print("🔵 [TOPICS] Removed '\(topic)' from selectedTopics. Current: \(selectedTopics.sorted())")
+        } else { 
+            selectedTopics.insert(topic)
+            print("🔵 [TOPICS] Added '\(topic)' to selectedTopics. Current: \(selectedTopics.sorted())")
+        }
         isDirty = true
     }
 
@@ -331,6 +357,9 @@ final class NewsVM: ObservableObject {
         
         if let savedSelectedTopics = defaults.array(forKey: "FetchNews_selectedTopics") as? [String] {
             selectedTopics = Set(savedSelectedTopics)
+            print("📲 [LOCAL] Loaded selectedTopics from UserDefaults: \(savedSelectedTopics.sorted())")
+        } else {
+            print("📲 [LOCAL] No saved selectedTopics in UserDefaults")
         }
         
         if let savedSources = defaults.array(forKey: "FetchNews_excludedNewsSources") as? [String] {
@@ -429,10 +458,27 @@ final class NewsVM: ObservableObject {
             
             // Always update these from backend (they're more dynamic)
             lastFetchedTopics = Set(preferences.lastFetchedTopics)
-            selectedTopics = Set(preferences.selectedTopics ?? [])
-            excludedNewsSources = Set(preferences.excludedNewsSources)
-            scheduledSummaries = preferences.scheduledSummaries
             
+            // Handle selectedTopics with smart merge: if backend is empty but we have local data, keep local
+            let loadedTopics = preferences.selectedTopics ?? []
+            let currentLocalTopics = selectedTopics // Current topics (loaded from UserDefaults in loadLocalSettings)
+            
+            if loadedTopics.isEmpty && !currentLocalTopics.isEmpty {
+                // Backend is empty but we have local data - keep local and sync to backend
+                print("📥 [LOAD] Backend selectedTopics is empty, but local has \(currentLocalTopics.count) topics. Keeping local and will sync to backend.")
+                // selectedTopics already has local data, don't overwrite
+                // Schedule a sync to backend to fix the discrepancy
+                Task {
+                    await self.saveRemoteSettings()
+                }
+            } else {
+                // Backend has data or both are empty - use backend as source of truth
+                selectedTopics = Set(loadedTopics)
+                print("📥 [LOAD] Loaded selectedTopics from backend: \(loadedTopics.sorted())")
+            }
+            
+            excludedNewsSources = Set(preferences.excludedNewsSources)
+
             // Cache backend values locally for offline use and faster subsequent loads
             // This ensures local settings are available if backend is temporarily unavailable
             saveLocalSettings()
@@ -471,6 +517,22 @@ final class NewsVM: ObservableObject {
         }
     }
     
+    /// Force save settings immediately (used when app is backgrounded)
+    func forceSaveSettings() async {
+        print("🔥 [FORCE SAVE] Force saving preferences immediately")
+        // Cancel any pending debounced save
+        saveSettingsTask?.cancel()
+        saveSettingsTask = nil
+        
+        // Save to local immediately
+        saveLocalSettings()
+        
+        // Save to backend immediately if authenticated
+        if ApiClient.isAuthenticated {
+            await saveRemoteSettings()
+        }
+    }
+    
     private func saveLocalSettings() {
         let defaults = UserDefaults.standard
         
@@ -485,7 +547,9 @@ final class NewsVM: ObservableObject {
         defaults.set(length.rawValue, forKey: "FetchNews_length")
         print("💾 Saved length to UserDefaults: \(length.label) (\(length.rawValue))")
         defaults.set(Array(lastFetchedTopics), forKey: "FetchNews_lastFetchedTopics")
-        defaults.set(Array(selectedTopics), forKey: "FetchNews_selectedTopics")
+        let topicsArray = Array(selectedTopics).sorted()
+        defaults.set(topicsArray, forKey: "FetchNews_selectedTopics")
+        print("💾 [LOCAL] Saved selectedTopics to UserDefaults: \(topicsArray)")
         defaults.set(Array(excludedNewsSources), forKey: "FetchNews_excludedNewsSources")
         defaults.set(selectedCountry, forKey: "FetchNews_selectedCountry")
         
@@ -505,12 +569,14 @@ final class NewsVM: ObservableObject {
                 lastFetchedTopics: Array(lastFetchedTopics),
                 selectedTopics: Array(selectedTopics),
                 excludedNewsSources: Array(excludedNewsSources),
-                scheduledSummaries: [], // Don't save scheduledSummaries here - it's managed separately via /api/scheduled-summaries
                 selectedCountry: selectedCountry
             )
             
-            _ = try await ApiClient.updateUserPreferences(preferences)
+            print("💾 [SAVE] Saving preferences to backend - selectedTopics: \(Array(selectedTopics).sorted())")
+            let updated = try await ApiClient.updateUserPreferences(preferences)
+            print("✅ [SAVE] Backend confirmed selectedTopics saved: \(updated.selectedTopics?.sorted() ?? [])")
         } catch {
+            print("❌ [SAVE] Failed to save preferences to backend: \(error.localizedDescription)")
             // Silently fail - local settings are already saved
         }
     }
@@ -716,6 +782,14 @@ final class NewsVM: ObservableObject {
                 // Only create combined if we have actual content
                 if !cleanedCombinedSummary.isEmpty && cleanedCombinedSummary != "(No summary provided.)" {
                     let summaryTitle = (resp.combined?.title ?? "Summary").condenseWhitespace()
+                    print("📱 NewsVM: Creating Combined with \(resp.combined?.topicSections?.count ?? 0) topicSections")
+                    if let sections = resp.combined?.topicSections {
+                        for (i, section) in sections.enumerated() {
+                            print("   📱 Section \(i): \(section.topic) - \(section.articles.count) articles, audioUrl: \(section.audioUrl != nil ? "YES" : "NO")")
+                        }
+                    } else {
+                        print("   📱 WARNING: No topicSections in response!")
+                    }
                     self.combined = Combined(
                         id: resp.combined?.id ?? resp.items.first?.id ?? "combined",
                         title: summaryTitle,
@@ -761,12 +835,10 @@ final class NewsVM: ObservableObject {
                 }
 
                 // Per-topic audio is now generated by backend
-                // No need for client-side TTS generation
-                // Just prepare the first topic's audio for playback
-                if let firstTopic = self.combined?.topicSections?.first,
-                   let audioUrl = firstTopic.audioUrl {
-                    self.prepareAudio(urlString: audioUrl, title: firstTopic.topic.capitalized)
-                    self.currentTopicAudioUrl = audioUrl
+                // Topic audio playback is managed by TopicFeedView
+                // Just set the current topic audio URL for reference
+                if let firstTopic = self.combined?.topicSections?.first {
+                    self.currentTopicAudioUrl = firstTopic.audioUrl
                 }
                 
                 // Record the voice used for this summary
@@ -802,12 +874,11 @@ final class NewsVM: ObservableObject {
                             playbackRate: playbackRate,
                             upliftingNewsOnly: upliftingNewsOnly,
                             length: String(length.rawValue),
-                            lastFetchedTopics: Array(lastFetchedTopics),
-                            selectedTopics: Array(selectedTopics),
-                            excludedNewsSources: Array(excludedNewsSources),
-                            scheduledSummaries: [],
-                            selectedCountry: selectedCountry
-                        )
+                        lastFetchedTopics: Array(lastFetchedTopics),
+                        selectedTopics: Array(selectedTopics),
+                        excludedNewsSources: Array(excludedNewsSources),
+                        selectedCountry: selectedCountry
+                    )
                         _ = try await ApiClient.updateUserPreferences(preferences)
                         print("✅ Saved lastFetchedTopics to backend: \(lastFetchedTopics.count) topics")
                     } catch {
@@ -821,6 +892,9 @@ final class NewsVM: ObservableObject {
                 // NOTE: Do NOT clear selectedTopics anymore
                 // Selected topics should persist for scheduled 6AM/6PM fetches
                 // Users manage their topics via the Topics tab
+                
+                // Refresh recommended topics based on updated selected topics
+                await fetchRecommendedTopics()
                 
                 // Refresh user data to update usage count
                 await authVM?.refreshUser()
@@ -876,8 +950,7 @@ final class NewsVM: ObservableObject {
         lastFetchedTopics.removeAll()
         customTopics = []
         excludedNewsSources.removeAll()
-        scheduledSummaries = []
-        
+
         // Clear error state
         lastError = nil
         
@@ -1105,70 +1178,6 @@ final class NewsVM: ObservableObject {
     
     // MARK: - Automatic Fetch Schedule
     
-    /// Ensures user has automatic 6am and 6pm fetch schedules set up
-    /// This creates two scheduled summaries if they don't exist
-    func ensureAutomaticFetchSchedule() async {
-        guard ApiClient.isAuthenticated else { return }
-        
-        do {
-            // Load existing scheduled summaries
-            let existingSummaries = try await ApiClient.getScheduledSummaries()
-            
-            // Check if we already have 6am and 6pm schedules
-            let has6am = existingSummaries.contains { $0.time == "06:00" && $0.isEnabled }
-            let has6pm = existingSummaries.contains { $0.time == "18:00" && $0.isEnabled }
-            
-            // Create 6am schedule if missing
-            if !has6am {
-                let morning = ScheduledSummary(
-                    id: UUID().uuidString,
-                    name: "Morning News",
-                    time: "06:00",
-                    topics: Array(selectedTopics.isEmpty ? ["general"] : selectedTopics),
-                    customTopics: [],
-                    days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
-                    isEnabled: true,
-                    createdAt: ISO8601DateFormatter().string(from: Date()),
-                    lastRun: nil
-                )
-                
-                _ = try await ApiClient.createScheduledSummary(morning)
-                print("✅ Created automatic 6am fetch schedule")
-            }
-            
-            // Create 6pm schedule if missing
-            if !has6pm {
-                let evening = ScheduledSummary(
-                    id: UUID().uuidString,
-                    name: "Evening News",
-                    time: "18:00",
-                    topics: Array(selectedTopics.isEmpty ? ["general"] : selectedTopics),
-                    customTopics: [],
-                    days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
-                    isEnabled: true,
-                    createdAt: ISO8601DateFormatter().string(from: Date()),
-                    lastRun: nil
-                )
-                
-                _ = try await ApiClient.createScheduledSummary(evening)
-                print("✅ Created automatic 6pm fetch schedule")
-            }
-            
-            // Reload scheduled summaries to update UI
-            if !has6am || !has6pm {
-                let updatedSummaries = try await ApiClient.getScheduledSummaries()
-                await MainActor.run {
-                    self.scheduledSummaries = updatedSummaries
-                }
-            }
-            
-            print("✅ Automatic fetch schedules verified (6am & 6pm)")
-        } catch {
-            print("⚠️ Failed to ensure automatic fetch schedules: \(error)")
-            // Silently fail - user can manually set up schedules if needed
-        }
-    }
-    
     // MARK: - Custom Topics Management
     
     func loadCustomTopics() async {
@@ -1239,6 +1248,30 @@ final class NewsVM: ObservableObject {
         } catch {
             print("Failed to fetch trending topics: \(error)")
             // On error, keep using cached trending topics if available
+        }
+    }
+    
+    func fetchRecommendedTopics() async {
+        // Only fetch if user has selected topics
+        guard !selectedTopics.isEmpty else {
+            await MainActor.run {
+                self.recommendedTopics = []
+            }
+            return
+        }
+        
+        do {
+            let response = try await ApiClient.getRecommendedTopicNames()
+            await MainActor.run {
+                self.recommendedTopics = response.recommendedTopics
+                print("✅ Fetched \(self.recommendedTopics.count) recommended topics: \(self.recommendedTopics.joined(separator: ", "))")
+            }
+        } catch {
+            print("Failed to fetch recommended topics: \(error)")
+            // On error, clear recommended topics
+            await MainActor.run {
+                self.recommendedTopics = []
+            }
         }
     }
     
@@ -1368,10 +1401,52 @@ final class NewsVM: ObservableObject {
             "wordCount": length.rawValue,
             "sources": sourceObjects
         ]
-        
+
         // Only include audioUrl if it's not nil or empty
         if let audioUrl = summary.audioUrl, !audioUrl.isEmpty {
             summaryData["audioUrl"] = audioUrl
+        }
+        
+        // Include topicSections if available (per-topic summaries with individual audio)
+        if let topicSections = summary.topicSections {
+            let topicSectionsData: [[String: Any]] = topicSections.map { section in
+                var sectionDict: [String: Any] = [
+                    "id": section.id,
+                    "topic": section.topic,
+                    "summary": section.summary
+                ]
+                
+                // Include audioUrl if available
+                if let audioUrl = section.audioUrl, !audioUrl.isEmpty {
+                    sectionDict["audioUrl"] = audioUrl
+                }
+                
+                // Include articles
+                let articlesData: [[String: Any]] = section.articles.map { article in
+                    var articleDict: [String: Any] = [
+                        "id": article.id,
+                        "title": article.title,
+                        "summary": article.summary
+                    ]
+                    if let source = article.source {
+                        articleDict["source"] = source
+                    }
+                    if let url = article.url {
+                        articleDict["url"] = url
+                    }
+                    if let topic = article.topic {
+                        articleDict["topic"] = topic
+                    }
+                    return articleDict
+                }
+                sectionDict["articles"] = articlesData
+                
+                return sectionDict
+            }
+            summaryData["topicSections"] = topicSectionsData
+            print("💾 Saving \(topicSections.count) topicSections to history")
+        } else {
+            print("⚠️ No topicSections to save")
         }
         
         do {
@@ -1507,14 +1582,15 @@ final class NewsVM: ObservableObject {
     // Load a summary from history into the main player
     func loadSummaryFromHistory(_ entry: SummaryHistoryEntry) async {
         await MainActor.run {
-            // Set combined summary
-            // Note: History entries don't have topicSections, so feedback won't be available for historical fetches
+            // Set combined summary with topicSections if available
+            print("📥 Loading from history: \(entry.title)")
+            print("   topicSections: \(entry.topicSections?.count ?? 0)")
             combined = Combined(
                 id: entry.id,
                 title: entry.title,
                 summary: entry.summary,
                 audioUrl: entry.audioUrl,
-                topicSections: nil
+                topicSections: entry.topicSections // Now includes topicSections!
             )
             
             // Set last fetched topics from the fetch's topics

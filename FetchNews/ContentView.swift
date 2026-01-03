@@ -192,8 +192,8 @@ struct ContentView: View {
                         .cornerRadius(12)
 
                         HStack(spacing: 12) {
-                            Button("Reset") {
-                                vm.selectedTopics.removeAll()
+                            Button("Clear Summary") {
+                                // Clear the summary and items, but keep selectedTopics so they persist
                                 vm.items = []
                                 vm.combined = nil
                                 vm.isDirty = true
@@ -209,7 +209,7 @@ struct ContentView: View {
                             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white, lineWidth: 1))
                             .cornerRadius(12)
                             .onAppear {
-                                print("🔊 Reset button area appeared - needsNewAudio: \(vm.needsNewAudio)")
+                                print("🔊 Clear Summary button area appeared - needsNewAudio: \(vm.needsNewAudio)")
                             }
                             
                             if vm.needsNewAudio || vm.isReRecordingAudio {
@@ -425,10 +425,6 @@ struct NowPlayingBubble: View {
     let onScrubEdit: (Bool) -> Void
     var onTap: (() -> Void)? = nil
 
-    private var displayTitle: String {
-        title.isEmpty ? "Summary" : title
-    }
-
     private func format(_ seconds: Double) -> String {
         guard seconds.isFinite, seconds >= 0 else { return "0:00" }
         let s = Int(seconds.rounded())
@@ -453,11 +449,6 @@ struct NowPlayingBubble: View {
             )
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(displayTitle)
-                    .font(.subheadline).bold()
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
                 VStack(spacing: 2) {
                     Slider(
                         value: Binding(
@@ -498,12 +489,6 @@ struct CompactNowPlayingBubble: View {
     let onScrubChange: (Double) -> Void
     let onScrubEdit: (Bool) -> Void
     var onTap: (() -> Void)? = nil
-    var onAIAssistant: (() -> Void)? = nil
-    let hasContent: Bool
-
-    private var displayTitle: String {
-        title.isEmpty ? "Summary" : title
-    }
 
     private func format(_ seconds: Double) -> String {
         guard seconds.isFinite, seconds >= 0 else { return "0:00" }
@@ -527,32 +512,8 @@ struct CompactNowPlayingBubble: View {
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(Color(.systemGray4), lineWidth: 0.5)
             )
-            
-            // AI Assistant button
-            if hasContent, let aiAction = onAIAssistant {
-                Button { aiAction() } label: {
-                    Image(systemName: "bubble.left.and.bubble.right.fill")
-                        .font(.system(size: 12, weight: .bold))
-                        .frame(width: 28, height: 28)
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(6)
-                }
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(.systemGray4), lineWidth: 0.5)
-                )
-            }
 
             VStack(alignment: .leading, spacing: 4) {
-                ScrollingText(
-                    displayTitle,
-                    font: .caption,
-                    fontWeight: .bold,
-                    color: .primary
-                )
-                .frame(height: 16)
-
                 HStack(spacing: 6) {
                     Slider(
                         value: Binding(
