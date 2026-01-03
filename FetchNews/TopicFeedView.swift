@@ -337,10 +337,11 @@ struct TopicFeedView: View {
     }
     
     private func handlePageChangeIfNeeded(from oldValue: Int, to newValue: Int) {
-        if newValue >= myTopicSections.count - 1 && recommendedTopics.isEmpty && !isLoadingRecommended {
-            Task {
-                await loadRecommendedTopics()
-            }
+        // Load more recommended topics if user is nearing the end
+        let totalTopics = allTopics.count
+        if newValue >= totalTopics - 2 && !isLoadingRecommended {
+            // User is near the end, could load more recommended topics here if needed
+            // For now, recommended topics are loaded once on app launch
         }
     }
     
