@@ -80,8 +80,8 @@ struct TopicFeedView: View {
     private var mainContentView: some View {
         if vm.isBusy || vm.phase != .idle {
             loadingStateView
-        } else if !myTopicSections.isEmpty {
-                    // Main feed with vertical paging
+        } else if !allTopics.isEmpty {
+            // Main feed with vertical paging (shows user topics + recommended topics)
                     TabView(selection: $currentPageIndex) {
                         ForEach(Array(allTopics.enumerated()), id: \.element.id) { index, topicSection in
                             VerticalTopicPageView(
@@ -201,48 +201,11 @@ struct TopicFeedView: View {
     
     @ViewBuilder
     private var emptyStateView: some View {
-        if isLoadingPredefinedTopics {
+        if isLoadingPredefinedTopics || isLoadingRecommended {
             VStack(spacing: 24) {
                 ProgressView()
                 Text("Loading topics...")
                     .foregroundColor(.secondary)
-            }
-        } else if !vm.customTopics.isEmpty {
-            // User has topics selected but no summaries yet
-            VStack(spacing: 24) {
-                Image(systemName: "clock")
-                    .font(.system(size: 60))
-                    .foregroundColor(.blue)
-                
-                Text("Ready to Fetch!")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                
-                Text("You have \(vm.customTopics.count) topics selected. Fetch your first news summary!")
-                    .font(.body)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-                
-                Button(action: fetchAllNews) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "arrow.down.circle.fill")
-                        Text("Fetch News Now")
-                            .fontWeight(.semibold)
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 16)
-                    .background(
-                        LinearGradient(
-                            colors: [Color.blue, Color.blue.opacity(0.8)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .cornerRadius(12)
-                    .shadow(color: Color.blue.opacity(0.3), radius: 8, x: 0, y: 4)
-                }
             }
         } else if !unselectedTopics.isEmpty {
             // Topic discovery feed
@@ -265,7 +228,12 @@ struct TopicFeedView: View {
             // Page indicator
             discoveryPageIndicator
         } else {
-            allSetFallbackView
+            // Final fallback if no topics available
+            VStack(spacing: 24) {
+                ProgressView()
+                Text("Loading...")
+                    .foregroundColor(.secondary)
+            }
         }
     }
     
@@ -377,8 +345,8 @@ struct TopicFeedView: View {
     }
     
     private func loadRecommendedTopics() async {
-        // Only load if user has finished their topics and we haven't loaded yet
-        guard !myTopicSections.isEmpty else { return }
+        // Load recommended topics to show on homepage
+        // Don't guard on myTopicSections - we want to show recommended even if user hasn't fetched their own
         guard recommendedTopics.isEmpty else { return }
         guard !isLoadingRecommended else { return }
         
