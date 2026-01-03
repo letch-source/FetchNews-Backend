@@ -208,26 +208,22 @@ struct TopicFeedView: View {
                     .foregroundColor(.secondary)
             }
         } else if !unselectedTopics.isEmpty {
-                        // Topic discovery feed
-                        TabView(selection: $discoveryTopicIndex) {
-                            ForEach(discoveryTopicsList, id: \.topic) { item in
-                                TopicDiscoveryCard(
-                                    topic: item.topic,
-                                    onAdd: {
-                                        addTopic(item.topic, at: item.index)
-                                    },
-                                    onFetchAll: {
-                                        Task {
-                                            await vm.fetchNews()
-                                        }
-                                    },
-                                    hasSelectedTopics: !vm.customTopics.isEmpty
-                                )
-                                .tag(item.index)
-                            }
-                        }
-                        .tabViewStyle(.page(indexDisplayMode: .never))
-                        .ignoresSafeArea()
+            // Topic discovery feed
+            TabView(selection: $discoveryTopicIndex) {
+                ForEach(discoveryTopicsList, id: \.topic) { item in
+                    TopicDiscoveryCard(
+                        topic: item.topic,
+                        onAdd: {
+                            addTopic(item.topic, at: item.index)
+                        },
+                        onFetchAll: fetchAllNews,
+                        hasSelectedTopics: !vm.customTopics.isEmpty
+                    )
+                    .tag(item.index)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .ignoresSafeArea()
                         
             // Page indicator
             discoveryPageIndicator
@@ -274,11 +270,7 @@ struct TopicFeedView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
             
-            Button(action: {
-                Task {
-                    await vm.fetchNews()
-                }
-            }) {
+            Button(action: fetchAllNews) {
                 HStack(spacing: 12) {
                     Image(systemName: "arrow.down.circle.fill")
                     Text("Fetch News Now")
@@ -297,6 +289,12 @@ struct TopicFeedView: View {
                 .cornerRadius(12)
                 .shadow(color: Color.blue.opacity(0.3), radius: 8, x: 0, y: 4)
             }
+        }
+    }
+    
+    private func fetchAllNews() {
+        Task {
+            await vm.fetchNews()
         }
     }
     
