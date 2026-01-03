@@ -294,7 +294,7 @@ struct TopicFeedView: View {
     
     private func fetchAllNews() {
         Task {
-            await vm.fetchNews()
+            await vm.fetch()
         }
     }
     
