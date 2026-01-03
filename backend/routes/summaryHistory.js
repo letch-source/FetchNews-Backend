@@ -71,6 +71,26 @@ router.get('/', authenticateToken, async (req, res) => {
         });
       }
       
+      // Ensure topicSections array is properly serialized
+      if (entryObj.topicSections && Array.isArray(entryObj.topicSections)) {
+        formatted.topicSections = entryObj.topicSections.map(section => {
+          if (typeof section === 'object' && section !== null) {
+            const sectionObj = section.toObject ? section.toObject() : section;
+            // Also serialize articles within each section
+            if (sectionObj.articles && Array.isArray(sectionObj.articles)) {
+              sectionObj.articles = sectionObj.articles.map(article => {
+                if (typeof article === 'object' && article !== null) {
+                  return article.toObject ? article.toObject() : article;
+                }
+                return article;
+              });
+            }
+            return sectionObj;
+          }
+          return section;
+        });
+      }
+      
       return formatted;
     });
     

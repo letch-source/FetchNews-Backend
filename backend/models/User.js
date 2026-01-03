@@ -69,6 +69,20 @@ const userSchema = new mongoose.Schema({
       source: String,
       url: String,
       topic: String
+    }],
+    topicSections: [{
+      id: String,
+      topic: String,
+      summary: String,
+      audioUrl: String,
+      articles: [{
+        id: String,
+        title: String,
+        summary: String,
+        source: String,
+        url: String,
+        topic: String
+      }]
     }]
   }],
   savedSummaries: [{
@@ -93,6 +107,20 @@ const userSchema = new mongoose.Schema({
       source: String,
       url: String,
       topic: String
+    }],
+    topicSections: [{
+      id: String,
+      topic: String,
+      summary: String,
+      audioUrl: String,
+      articles: [{
+        id: String,
+        title: String,
+        summary: String,
+        source: String,
+        url: String,
+        topic: String
+      }]
     }]
   }],
   resetPasswordToken: {
@@ -357,7 +385,8 @@ userSchema.methods.addSummaryToHistory = async function(summaryData) {
     length: summaryData.length || 'short',
     timestamp: new Date(),
     audioUrl: summaryData.audioUrl,
-    sources: normalizedSources
+    sources: normalizedSources,
+    topicSections: summaryData.topicSections || undefined // Per-topic summaries with individual audio
   };
   
   // Add to beginning of array (most recent first)

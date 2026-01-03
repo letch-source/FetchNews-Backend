@@ -618,6 +618,10 @@ app.use("/api/scheduled-summaries", scheduledSummariesRoutes);
 const schedulerHealthRoutes = require("./routes/schedulerHealth");
 app.use("/api/scheduler", schedulerHealthRoutes);
 
+// Manual testing routes (for testing fetch from cache)
+const testFetchRoutes = require("./routes/testFetch");
+app.use("/api/test-fetch", testFetchRoutes);
+
 // Serve admin website
 // Admin directory is located in backend/admin (relative to this file)
 const adminPath = path.join(__dirname, "admin");
