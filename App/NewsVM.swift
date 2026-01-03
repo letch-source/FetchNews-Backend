@@ -1185,6 +1185,10 @@ final class NewsVM: ObservableObject {
             let topics = try await ApiClient.getCustomTopics()
             await MainActor.run {
                 self.customTopics = topics
+                // Sync customTopics to selectedTopics to ensure they're in sync
+                // Merge with existing selectedTopics to preserve any manually selected topics
+                let existingSelected = self.selectedTopics
+                self.selectedTopics = existingSelected.union(Set(topics))
             }
         } catch {
             // Silently fail - custom topics are optional
@@ -1196,7 +1200,11 @@ final class NewsVM: ObservableObject {
             let updatedTopics = try await ApiClient.addCustomTopic(topic)
             await MainActor.run {
                 self.customTopics = updatedTopics
+                // Also add to selectedTopics to ensure it persists
+                self.selectedTopics.insert(topic)
             }
+            // Save to backend preferences immediately to ensure persistence
+            await saveRemoteSettings()
         } catch {
             // Silently fail - user can try again
         }
@@ -1207,7 +1215,11 @@ final class NewsVM: ObservableObject {
             let updatedTopics = try await ApiClient.removeCustomTopic(topic)
             await MainActor.run {
                 self.customTopics = updatedTopics
+                // Also remove from selectedTopics to keep them in sync
+                self.selectedTopics.remove(topic)
             }
+            // Save to backend preferences immediately
+            await saveRemoteSettings()
         } catch {
             // Silently fail - user can try again
         }
