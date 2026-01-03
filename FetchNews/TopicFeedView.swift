@@ -19,6 +19,9 @@ struct TopicFeedView: View {
     @State private var isLoadingRecommended: Bool = false
     @State private var showAIAssistant = false
     @State private var wasPlayingBeforeAssistant = false
+    @State private var discoveryTopicIndex: Int = 0
+    @State private var predefinedTopics: [TopicCategory] = []
+    @State private var isLoadingPredefinedTopics = false
     
     // Get topic sections from combined summary (My Topics)
     private var myTopicSections: [TopicSection] {
@@ -27,6 +30,13 @@ struct TopicFeedView: View {
     
     private var allTopics: [TopicSection] {
         myTopicSections + recommendedTopics
+    }
+    
+    // Get unselected topics for discovery
+    private var unselectedTopics: [String] {
+        let allPredefined = predefinedTopics.flatMap { $0.topics }
+        let selected = Set(vm.customTopics)
+        return allPredefined.filter { !selected.contains($0) }
     }
     
     var body: some View {
@@ -149,41 +159,104 @@ struct TopicFeedView: View {
                         }
                     }
                 } else if vm.combined == nil {
-                    // Empty state - no fetch available
-                    VStack(spacing: 24) {
-                        Image(systemName: "newspaper")
-                            .font(.system(size: 60))
-                            .foregroundColor(.secondary)
-                        
-                        Text("No News Yet")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.primary)
-                        
-                        Text("Your feed will update automatically at 6am and 6pm daily with news from your selected topics.")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-                        
-                        // Next update time indicator
-                        VStack(spacing: 8) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "clock.badge.checkmark")
-                                    .foregroundColor(.blue)
-                                Text("Next update:")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                Text(nextUpdateTime())
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.blue)
+                    // Empty state - show topic discovery
+                    if isLoadingPredefinedTopics {
+                        VStack(spacing: 24) {
+                            ProgressView()
+                            Text("Loading topics...")
+                                .foregroundColor(.secondary)
+                        }
+                    } else if !unselectedTopics.isEmpty {
+                        // Topic discovery feed
+                        TabView(selection: $discoveryTopicIndex) {
+                            ForEach(Array(unselectedTopics.prefix(20).enumerated()), id: \.element) { index, topic in
+                                TopicDiscoveryCard(
+                                    topic: topic,
+                                    onAdd: {
+                                        Task {
+                                            await vm.addCustomTopic(topic)
+                                            // Auto-advance to next topic
+                                            if index < unselectedTopics.count - 1 {
+                                                withAnimation {
+                                                    discoveryTopicIndex = index + 1
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onFetchAll: {
+                                        Task {
+                                            await vm.fetchNews()
+                                        }
+                                    },
+                                    hasSelectedTopics: !vm.customTopics.isEmpty
+                                )
+                                .tag(index)
                             }
                         }
-                        .padding()
-                        .background(Color(.systemGray6))
-                        .cornerRadius(12)
-                        .padding(.horizontal, 40)
+                        .tabViewStyle(.page(indexDisplayMode: .never))
+                        .ignoresSafeArea()
+                        
+                        // Page indicator
+                        VStack {
+                            Spacer()
+                            HStack(spacing: 4) {
+                                Text("Discover Topics")
+                                    .font(.caption2)
+                                    .foregroundColor(.white.opacity(0.6))
+                                Circle()
+                                    .fill(Color.white.opacity(0.4))
+                                    .frame(width: 3, height: 3)
+                                Text("\(discoveryTopicIndex + 1) of \(min(unselectedTopics.count, 20))")
+                                    .font(.caption2)
+                                    .foregroundColor(.white.opacity(0.6))
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(.ultraThinMaterial)
+                            .clipShape(Capsule())
+                            .padding(.bottom, 100)
+                        }
+                    } else {
+                        // Fallback if no unselected topics available
+                        VStack(spacing: 24) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 60))
+                                .foregroundColor(.green)
+                            
+                            Text("All Set!")
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                            
+                            Text("You've selected topics. Fetch news to get started!")
+                                .font(.body)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 40)
+                            
+                            Button(action: {
+                                Task {
+                                    await vm.fetchNews()
+                                }
+                            }) {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "arrow.down.circle.fill")
+                                    Text("Fetch News Now")
+                                        .fontWeight(.semibold)
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 32)
+                                .padding(.vertical, 16)
+                                .background(
+                                    LinearGradient(
+                                        colors: [Color.blue, Color.blue.opacity(0.8)],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .cornerRadius(12)
+                                .shadow(color: Color.blue.opacity(0.3), radius: 8, x: 0, y: 4)
+                            }
+                        }
                     }
                 }
             }
@@ -220,6 +293,8 @@ struct TopicFeedView: View {
             await checkIfSaved()
             // Load recommended topics
             await loadRecommendedTopics()
+            // Load predefined topics for discovery
+            await loadPredefinedTopicsForDiscovery()
         }
         .onChange(of: vm.combined?.id) { _, _ in
             // Check save status when summary changes
@@ -371,6 +446,27 @@ struct TopicFeedView: View {
         } else {
             formatter.dateFormat = "MMM d 'at' h:mm a"
             return formatter.string(from: nextUpdate)
+        }
+    }
+    
+    private func loadPredefinedTopicsForDiscovery() async {
+        guard predefinedTopics.isEmpty else { return }
+        
+        await MainActor.run {
+            isLoadingPredefinedTopics = true
+        }
+        
+        do {
+            let response = try await ApiClient.getPredefinedTopics()
+            await MainActor.run {
+                self.predefinedTopics = response.categories
+                self.isLoadingPredefinedTopics = false
+            }
+        } catch {
+            await MainActor.run {
+                self.isLoadingPredefinedTopics = false
+            }
+            print("⚠️ Failed to load predefined topics: \(error)")
         }
     }
 }
@@ -720,6 +816,131 @@ struct ArticleCard: View {
 extension Array {
     subscript(safe index: Index) -> Element? {
         return indices.contains(index) ? self[index] : nil
+    }
+}
+
+// MARK: - Topic Discovery Card
+
+struct TopicDiscoveryCard: View {
+    let topic: String
+    let onAdd: () -> Void
+    let onFetchAll: () -> Void
+    let hasSelectedTopics: Bool
+    
+    var body: some View {
+        ZStack {
+            // Background gradient
+            LinearGradient(
+                colors: [
+                    Color.blue.opacity(0.3),
+                    Color.purple.opacity(0.3),
+                    Color.darkGreyBackground
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            
+            VStack(spacing: 0) {
+                Spacer()
+                
+                // Main content
+                VStack(spacing: 32) {
+                    // Topic icon and name
+                    VStack(spacing: 16) {
+                        Image(systemName: topicIcon(for: topic))
+                            .font(.system(size: 80))
+                            .foregroundColor(.white)
+                            .shadow(color: Color.black.opacity(0.2), radius: 10)
+                        
+                        Text(smartCapitalized(topic))
+                            .font(.system(size: 42, weight: .bold))
+                            .foregroundColor(.white)
+                            .multilineTextAlignment(.center)
+                            .shadow(color: Color.black.opacity(0.3), radius: 5)
+                    }
+                    
+                    // Description
+                    Text("Stay updated with the latest \(topic.lowercased()) news")
+                        .font(.title3)
+                        .foregroundColor(.white.opacity(0.9))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                    
+                    // Add button
+                    Button(action: onAdd) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 24))
+                            Text("Add \(smartCapitalized(topic))")
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 40)
+                        .padding(.vertical, 20)
+                        .background(Color.blue)
+                        .cornerRadius(16)
+                        .shadow(color: Color.blue.opacity(0.5), radius: 15, x: 0, y: 8)
+                    }
+                    
+                    // Fetch all button (if user has selected topics)
+                    if hasSelectedTopics {
+                        Button(action: onFetchAll) {
+                            Text("Fetch news from my topics")
+                                .font(.callout)
+                                .fontWeight(.medium)
+                                .foregroundColor(.white.opacity(0.8))
+                                .underline()
+                        }
+                        .padding(.top, 8)
+                    }
+                }
+                .padding(.horizontal, 30)
+                
+                Spacer()
+                
+                // Swipe hint
+                VStack(spacing: 8) {
+                    Image(systemName: "chevron.up")
+                        .font(.title3)
+                        .foregroundColor(.white.opacity(0.5))
+                    Text("Swipe to see more topics")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.5))
+                }
+                .padding(.bottom, 40)
+            }
+        }
+    }
+    
+    private func topicIcon(for topic: String) -> String {
+        let lowercased = topic.lowercased()
+        switch lowercased {
+        case let t where t.contains("tech"): return "laptopcomputer"
+        case let t where t.contains("sport"): return "sportscourt"
+        case let t where t.contains("business"), let t where t.contains("finance"): return "chart.line.uptrend.xyaxis"
+        case let t where t.contains("health"): return "heart.fill"
+        case let t where t.contains("science"): return "flask.fill"
+        case let t where t.contains("entertain"): return "film.fill"
+        case let t where t.contains("politic"): return "building.columns.fill"
+        case let t where t.contains("environment"): return "leaf.fill"
+        case let t where t.contains("education"): return "book.fill"
+        case let t where t.contains("travel"): return "airplane"
+        case let t where t.contains("food"): return "fork.knife"
+        case let t where t.contains("fashion"): return "tshirt.fill"
+        case let t where t.contains("art"): return "paintpalette.fill"
+        case let t where t.contains("music"): return "music.note"
+        case let t where t.contains("gaming"), let t where t.contains("game"): return "gamecontroller.fill"
+        case let t where t.contains("crypto"): return "bitcoinsign.circle.fill"
+        case let t where t.contains("real estate"): return "house.fill"
+        case let t where t.contains("auto"): return "car.fill"
+        case let t where t.contains("fitness"): return "figure.run"
+        case let t where t.contains("weather"): return "cloud.sun.fill"
+        case let t where t.contains("space"): return "sparkles"
+        case let t where t.contains("ai"), let t where t.contains("artificial"): return "cpu"
+        default: return "newspaper.fill"
+        }
     }
 }
 
