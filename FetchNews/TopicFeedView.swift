@@ -80,7 +80,7 @@ struct TopicFeedView: View {
     private var mainContentView: some View {
         if vm.isBusy || vm.phase != .idle {
             loadingStateView
-        } else if !allTopics.isEmpty {
+        } else if !myTopicSections.isEmpty {
                     // Main feed with vertical paging
                     TabView(selection: $currentPageIndex) {
                         ForEach(Array(allTopics.enumerated()), id: \.element.id) { index, topicSection in
@@ -206,6 +206,43 @@ struct TopicFeedView: View {
                 ProgressView()
                 Text("Loading topics...")
                     .foregroundColor(.secondary)
+            }
+        } else if !vm.customTopics.isEmpty {
+            // User has topics selected but no summaries yet
+            VStack(spacing: 24) {
+                Image(systemName: "clock")
+                    .font(.system(size: 60))
+                    .foregroundColor(.blue)
+                
+                Text("Ready to Fetch!")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                
+                Text("You have \(vm.customTopics.count) topics selected. Fetch your first news summary!")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+                
+                Button(action: fetchAllNews) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "arrow.down.circle.fill")
+                        Text("Fetch News Now")
+                            .fontWeight(.semibold)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 16)
+                    .background(
+                        LinearGradient(
+                            colors: [Color.blue, Color.blue.opacity(0.8)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .cornerRadius(12)
+                    .shadow(color: Color.blue.opacity(0.3), radius: 8, x: 0, y: 4)
+                }
             }
         } else if !unselectedTopics.isEmpty {
             // Topic discovery feed
