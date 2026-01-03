@@ -752,6 +752,153 @@ if (!fs.existsSync(MEDIA_DIR)) {
 }
 app.use("/media", express.static(MEDIA_DIR, { fallthrough: true }));
 
+// --- TTS Helper Function ---
+/**
+ * Generate TTS audio for text and return the audio URL
+ * @param {string} text - The text to convert to speech
+ * @param {string} voice - The voice to use (alloy, echo, fable, onyx, nova, shimmer)
+ * @param {number} speed - The playback speed (0.25 to 4.0)
+ * @param {string} baseUrl - The base URL for constructing audio URLs
+ * @returns {Promise<{audioUrl: string}>} - Object containing the audio URL
+ */
+async function generateTTS(text, voice = 'alloy', speed = 1.0, baseUrl = '') {
+  if (!OPENAI_API_KEY) {
+    throw new Error('OpenAI API key not configured');
+  }
+
+  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+  // Normalize voice to lowercase
+  const normalizedVoice = String(voice || "alloy").toLowerCase();
+  const availableVoices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+  const selectedVoice = availableVoices.includes(normalizedVoice) ? normalizedVoice : "alloy";
+
+  // Split text into chunks if needed (OpenAI has a 4096 character limit)
+  const MAX_CHUNK_SIZE = 4000;
+  const textChunks = [];
+  
+  if (text.length <= MAX_CHUNK_SIZE) {
+    textChunks.push(text);
+  } else {
+    // Split by sentences to avoid cutting mid-sentence
+    const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+    let currentChunk = '';
+    
+    for (const sentence of sentences) {
+      if ((currentChunk + sentence).length > MAX_CHUNK_SIZE && currentChunk) {
+        textChunks.push(currentChunk.trim());
+        currentChunk = sentence;
+      } else {
+        currentChunk += sentence;
+      }
+    }
+    
+    if (currentChunk) {
+      textChunks.push(currentChunk.trim());
+    }
+  }
+
+  console.log(`🎤 [TTS] Generating audio for ${textChunks.length} chunk(s), voice: ${selectedVoice}, speed: ${speed}`);
+
+  // Generate audio for each chunk
+  const modelPriority = ["tts-1", "tts-1-hd"];
+  let finalBuffer = null;
+
+  for (let chunkIndex = 0; chunkIndex < textChunks.length; chunkIndex++) {
+    const chunk = textChunks[chunkIndex];
+    let chunkSpeech = null;
+    let lastErr = null;
+
+    // Try models in order
+    for (const model of modelPriority) {
+      try {
+        chunkSpeech = await openai.audio.speech.create({
+          model,
+          voice: selectedVoice,
+          input: chunk,
+          format: "mp3",
+          speed: speed,
+        });
+        
+        if (chunkSpeech) {
+          console.log(`   ✅ Chunk ${chunkIndex + 1}/${textChunks.length} generated with ${model}`);
+          break;
+        }
+      } catch (e) {
+        lastErr = e;
+        console.warn(`   ⚠️  Chunk ${chunkIndex + 1} failed with ${model}:`, e.message);
+      }
+    }
+
+    // Fallback to alloy voice if selected voice failed
+    if (!chunkSpeech && selectedVoice !== "alloy") {
+      console.log(`   🔄 Trying fallback voice: alloy`);
+      for (const model of modelPriority) {
+        try {
+          chunkSpeech = await openai.audio.speech.create({
+            model,
+            voice: "alloy",
+            input: chunk,
+            format: "mp3",
+            speed: speed,
+          });
+          
+          if (chunkSpeech) {
+            console.log(`   ✅ Chunk ${chunkIndex + 1} generated with ${model} (fallback voice)`);
+            break;
+          }
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+    }
+
+    if (!chunkSpeech) {
+      throw lastErr || new Error(`Failed to generate audio for chunk ${chunkIndex + 1}`);
+    }
+
+    // Convert to buffer and concatenate
+    const chunkBuffer = Buffer.from(await chunkSpeech.arrayBuffer());
+    
+    if (finalBuffer === null) {
+      finalBuffer = chunkBuffer;
+    } else {
+      finalBuffer = Buffer.concat([finalBuffer, chunkBuffer]);
+    }
+  }
+
+  if (!finalBuffer) {
+    throw new Error("Failed to generate audio");
+  }
+
+  // Save the audio file
+  const fileBase = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
+  let audioUrl;
+
+  // Upload to B2 if configured, otherwise save locally
+  if (isB2Configured()) {
+    try {
+      console.log('   📤 Uploading to Backblaze B2...');
+      audioUrl = await uploadAudioToB2(finalBuffer, fileBase);
+      console.log('   ✅ Uploaded to B2');
+    } catch (b2Error) {
+      console.error('   ❌ B2 upload failed, using local storage:', b2Error.message);
+      // Fallback to local storage
+      const outPath = path.join(MEDIA_DIR, fileBase);
+      fs.writeFileSync(outPath, finalBuffer);
+      audioUrl = `${baseUrl}/media/${fileBase}`;
+    }
+  } else {
+    const outPath = path.join(MEDIA_DIR, fileBase);
+    fs.writeFileSync(outPath, finalBuffer);
+    audioUrl = `${baseUrl}/media/${fileBase}`;
+  }
+
+  console.log(`   🎵 Audio URL: ${audioUrl}`);
+  
+  return { audioUrl };
+}
+
 // --- News helpers ---
 const CORE_CATEGORIES = new Set([
   "business",
@@ -2929,11 +3076,13 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     if (!skipTTS && topicSections.length > 0) {
       console.log(`🎤 [PER-TOPIC TTS] Generating audio for ${topicSections.length} topics...`);
       
+      const baseUrl = req.protocol + '://' + req.get('host');
+      
       // Generate TTS for each topic in parallel
       const ttsPromises = topicSections.map(async (section, index) => {
         try {
           console.log(`   Generating audio for topic: ${section.topic}`);
-          const audioData = await generateTTS(section.summary, selectedVoice, playbackRate);
+          const audioData = await generateTTS(section.summary, selectedVoice, playbackRate, baseUrl);
           section.audioUrl = audioData.audioUrl;
           console.log(`   ✅ Audio generated for ${section.topic}`);
         } catch (ttsError) {
@@ -3287,11 +3436,13 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
         if (!skipTTS && topicSections.length > 0) {
           console.log(`🎤 [BATCH TTS] Generating audio for ${topicSections.length} topics...`);
           
+          const baseUrl = req.protocol + '://' + req.get('host');
+          
           // Generate TTS for each topic in parallel
           const ttsPromises = topicSections.map(async (section, index) => {
             try {
               console.log(`   Generating audio for topic: ${section.topic}`);
-              const audioData = await generateTTS(section.summary, selectedVoice, playbackRate);
+              const audioData = await generateTTS(section.summary, selectedVoice, playbackRate, baseUrl);
               section.audioUrl = audioData.audioUrl;
               console.log(`   ✅ Audio generated for ${section.topic}`);
             } catch (ttsError) {
