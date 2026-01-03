@@ -818,8 +818,9 @@ final class NewsVM: ObservableObject {
                 // Trigger FetchScreen to open automatically for new fetch
                 shouldShowFetchScreen = true
                 
-                // Deselect all topics after successful summary generation
-                selectedTopics.removeAll()
+                // NOTE: Do NOT clear selectedTopics anymore
+                // Selected topics should persist for scheduled 6AM/6PM fetches
+                // Users manage their topics via the Topics tab
                 
                 // Refresh user data to update usage count
                 await authVM?.refreshUser()
