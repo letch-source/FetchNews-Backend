@@ -3279,14 +3279,48 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
         // Generate a better title based on topics
         let title = await generateCatchyTitle(topics);
 
+        // Generate TTS audio for each topic section (unless skipTTS is true)
+        const skipTTS = req.query.noTts === '1' || req.body.skipTTS === true || b.skipTTS === true;
+        const selectedVoice = req.user?.selectedVoice || 'alloy';
+        const playbackRate = req.user?.playbackRate || 1.0;
+        
+        if (!skipTTS && topicSections.length > 0) {
+          console.log(`🎤 [BATCH TTS] Generating audio for ${topicSections.length} topics...`);
+          
+          // Generate TTS for each topic in parallel
+          const ttsPromises = topicSections.map(async (section, index) => {
+            try {
+              console.log(`   Generating audio for topic: ${section.topic}`);
+              const audioData = await generateTTS(section.summary, selectedVoice, playbackRate);
+              section.audioUrl = audioData.audioUrl;
+              console.log(`   ✅ Audio generated for ${section.topic}`);
+            } catch (ttsError) {
+              console.error(`   ❌ Failed to generate audio for ${section.topic}:`, ttsError);
+              section.audioUrl = null;
+            }
+          });
+          
+          // Wait for all TTS to complete
+          await Promise.all(ttsPromises);
+          console.log(`🎤 [BATCH TTS] Completed audio generation for all topics`);
+          
+          // Log final audio status
+          console.log(`📊 [BATCH] Topic sections with audio:`);
+          for (const section of topicSections) {
+            console.log(`   - Topic: ${section.topic}, Audio: ${section.audioUrl ? 'YES' : 'NO'}`);
+          }
+        } else {
+          console.log(`⏭️ [BATCH] Skipping TTS generation (skipTTS=${skipTTS})`);
+        }
+
         return {
           items,
           combined: {
             id: `combined-${Date.now()}`,
             title: title,
             summary: combinedText,
-            audioUrl: null,
-            topicSections: topicSections // Include structured topic data for feedback
+            audioUrl: null, // No longer generating combined audio - using per-topic instead
+            topicSections: topicSections // Include structured topic data with audio
           },
         };
       })
