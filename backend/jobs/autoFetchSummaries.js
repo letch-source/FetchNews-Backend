@@ -8,7 +8,6 @@
 const cron = require('node-cron');
 const User = require('../models/User');
 const { fetchMultipleTopicsFromCache } = require('../services/cachedArticleFetcher');
-const { generateSummaryWithAudio } = require('../services/summaryGenerator');
 
 let isJobRunning = false;
 let lastRunTime = null;
