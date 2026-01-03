@@ -25,7 +25,22 @@ struct TopicFeedView: View {
     
     // Get topic sections from combined summary (My Topics)
     private var myTopicSections: [TopicSection] {
-        vm.combined?.topicSections ?? []
+        let sections = vm.combined?.topicSections ?? []
+        
+        // FALLBACK: If we have a combined summary but no topic sections, create a single section
+        // This happens with historical summaries from before per-topic feature
+        if sections.isEmpty, let combined = vm.combined {
+            print("📱 Creating fallback topic section for legacy summary (no per-topic data)")
+            return [TopicSection(
+                id: combined.id,
+                topic: "Your News",
+                summary: combined.summary,
+                articles: [],
+                audioUrl: combined.audioUrl
+            )]
+        }
+        
+        return sections
     }
     
     private var allTopics: [TopicSection] {
@@ -63,12 +78,16 @@ struct TopicFeedView: View {
         }) {
             aiAssistantSheet
         }
-        .task {
+        .task(id: "loadInitialData") {
             await loadInitialData()
         }
         .onChange(of: vm.combined?.id) { _, _ in
             Task {
                 await checkIfSaved()
+                // Reload recommended topics if summary changed
+                if myTopicSections.isEmpty {
+                    await loadRecommendedTopics()
+                }
             }
         }
         .onChange(of: currentPageIndex) { oldValue, newValue in
@@ -82,6 +101,7 @@ struct TopicFeedView: View {
             loadingStateView
         } else if !allTopics.isEmpty {
             // Main feed with vertical paging (shows user topics + recommended topics)
+            let _ = print("📱 Showing feed with \(myTopicSections.count) my topics + \(recommendedTopics.count) recommended topics")
                     TabView(selection: $currentPageIndex) {
                         ForEach(Array(allTopics.enumerated()), id: \.element.id) { index, topicSection in
                             VerticalTopicPageView(
@@ -201,6 +221,9 @@ struct TopicFeedView: View {
     
     @ViewBuilder
     private var emptyStateView: some View {
+        let _ = print("📱 Empty state - Loading: predefined=\(isLoadingPredefinedTopics), recommended=\(isLoadingRecommended)")
+        let _ = print("   Unselected topics count: \(unselectedTopics.count)")
+        let _ = print("   Custom topics count: \(vm.customTopics.count)")
         if isLoadingPredefinedTopics || isLoadingRecommended {
             VStack(spacing: 24) {
                 ProgressView()
@@ -209,6 +232,7 @@ struct TopicFeedView: View {
             }
         } else if !unselectedTopics.isEmpty {
             // Topic discovery feed
+            let _ = print("📱 Showing topic discovery with \(unselectedTopics.count) topics")
             TabView(selection: $discoveryTopicIndex) {
                 ForEach(discoveryTopicsList, id: \.topic) { item in
                     TopicDiscoveryCard(
@@ -230,10 +254,38 @@ struct TopicFeedView: View {
         } else {
             // Final fallback if no topics available
             VStack(spacing: 24) {
-                ProgressView()
-                Text("Loading...")
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 60))
+                    .foregroundColor(.orange)
+                
+                Text("No Topics Available")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                
+                Text("We couldn't load any topics to show you. Please check your internet connection and try again.")
+                    .font(.body)
                     .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+                
+                Button(action: {
+                    Task {
+                        await loadInitialData()
+                    }
+                }) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Retry")
+                            .fontWeight(.semibold)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 16)
+                    .background(Color.blue)
+                    .cornerRadius(12)
+                }
             }
+            .padding()
         }
     }
     
@@ -319,9 +371,16 @@ struct TopicFeedView: View {
     // MARK: - Helper Functions
     
     private func loadInitialData() async {
+        print("📱 TopicFeedView: Loading initial data...")
+        print("   Current state: myTopics=\(myTopicSections.count), recommended=\(recommendedTopics.count)")
+        print("   Combined summary: \(vm.combined != nil ? "exists" : "nil")")
+        print("   Authentication: \(ApiClient.isAuthenticated ? "YES" : "NO")")
+        print("   User: \(authVM.currentUser?.email ?? "none")")
         await checkIfSaved()
         await loadRecommendedTopics()
         await loadPredefinedTopicsForDiscovery()
+        print("📱 TopicFeedView: Initial data load complete")
+        print("   Final state: myTopics=\(myTopicSections.count), recommended=\(recommendedTopics.count), discovery=\(unselectedTopics.count)")
     }
     
     private func handleAIAssistantDismiss() {
@@ -348,25 +407,46 @@ struct TopicFeedView: View {
     private func loadRecommendedTopics() async {
         // Load recommended topics to show on homepage
         // Don't guard on myTopicSections - we want to show recommended even if user hasn't fetched their own
-        guard recommendedTopics.isEmpty else { return }
-        guard !isLoadingRecommended else { return }
+        guard recommendedTopics.isEmpty else { 
+            print("📱 Skipping recommended topics load - already have \(recommendedTopics.count) topics")
+            return 
+        }
+        guard !isLoadingRecommended else { 
+            print("📱 Skipping recommended topics load - already loading")
+            return 
+        }
         
+        print("📱 Loading recommended topics...")
         await MainActor.run {
             isLoadingRecommended = true
         }
         
         do {
+            // Add a small delay to ensure view is stable before making request
+            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+            
             let recommended = try await ApiClient.getRecommendedTopics()
             await MainActor.run {
                 self.recommendedTopics = recommended
                 self.isLoadingRecommended = false
                 print("✅ Loaded \(recommended.count) recommended topics")
+                if recommended.isEmpty {
+                    print("⚠️ Warning: Recommended topics array is empty - backend may need data")
+                }
             }
         } catch {
             await MainActor.run {
                 self.isLoadingRecommended = false
             }
-            print("⚠️ Failed to load recommended topics: \(error)")
+            // Only log non-cancellation errors
+            if (error as NSError).code != NSURLErrorCancelled {
+                print("❌ Failed to load recommended topics: \(error)")
+                if let networkError = error as? NetworkError {
+                    print("   Network error details: \(networkError)")
+                }
+            } else {
+                print("⚠️ Recommended topics request was cancelled (view may have updated)")
+            }
         }
     }
     
@@ -483,23 +563,41 @@ struct TopicFeedView: View {
     }
     
     private func loadPredefinedTopicsForDiscovery() async {
-        guard predefinedTopics.isEmpty else { return }
+        guard predefinedTopics.isEmpty else { 
+            print("📱 Skipping predefined topics load - already have \(predefinedTopics.count) categories")
+            return 
+        }
         
+        print("📱 Loading predefined topics for discovery...")
         await MainActor.run {
             isLoadingPredefinedTopics = true
         }
         
         do {
+            // Add a small delay to ensure view is stable before making request
+            try? await Task.sleep(nanoseconds: 150_000_000) // 0.15 seconds
+            
             let response = try await ApiClient.getPredefinedTopics()
             await MainActor.run {
                 self.predefinedTopics = response.categories
                 self.isLoadingPredefinedTopics = false
+                print("✅ Loaded \(response.categories.count) predefined topic categories")
+                let totalTopics = response.categories.flatMap { $0.topics }.count
+                print("   Total topics available: \(totalTopics)")
             }
         } catch {
             await MainActor.run {
                 self.isLoadingPredefinedTopics = false
             }
-            print("⚠️ Failed to load predefined topics: \(error)")
+            // Only log non-cancellation errors
+            if (error as NSError).code != NSURLErrorCancelled {
+                print("❌ Failed to load predefined topics: \(error)")
+                if let networkError = error as? NetworkError {
+                    print("   Network error details: \(networkError)")
+                }
+            } else {
+                print("⚠️ Predefined topics request was cancelled (view may have updated)")
+            }
         }
     }
     

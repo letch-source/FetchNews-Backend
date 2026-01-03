@@ -2791,11 +2791,13 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       if (result.summary) {
         summariesWithTopics.push({ summary: result.summary, topic: topic });
         
-        // Store structured topic section
+        // Store structured topic section (audio will be added later)
         topicSections.push({
+          id: `topic-${topic.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}-${i}`,
           topic: topic,
           summary: result.summary,
           articles: result.sourceItems,
+          audioUrl: null, // Will be generated below if skipTTS is false
           metadata: result.metadata
         });
       }
@@ -2891,6 +2893,32 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     // Generate a better title based on topics
     let title = await generateCatchyTitle(topics);
 
+    // Generate TTS audio for each topic section (unless skipTTS is true)
+    const skipTTS = req.query.noTts === '1' || req.body.skipTTS === true;
+    const selectedVoice = req.user?.selectedVoice || 'alloy';
+    const playbackRate = req.user?.playbackRate || 1.0;
+    
+    if (!skipTTS && topicSections.length > 0) {
+      console.log(`🎤 [PER-TOPIC TTS] Generating audio for ${topicSections.length} topics...`);
+      
+      // Generate TTS for each topic in parallel
+      const ttsPromises = topicSections.map(async (section, index) => {
+        try {
+          console.log(`   Generating audio for topic: ${section.topic}`);
+          const audioData = await generateTTS(section.summary, selectedVoice, playbackRate);
+          section.audioUrl = audioData.audioUrl;
+          console.log(`   ✅ Audio generated for ${section.topic}`);
+        } catch (ttsError) {
+          console.error(`   ❌ Failed to generate audio for ${section.topic}:`, ttsError);
+          section.audioUrl = null;
+        }
+      });
+      
+      // Wait for all TTS to complete
+      await Promise.all(ttsPromises);
+      console.log(`🎤 [PER-TOPIC TTS] Completed audio generation for all topics`);
+    }
+
     // Send notification if user is not in app and has device token (after response is sent)
     // Check appInForeground from query params or body (defaults to true for backward compatibility)
     const appInForeground = req.query.appInForeground !== 'false' && req.body.appInForeground !== false;
@@ -2898,7 +2926,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     // Send response first
     console.log(`📊 [TOPIC FEEDBACK] Sending ${topicSections.length} topic sections`);
     for (const section of topicSections) {
-      console.log(`   - Topic: ${section.topic}, Articles: ${section.articles.length}`);
+      console.log(`   - Topic: ${section.topic}, Articles: ${section.articles.length}, Audio: ${section.audioUrl ? 'YES' : 'NO'}`);
     }
     
     const responseData = {
@@ -2907,8 +2935,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         id: `combined-${Date.now()}`,
         title: title,
         summary: combinedText,
-        audioUrl: null,
-        topicSections: topicSections // Include structured topic data for feedback
+        audioUrl: null, // No longer generating combined audio - using per-topic instead
+        topicSections: topicSections // Include structured topic data with audio
       },
     };
     
