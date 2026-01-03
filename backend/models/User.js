@@ -71,6 +71,30 @@ const userSchema = new mongoose.Schema({
       topic: String
     }]
   }],
+  savedSummaries: [{
+    id: String,
+    title: String,
+    summary: String,
+    topics: [String],
+    length: String,
+    timestamp: {
+      type: Date,
+      default: Date.now
+    },
+    savedAt: {
+      type: Date,
+      default: Date.now
+    },
+    audioUrl: String,
+    sources: [{
+      id: String,
+      title: String,
+      summary: String,
+      source: String,
+      url: String,
+      topic: String
+    }]
+  }],
   resetPasswordToken: {
     type: String,
     default: null
@@ -356,6 +380,71 @@ userSchema.methods.clearSummaryHistory = async function() {
   this.summaryHistory = [];
   await this.save();
   return this.summaryHistory;
+};
+
+// Saved summaries methods
+userSchema.methods.saveSummary = async function(summaryData) {
+  // Normalize sources to ensure consistent format
+  let normalizedSources = null;
+  if (summaryData.sources) {
+    normalizedSources = summaryData.sources
+      .map(source => {
+        if (typeof source === 'string') {
+          return { source };
+        }
+        return source;
+      })
+      .filter(source => source !== null);
+  }
+  
+  const savedEntry = {
+    id: summaryData.id || Date.now().toString(),
+    title: summaryData.title,
+    summary: summaryData.summary,
+    topics: summaryData.topics || [],
+    length: summaryData.length || 'short',
+    timestamp: summaryData.timestamp || new Date(),
+    savedAt: new Date(),
+    audioUrl: summaryData.audioUrl,
+    sources: normalizedSources
+  };
+  
+  // Check if already saved
+  const alreadySaved = this.savedSummaries.some(s => s.id === savedEntry.id);
+  if (alreadySaved) {
+    return this.savedSummaries;
+  }
+  
+  // Add to beginning of array (most recent first)
+  this.savedSummaries.unshift(savedEntry);
+  
+  // Keep only last 100 saved summaries to prevent database bloat
+  if (this.savedSummaries.length > 100) {
+    this.savedSummaries = this.savedSummaries.slice(0, 100);
+  }
+  
+  await this.save();
+  return this.savedSummaries;
+};
+
+userSchema.methods.unsaveSummary = async function(summaryId) {
+  this.savedSummaries = this.savedSummaries.filter(s => s.id !== summaryId);
+  await this.save();
+  return this.savedSummaries;
+};
+
+userSchema.methods.getSavedSummaries = function() {
+  return this.savedSummaries || [];
+};
+
+userSchema.methods.isSummarySaved = function(summaryId) {
+  return this.savedSummaries.some(s => s.id === summaryId);
+};
+
+userSchema.methods.clearSavedSummaries = async function() {
+  this.savedSummaries = [];
+  await this.save();
+  return this.savedSummaries;
 };
 
 // Update subscription status

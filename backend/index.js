@@ -19,6 +19,7 @@ const authRoutes = require("./routes/auth");
 const subscriptionRoutes = require("./routes/subscriptions");
 const customTopicsRoutes = require("./routes/customTopics");
 const summaryHistoryRoutes = require("./routes/summaryHistory");
+const savedSummariesRoutes = require("./routes/savedSummaries");
 const adminRoutes = require("./routes/adminActions");
 const preferencesRoutes = require("./routes/preferences");
 const newsSourcesRoutes = require("./routes/newsSources");
@@ -108,6 +109,9 @@ app.use("/api/custom-topics", customTopicsRoutes);
 
 // Summary history routes
 app.use("/api/summary-history", summaryHistoryRoutes);
+
+// Saved summaries routes
+app.use("/api/saved-summaries", savedSummariesRoutes);
 
 // Admin routes
 app.use("/api/admin", adminRoutes);

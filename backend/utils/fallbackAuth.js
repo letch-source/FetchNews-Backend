@@ -46,6 +46,14 @@ function serializeUser(user) {
       timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp
     }));
   }
+  // Handle savedSummaries timestamps
+  if (serialized.savedSummaries && Array.isArray(serialized.savedSummaries)) {
+    serialized.savedSummaries = serialized.savedSummaries.map(entry => ({
+      ...entry,
+      timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp,
+      savedAt: entry.savedAt instanceof Date ? entry.savedAt.toISOString() : entry.savedAt
+    }));
+  }
   return serialized;
 }
 
@@ -70,6 +78,14 @@ function deserializeUser(userData) {
     user.summaryHistory = user.summaryHistory.map(entry => ({
       ...entry,
       timestamp: entry.timestamp ? new Date(entry.timestamp) : new Date()
+    }));
+  }
+  // Handle savedSummaries timestamps
+  if (user.savedSummaries && Array.isArray(user.savedSummaries)) {
+    user.savedSummaries = user.savedSummaries.map(entry => ({
+      ...entry,
+      timestamp: entry.timestamp ? new Date(entry.timestamp) : new Date(),
+      savedAt: entry.savedAt ? new Date(entry.savedAt) : new Date()
     }));
   }
   // Ensure selectedTopics is always an array (for users created before this field existed)
@@ -212,6 +228,7 @@ const fallbackAuth = {
       subscriptionExpiresAt: null,
       customTopics: [],
       summaryHistory: [],
+      savedSummaries: [],
       emailVerified: true,
       selectedVoice: 'alloy',
       playbackRate: 1.0,
@@ -315,6 +332,72 @@ const fallbackAuth = {
     user.updatedAt = new Date();
     saveUsers(); // Persist to disk
     return user.summaryHistory;
+  },
+  
+  // Saved summaries methods
+  async saveSummary(user, summaryData) {
+    if (!user.savedSummaries) {
+      user.savedSummaries = [];
+    }
+    
+    const savedEntry = {
+      id: summaryData.id || Date.now().toString(),
+      title: summaryData.title,
+      summary: summaryData.summary,
+      topics: summaryData.topics || [],
+      length: summaryData.length || 'short',
+      timestamp: summaryData.timestamp || new Date(),
+      savedAt: new Date(),
+      audioUrl: summaryData.audioUrl,
+      sources: summaryData.sources || []
+    };
+    
+    // Check if already saved
+    const alreadySaved = user.savedSummaries.some(s => s.id === savedEntry.id);
+    if (alreadySaved) {
+      return user.savedSummaries;
+    }
+    
+    // Add to beginning of array (most recent first)
+    user.savedSummaries.unshift(savedEntry);
+    
+    // Keep only last 100 saved summaries to prevent bloat
+    if (user.savedSummaries.length > 100) {
+      user.savedSummaries = user.savedSummaries.slice(0, 100);
+    }
+    
+    user.updatedAt = new Date();
+    saveUsers(); // Persist to disk
+    return user.savedSummaries;
+  },
+  
+  async unsaveSummary(user, summaryId) {
+    if (!user.savedSummaries) {
+      user.savedSummaries = [];
+    }
+    
+    user.savedSummaries = user.savedSummaries.filter(s => s.id !== summaryId);
+    user.updatedAt = new Date();
+    saveUsers(); // Persist to disk
+    return user.savedSummaries;
+  },
+  
+  getSavedSummaries(user) {
+    return user.savedSummaries || [];
+  },
+  
+  isSummarySaved(user, summaryId) {
+    if (!user.savedSummaries) {
+      return false;
+    }
+    return user.savedSummaries.some(s => s.id === summaryId);
+  },
+  
+  async clearSavedSummaries(user) {
+    user.savedSummaries = [];
+    user.updatedAt = new Date();
+    saveUsers(); // Persist to disk
+    return user.savedSummaries;
   },
   
   canFetchNews(user) {
