@@ -39,30 +39,48 @@ struct TopicFeedView: View {
         return allPredefined.filter { !selected.contains($0) }
     }
     
+    // Get limited list for discovery with indices
+    private var discoveryTopicsList: [(index: Int, topic: String)] {
+        let topics = Array(unselectedTopics.prefix(20))
+        return topics.enumerated().map { (index: $0.offset, topic: $0.element) }
+    }
+    
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 Color.darkGreyBackground
                     .ignoresSafeArea()
                 
-                if vm.isBusy || vm.phase != .idle {
-                    // Show loading state
-                    VStack(spacing: 24) {
-                        AnimatedFetchImage()
-                            .frame(width: 120, height: 120)
-                            .clipShape(Circle())
-                            .background(
-                                Circle()
-                                    .fill(Color(.systemGray5))
-                                    .frame(width: 120, height: 120)
-                            )
-                        
-                        Text("Fetching your news!")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.primary)
-                    }
-                } else if !allTopics.isEmpty {
+                mainContentView
+            }
+        }
+        .sheet(item: $showingArticles) { topic in
+            ArticlesSheetView(topicSection: topic)
+                .environmentObject(vm)
+        }
+        .sheet(isPresented: $showAIAssistant, onDismiss: {
+            handleAIAssistantDismiss()
+        }) {
+            aiAssistantSheet
+        }
+        .task {
+            await loadInitialData()
+        }
+        .onChange(of: vm.combined?.id) { _, _ in
+            Task {
+                await checkIfSaved()
+            }
+        }
+        .onChange(of: currentPageIndex) { oldValue, newValue in
+            handlePageChangeIfNeeded(from: oldValue, to: newValue)
+        }
+    }
+    
+    @ViewBuilder
+    private var mainContentView: some View {
+        if vm.isBusy || vm.phase != .idle {
+            loadingStateView
+        } else if !allTopics.isEmpty {
                     // Main feed with vertical paging
                     TabView(selection: $currentPageIndex) {
                         ForEach(Array(allTopics.enumerated()), id: \.element.id) { index, topicSection in
@@ -158,30 +176,45 @@ struct TopicFeedView: View {
                             Spacer()
                         }
                     }
-                } else if vm.combined == nil {
-                    // Empty state - show topic discovery
-                    if isLoadingPredefinedTopics {
-                        VStack(spacing: 24) {
-                            ProgressView()
-                            Text("Loading topics...")
-                                .foregroundColor(.secondary)
-                        }
-                    } else if !unselectedTopics.isEmpty {
+        } else if vm.combined == nil {
+            emptyStateView
+        }
+    }
+    
+    private var loadingStateView: some View {
+        VStack(spacing: 24) {
+            AnimatedFetchImage()
+                .frame(width: 120, height: 120)
+                .clipShape(Circle())
+                .background(
+                    Circle()
+                        .fill(Color(.systemGray5))
+                        .frame(width: 120, height: 120)
+                )
+            
+            Text("Fetching your news!")
+                .font(.title2)
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
+        }
+    }
+    
+    @ViewBuilder
+    private var emptyStateView: some View {
+        if isLoadingPredefinedTopics {
+            VStack(spacing: 24) {
+                ProgressView()
+                Text("Loading topics...")
+                    .foregroundColor(.secondary)
+            }
+        } else if !unselectedTopics.isEmpty {
                         // Topic discovery feed
                         TabView(selection: $discoveryTopicIndex) {
-                            ForEach(Array(unselectedTopics.prefix(20).enumerated()), id: \.element) { index, topic in
+                            ForEach(discoveryTopicsList, id: \.topic) { item in
                                 TopicDiscoveryCard(
-                                    topic: topic,
+                                    topic: item.topic,
                                     onAdd: {
-                                        Task {
-                                            await vm.addCustomTopic(topic)
-                                            // Auto-advance to next topic
-                                            if index < unselectedTopics.count - 1 {
-                                                withAnimation {
-                                                    discoveryTopicIndex = index + 1
-                                                }
-                                            }
-                                        }
+                                        addTopic(item.topic, at: item.index)
                                     },
                                     onFetchAll: {
                                         Task {
@@ -190,124 +223,120 @@ struct TopicFeedView: View {
                                     },
                                     hasSelectedTopics: !vm.customTopics.isEmpty
                                 )
-                                .tag(index)
+                                .tag(item.index)
                             }
                         }
                         .tabViewStyle(.page(indexDisplayMode: .never))
                         .ignoresSafeArea()
                         
-                        // Page indicator
-                        VStack {
-                            Spacer()
-                            HStack(spacing: 4) {
-                                Text("Discover Topics")
-                                    .font(.caption2)
-                                    .foregroundColor(.white.opacity(0.6))
-                                Circle()
-                                    .fill(Color.white.opacity(0.4))
-                                    .frame(width: 3, height: 3)
-                                Text("\(discoveryTopicIndex + 1) of \(min(unselectedTopics.count, 20))")
-                                    .font(.caption2)
-                                    .foregroundColor(.white.opacity(0.6))
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(.ultraThinMaterial)
-                            .clipShape(Capsule())
-                            .padding(.bottom, 100)
-                        }
-                    } else {
-                        // Fallback if no unselected topics available
-                        VStack(spacing: 24) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 60))
-                                .foregroundColor(.green)
-                            
-                            Text("All Set!")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                            
-                            Text("You've selected topics. Fetch news to get started!")
-                                .font(.body)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 40)
-                            
-                            Button(action: {
-                                Task {
-                                    await vm.fetchNews()
-                                }
-                            }) {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "arrow.down.circle.fill")
-                                    Text("Fetch News Now")
-                                        .fontWeight(.semibold)
-                                }
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 32)
-                                .padding(.vertical, 16)
-                                .background(
-                                    LinearGradient(
-                                        colors: [Color.blue, Color.blue.opacity(0.8)],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                                .cornerRadius(12)
-                                .shadow(color: Color.blue.opacity(0.3), radius: 8, x: 0, y: 4)
-                            }
-                        }
-                    }
-                }
-            }
+            // Page indicator
+            discoveryPageIndicator
+        } else {
+            allSetFallbackView
         }
-        .sheet(item: $showingArticles) { topic in
-            ArticlesSheetView(topicSection: topic)
-                .environmentObject(vm)
-        }
-        .sheet(isPresented: $showAIAssistant, onDismiss: {
-            // Resume audio if it was playing before opening assistant
-            if wasPlayingBeforeAssistant && !vm.isPlaying {
-                vm.playPause()
+    }
+    
+    private var discoveryPageIndicator: some View {
+        VStack {
+            Spacer()
+            HStack(spacing: 4) {
+                Text("Discover Topics")
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.6))
+                Circle()
+                    .fill(Color.white.opacity(0.4))
+                    .frame(width: 3, height: 3)
+                Text("\(discoveryTopicIndex + 1) of \(min(unselectedTopics.count, 20))")
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.6))
             }
-            wasPlayingBeforeAssistant = false
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+            .clipShape(Capsule())
+            .padding(.bottom, 100)
+        }
+    }
+    
+    private var allSetFallbackView: some View {
+        VStack(spacing: 24) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 60))
+                .foregroundColor(.green)
             
-            // Force UI refresh to restart time observer updates
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 second
-                vm.objectWillChange.send()
-            }
-        }) {
-            if let combined = vm.combined {
-                AIAssistantView(
-                    fetchId: combined.id,
-                    fetchSummary: combined.summary,
-                    fetchTopics: Array(vm.lastFetchedTopics)
-                )
-                .environmentObject(vm)
-                .environmentObject(authVM)
-            }
-        }
-        .task {
-            // Check if current summary is saved
-            await checkIfSaved()
-            // Load recommended topics
-            await loadRecommendedTopics()
-            // Load predefined topics for discovery
-            await loadPredefinedTopicsForDiscovery()
-        }
-        .onChange(of: vm.combined?.id) { _, _ in
-            // Check save status when summary changes
-            Task {
-                await checkIfSaved()
-            }
-        }
-        .onChange(of: currentPageIndex) { oldValue, newValue in
-            // Load recommended topics when user reaches the last "My Topic"
-            if newValue >= myTopicSections.count - 1 && recommendedTopics.isEmpty && !isLoadingRecommended {
+            Text("All Set!")
+                .font(.title2)
+                .fontWeight(.semibold)
+            
+            Text("You've selected topics. Fetch news to get started!")
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+            
+            Button(action: {
                 Task {
-                    await loadRecommendedTopics()
+                    await vm.fetchNews()
                 }
+            }) {
+                HStack(spacing: 12) {
+                    Image(systemName: "arrow.down.circle.fill")
+                    Text("Fetch News Now")
+                        .fontWeight(.semibold)
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 32)
+                .padding(.vertical, 16)
+                .background(
+                    LinearGradient(
+                        colors: [Color.blue, Color.blue.opacity(0.8)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .cornerRadius(12)
+                .shadow(color: Color.blue.opacity(0.3), radius: 8, x: 0, y: 4)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var aiAssistantSheet: some View {
+        if let combined = vm.combined {
+            AIAssistantView(
+                fetchId: combined.id,
+                fetchSummary: combined.summary,
+                fetchTopics: Array(vm.lastFetchedTopics)
+            )
+            .environmentObject(vm)
+            .environmentObject(authVM)
+        }
+    }
+    
+    // MARK: - Helper Functions
+    
+    private func loadInitialData() async {
+        await checkIfSaved()
+        await loadRecommendedTopics()
+        await loadPredefinedTopicsForDiscovery()
+    }
+    
+    private func handleAIAssistantDismiss() {
+        if wasPlayingBeforeAssistant && !vm.isPlaying {
+            vm.playPause()
+        }
+        wasPlayingBeforeAssistant = false
+        
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            vm.objectWillChange.send()
+        }
+    }
+    
+    private func handlePageChangeIfNeeded(from oldValue: Int, to newValue: Int) {
+        if newValue >= myTopicSections.count - 1 && recommendedTopics.isEmpty && !isLoadingRecommended {
+            Task {
+                await loadRecommendedTopics()
             }
         }
     }
@@ -467,6 +496,18 @@ struct TopicFeedView: View {
                 self.isLoadingPredefinedTopics = false
             }
             print("⚠️ Failed to load predefined topics: \(error)")
+        }
+    }
+    
+    private func addTopic(_ topic: String, at index: Int) {
+        Task {
+            await vm.addCustomTopic(topic)
+            // Auto-advance to next topic
+            if index < discoveryTopicsList.count - 1 {
+                withAnimation {
+                    discoveryTopicIndex = index + 1
+                }
+            }
         }
     }
 }
