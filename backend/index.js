@@ -3528,6 +3528,58 @@ function splitTextIntoChunks(text, maxChunkSize = 4000) {
 }
 
 // --- TTS endpoint (OpenAI) ---
+// --- Welcome Message Endpoint ---
+app.post("/api/generate-welcome", optionalAuth, async (req, res) => {
+  try {
+    const user = req.user;
+    const userName = user?.name || "there";
+    
+    // Get current date and time
+    const now = new Date();
+    const hour = now.getHours();
+    
+    // Determine time of day
+    let timeOfDay;
+    if (hour < 12) {
+      timeOfDay = "morning";
+    } else if (hour < 17) {
+      timeOfDay = "afternoon";
+    } else {
+      timeOfDay = "evening";
+    }
+    
+    // Format date (e.g., "Monday, January 4th")
+    const options = { weekday: 'long', month: 'long', day: 'numeric' };
+    const formattedDate = now.toLocaleDateString('en-US', options);
+    
+    // Create welcome message
+    const welcomeText = `Hello ${userName}, here's your ${timeOfDay} news for ${formattedDate}.`;
+    
+    console.log(`📢 [WELCOME] Generating welcome message for user: ${userName}`);
+    console.log(`   Message: "${welcomeText}"`);
+    
+    // Generate TTS audio for welcome message
+    const selectedVoice = user?.selectedVoice || 'alloy';
+    const playbackRate = user?.playbackRate || 1.0;
+    const baseUrl = req.protocol + '://' + req.get('host');
+    
+    const audioData = await generateTTS(welcomeText, selectedVoice, playbackRate, baseUrl);
+    
+    // Return welcome section
+    res.json({
+      id: `welcome-${Date.now()}`,
+      topic: "Welcome",
+      summary: welcomeText,
+      articles: [],
+      audioUrl: audioData.audioUrl
+    });
+    
+  } catch (error) {
+    console.error('Failed to generate welcome message:', error);
+    res.status(500).json({ error: 'Failed to generate welcome message' });
+  }
+});
+
 app.post("/api/tts", async (req, res) => {
   try {
     const { text, voice = "alloy", speed = 1.0 } = req.body || {};
