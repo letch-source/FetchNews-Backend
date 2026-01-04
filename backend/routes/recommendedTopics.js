@@ -12,14 +12,9 @@ router.get('/', authenticateToken, async (req, res) => {
     const user = req.user;
     
     // Lazy require to avoid circular dependencies
-    const { 
-      fetchArticlesForTopic, 
-      summarizeArticles, 
-      generateTTS,
-      filterRelevantArticles,
-      isUpliftingNews,
-      prioritizeArticlesByFeedback
-    } = require('../index');
+    const { generateTTS } = require('../index');
+    const { getMultipleTopicSummaries } = require('../services/topicSummaryService');
+    const { fetchArticlesFromCache } = require('../services/cachedArticleFetcher');
     
     console.log(`[RECOMMENDED] Generating recommendations for user ${user.email}`);
     
@@ -45,93 +40,68 @@ router.get('/', authenticateToken, async (req, res) => {
     
     console.log(`[RECOMMENDED] Generated ${recommendedTopics.length} recommendations: ${recommendedTopics.join(', ')}`);
     
-    // Process each recommended topic (similar to scheduled summaries)
+    // Get cached summaries for all recommended topics
+    console.log(`[RECOMMENDED] Fetching cached summaries for ${recommendedTopics.length} topics`);
+    const topicResults = await getMultipleTopicSummaries(recommendedTopics, {
+      wordCount,
+      country: userCountry,
+      goodNewsOnly,
+      excludedSources: preferences.excludedNewsSources || []
+    });
+    
+    // Build topic sections with audio
     const topicSections = [];
     
-    for (const topic of recommendedTopics) {
+    for (const result of topicResults) {
       try {
-        const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
-        
-        // Build geo data
-        let geoData = null;
-        if (location && typeof location === 'string') {
-          const locationStr = String(location).trim();
-          if (locationStr) {
-            const parts = locationStr.split(',').map(p => p.trim());
-            geoData = {
-              city: parts[0] || "",
-              region: parts[1] || "",
-              country: userCountry.toUpperCase() || "US",
-              countryCode: userCountry.toLowerCase() || "us"
-            };
-          }
-        } else {
-          geoData = {
-            city: "",
-            region: "",
-            country: userCountry.toUpperCase() || "US",
-            countryCode: userCountry.toLowerCase() || "us"
-          };
-        }
-        
-        // Fetch articles
-        let { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, []);
-        
-        // Apply user feedback personalization
-        if (mongoose.connection.readyState === 1) {
-          articles = prioritizeArticlesByFeedback(articles, user, topic);
-        }
-        
-        // Filter relevant articles
-        let relevant = filterRelevantArticles(topic, geoData, articles, perTopic);
-        
-        // Apply uplifting news filter if enabled
-        if (goodNewsOnly) {
-          relevant = relevant.filter(isUpliftingNews);
-        }
-        
-        if (relevant.length === 0) {
-          console.log(`[RECOMMENDED] No relevant articles found for topic: ${topic}`);
+        if (!result.summary || result.articleCount === 0) {
+          console.log(`[RECOMMENDED] Skipping topic ${result.topic} - no summary or articles`);
           continue;
         }
         
-        // Generate summary
-        const summaryText = await summarizeArticles(topic, geoData, relevant, wordCount, goodNewsOnly, user);
+        console.log(`[RECOMMENDED] Processing topic: ${result.topic} (${result.fromCache ? 'cached' : 'generated'})`);
         
-        // Generate TTS audio
-        let audioUrl = null;
+        // Fetch articles for display
+        let articles = [];
         try {
-          const audioData = await generateTTS(summaryText, selectedVoice, playbackRate);
-          audioUrl = audioData.audioUrl;
-          console.log(`[RECOMMENDED] Generated audio for topic: ${topic}`);
-        } catch (audioErr) {
-          console.error(`[RECOMMENDED] Failed to generate audio for topic ${topic}:`, audioErr);
+          const { articles: cachedArticles } = await fetchArticlesFromCache(result.topic, null, 5, preferences.excludedNewsSources || []);
+          articles = cachedArticles.slice(0, 5).map((a, idx) => ({
+            id: `${result.topic}-${idx}-${Date.now()}`,
+            title: a.title || "",
+            summary: (a.description || "").slice(0, 180),
+            source: typeof a.source === 'object' ? (a.source?.name || a.source?.id || "") : (a.source || ""),
+            url: a.url || "",
+            topic: result.topic,
+            imageUrl: a.urlToImage || ""
+          }));
+        } catch (fetchErr) {
+          console.warn(`[RECOMMENDED] Could not fetch articles for ${result.topic}:`, fetchErr.message);
         }
         
-        // Create source items
-        const sourceItems = relevant.map((a, idx) => ({
-          id: `${topic}-${idx}-${Date.now()}`,
-          title: a.title || "",
-          summary: (a.description || a.title || "").replace(/\s+/g, " ").trim().slice(0, 180),
-          source: a.source || "",
-          url: a.url || "",
-          topic,
-          imageUrl: a.urlToImage || "",
-        }));
+        // Generate TTS audio for the summary
+        let audioUrl = null;
+        try {
+          const audioData = await generateTTS(result.summary, selectedVoice, playbackRate);
+          audioUrl = audioData.audioUrl;
+          console.log(`[RECOMMENDED] Generated audio for topic: ${result.topic}`);
+        } catch (audioErr) {
+          console.error(`[RECOMMENDED] Failed to generate audio for topic ${result.topic}:`, audioErr);
+        }
         
         // Add to topic sections
         topicSections.push({
-          id: `recommended-${topic}-${Date.now()}`,
-          topic: topic,
-          summary: summaryText,
+          id: `recommended-${result.topic}-${Date.now()}`,
+          topic: result.topic,
+          summary: result.summary,
           audioUrl: audioUrl,
-          articles: sourceItems
+          articles: articles,
+          metadata: result.metadata || {}
         });
         
-        console.log(`[RECOMMENDED] Successfully processed topic: ${topic} (${sourceItems.length} articles)`);
+        console.log(`[RECOMMENDED] Successfully processed topic: ${result.topic} (${articles.length} articles)`);
         
       } catch (topicErr) {
-        console.error(`[RECOMMENDED] Error processing topic ${topic}:`, topicErr);
+        console.error(`[RECOMMENDED] Error processing topic ${result.topic}:`, topicErr);
         // Continue with other topics even if one fails
       }
     }

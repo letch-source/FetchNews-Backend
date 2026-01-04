@@ -1,7 +1,8 @@
 const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 const { fetchArticlesFromCache, getCacheHealth } = require('../services/cachedArticleFetcher');
-const { summarizeArticles, combineTopicSummaries, addIntroAndOutro, filterRelevantArticles, isUpliftingNews } = require('../index');
+const { getMultipleTopicSummaries } = require('../services/topicSummaryService');
+const { combineTopicSummaries, addIntroAndOutro } = require('../index');
 
 const router = express.Router();
 
@@ -97,24 +98,28 @@ router.post('/', async (req, res) => {
     const summariesWithTopics = [];
     const allArticles = [];
     
-    console.log('🔍 Fetching articles from cache...\n');
+    console.log('🔍 Getting cached summaries for topics...\n');
     
-    for (const topic of allTopics) {
+    // Get all topic summaries using the new cached system
+    const topicResults = await getMultipleTopicSummaries(allTopics, {
+      wordCount,
+      country: 'us',
+      goodNewsOnly,
+      excludedSources,
+      forceRefresh: false // Use cache if available
+    });
+    
+    // Process results
+    for (const result of topicResults) {
       try {
-        console.log(`  📰 Topic: "${topic}"`);
+        console.log(`  📰 Topic: "${result.topic}"`);
+        console.log(`     Status: ${result.fromCache ? '✅ From cache' : '🔄 Generated new'}`);
+        console.log(`     Articles: ${result.articleCount || 0}`);
         
-        // Determine articles per topic based on word count
-        const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
-        
-        // Fetch from cache
-        const { articles } = await fetchArticlesFromCache(topic, null, perTopic, excludedSources);
-        
-        console.log(`     Fetched: ${articles.length} articles from cache`);
-        
-        if (articles.length === 0) {
-          console.log(`     ⚠️  No cached articles found for "${topic}"`);
+        if (!result.summary || result.articleCount === 0) {
+          console.log(`     ⚠️  No summary or articles`);
           results.push({
-            topic,
+            topic: result.topic,
             status: 'no_articles',
             articlesFound: 0,
             summary: null
@@ -122,43 +127,24 @@ router.post('/', async (req, res) => {
           continue;
         }
         
-        // Filter relevant articles (existing logic)
-        let relevant = filterRelevantArticles(topic, null, articles, perTopic);
-        console.log(`     Relevant: ${relevant.length} articles after filtering`);
+        // Fetch articles for display
+        const { articles } = await fetchArticlesFromCache(result.topic, null, 5, excludedSources);
         
-        // Apply uplifting news filter if enabled
-        if (goodNewsOnly) {
-          relevant = relevant.filter(isUpliftingNews);
-          console.log(`     Uplifting: ${relevant.length} articles after filtering`);
-        }
+        console.log(`     Summary: ${result.summary.length} chars`);
         
-        if (relevant.length === 0) {
-          console.log(`     ⚠️  No relevant articles after filtering`);
-          results.push({
-            topic,
-            status: 'no_relevant_articles',
-            articlesFound: articles.length,
-            summary: null
-          });
-          continue;
-        }
-        
-        // Generate summary (pass null for user since this is a test)
-        console.log(`     🤖 Generating summary...`);
-        const summary = await summarizeArticles(topic, null, relevant, wordCount, goodNewsOnly, null);
-        console.log(`     ✅ Summary generated (${summary.length} chars)`);
-        
-        summariesWithTopics.push({ summary, topic });
+        summariesWithTopics.push({ summary: result.summary, topic: result.topic });
         
         // Store result
         results.push({
-          topic,
+          topic: result.topic,
           status: 'success',
-          articlesFound: articles.length,
-          relevantArticles: relevant.length,
-          summaryLength: summary.length,
-          summary: summary,
-          articles: relevant.map(a => ({
+          articlesFound: result.articleCount,
+          relevantArticles: result.articleCount,
+          summaryLength: result.summary.length,
+          summary: result.summary,
+          fromCache: result.fromCache,
+          metadata: result.metadata || {},
+          articles: articles.slice(0, 5).map(a => ({
             title: a.title,
             source: a.source?.name || a.source,
             url: a.url,
@@ -166,12 +152,12 @@ router.post('/', async (req, res) => {
           }))
         });
         
-        allArticles.push(...relevant);
+        allArticles.push(...(result.sourceArticles || []));
         
       } catch (topicError) {
-        console.error(`     ❌ Error processing topic "${topic}":`, topicError.message);
+        console.error(`     ❌ Error processing topic "${result.topic}":`, topicError.message);
         results.push({
-          topic,
+          topic: result.topic,
           status: 'error',
           error: topicError.message
         });

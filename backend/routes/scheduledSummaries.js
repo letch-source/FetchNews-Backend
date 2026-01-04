@@ -750,7 +750,9 @@ router.post('/:id/execute', authenticateToken, async (req, res) => {
 async function executeScheduledSummary(user, summary) {
   try {
     // Lazy require to avoid circular dependency with index.js
-    const { fetchArticlesForTopic, summarizeArticles, addIntroAndOutro, combineTopicSummaries, filterRelevantArticles, isUpliftingNews } = require('../index');
+    const { addIntroAndOutro, combineTopicSummaries } = require('../index');
+    const { getMultipleTopicSummaries } = require('../services/topicSummaryService');
+    const { fetchArticlesFromCache } = require('../services/cachedArticleFetcher');
     
     console.log(`[SCHEDULER] Executing scheduled fetch "${summary.name}" for user ${user.email}`);
     
@@ -804,106 +806,64 @@ async function executeScheduledSummary(user, summary) {
     const items = [];
     const summariesWithTopics = [];
     
-    // Helper function to process a single topic (extracted for parallelization)
-    async function processTopic(topic) {
+    // Get cached summaries for all topics using the new system
+    console.log(`[SCHEDULER] Getting cached summaries for ${allTopics.length} topics...`);
+    const topicResults = await getMultipleTopicSummaries(allTopics, {
+      wordCount,
+      country: userCountry,
+      goodNewsOnly,
+      excludedSources
+    });
+    
+    console.log(`[SCHEDULER] Retrieved ${topicResults.length} topic summaries`);
+    
+    // Convert topic results to the expected format
+    const processedResults = await Promise.all(topicResults.map(async (result) => {
       try {
-        const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
-        
-        // Handle location and country preference
-        let geoData = null;
-        if (location && typeof location === 'string') {
-          const locationStr = String(location).trim();
-          if (locationStr) {
-            const parts = locationStr.split(',').map(p => p.trim());
-            geoData = {
-              city: parts[0] || "",
-              region: parts[1] || "",
-              country: userCountry.toUpperCase() || "US",
-              countryCode: userCountry.toLowerCase() || "us"
-            };
-          }
-        } else {
-          // Even without location, use the user's country preference
-          geoData = {
-            city: "",
-            region: "",
-            country: userCountry.toUpperCase() || "US",
-            countryCode: userCountry.toLowerCase() || "us"
+        if (!result.summary || result.articleCount === 0) {
+          console.log(`[SCHEDULER] No summary or articles for topic ${result.topic}`);
+          return {
+            summary: null,
+            sourceItems: []
           };
         }
         
-        // Debug: Log country information for scheduled summaries
-        console.log(`[SCHEDULER] Topic: ${topic}, Country: ${geoData.countryCode || geoData.country || 'none'}, GeoData:`, JSON.stringify(geoData));
+        console.log(`[SCHEDULER] Topic ${result.topic}: ${result.fromCache ? 'cached' : 'generated'}, ${result.articleCount} articles`);
         
-        // Fetch articles for the topic
-        let { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
-        
-        // Filter out excluded sources (if any)
-        if (excludedSources && excludedSources.length > 0) {
-          const { normalizeSourceName } = require('../index');
-          const excludedSet = new Set(excludedSources.map(s => s.toLowerCase()));
-          articles = articles.filter(article => {
-            const articleSource = normalizeSourceName(article.source);
-            return !excludedSet.has(articleSource);
-          });
-          console.log(`[SCHEDULER] Filtered out excluded sources, ${articles.length} articles remaining`);
-        }
-        
-        // For US users: post-filter as fallback (API-level filtering should handle most cases)
-        if (userCountry && userCountry.toLowerCase() === 'us' && selectedSources.length === 0) {
-          // Only post-filter if we didn't use API-level filtering (shouldn't happen, but safety check)
-          const { isSourceAllowedForUS } = require('../index');
-          const beforeCount = articles.length;
-          articles = articles.filter(article => {
-            return isSourceAllowedForUS(article.source);
-          });
-          console.log(`[SCHEDULER US FILTER FALLBACK] Post-filtered to allowed US sources: ${beforeCount} -> ${articles.length} articles`);
-        }
-        
-        // Filter relevant articles
-        let relevant = filterRelevantArticles(topic, geoData, articles, perTopic);
-        
-        // Apply uplifting news filter if enabled
-        if (goodNewsOnly) {
-          relevant = relevant.filter(isUpliftingNews);
-        }
-        
-        // Generate summary
-        const summaryText = await summarizeArticles(topic, geoData, relevant, wordCount, goodNewsOnly, user);
+        // Fetch articles for display
+        const { articles } = await fetchArticlesFromCache(result.topic, null, 5, excludedSources);
         
         // Create source items
-        const sourceItems = relevant.map((a, idx) => ({
-          id: `${topic}-${idx}-${Date.now()}`,
+        const sourceItems = articles.slice(0, 5).map((a, idx) => ({
+          id: `${result.topic}-${idx}-${Date.now()}`,
           title: a.title || "",
-          summary: (a.description || a.title || "").replace(/\s+/g, " ").trim().slice(0, 180),
-          source: a.source || "",
+          summary: (a.description || "").slice(0, 180),
+          source: typeof a.source === 'object' ? (a.source?.name || a.source?.id || "") : (a.source || ""),
           url: a.url || "",
-          topic,
+          topic: result.topic,
           imageUrl: a.urlToImage || "",
         }));
         
         return {
-          summary: summaryText,
-          sourceItems
+          summary: result.summary,
+          sourceItems,
+          metadata: result.metadata || {}
         };
       } catch (innerErr) {
-        console.error(`[SCHEDULER] Error processing topic ${topic} for user ${user.email}:`, innerErr);
+        console.error(`[SCHEDULER] Error processing topic ${result.topic} for user ${user.email}:`, innerErr);
         return {
           summary: null,
           sourceItems: []
         };
       }
-    }
-    
-    // Process all topics in parallel for better performance
-    const topicResults = await Promise.all(allTopics.map(topic => processTopic(topic)));
+    }));
     
     // Build topic sections with IDs (for per-topic display)
     const topicSections = [];
     
     // Combine results from parallel processing, tracking which summary belongs to which topic
-    for (let i = 0; i < topicResults.length; i++) {
-      const result = topicResults[i];
+    for (let i = 0; i < processedResults.length; i++) {
+      const result = processedResults[i];
       const topic = allTopics[i];
       if (result.summary) {
         summariesWithTopics.push({ summary: result.summary, topic: topic });
@@ -914,7 +874,8 @@ async function executeScheduledSummary(user, summary) {
           topic: topic,
           summary: result.summary,
           articles: result.sourceItems,
-          audioUrl: null // Will be generated below
+          audioUrl: null, // Will be generated below
+          metadata: result.metadata || {}
         });
       }
       items.push(...result.sourceItems);

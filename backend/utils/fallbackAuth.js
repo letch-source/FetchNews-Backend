@@ -89,7 +89,11 @@ function deserializeUser(userData) {
     }));
   }
   // Ensure selectedTopics is always an array (for users created before this field existed)
-  if (!user.selectedTopics || !Array.isArray(user.selectedTopics)) {
+  // Only initialize if it doesn't exist - don't clear existing data
+  if (!user.selectedTopics) {
+    user.selectedTopics = [];
+  } else if (!Array.isArray(user.selectedTopics)) {
+    // If it exists but isn't an array, convert it to array to prevent errors
     user.selectedTopics = [];
   }
   // Ensure other array fields are arrays

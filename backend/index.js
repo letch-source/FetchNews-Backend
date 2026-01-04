@@ -38,6 +38,8 @@ const ArticleCache = require("./models/ArticleCache");
 const { runCategorizationJob, scheduleCategorization, getJobStatus } = require("./jobs/categorizeArticles");
 const { getCacheHealth, fetchArticlesFromCache, fetchMultipleTopicsFromCache } = require("./services/cachedArticleFetcher");
 const { initializeAutoFetch, getJobStatus: getAutoFetchStatus, triggerManualFetch } = require("./jobs/autoFetchSummaries");
+const { getMultipleTopicSummaries, getCacheHealth: getTopicSummaryCacheHealth } = require("./services/topicSummaryService");
+const { startJob: startTopicSummaryJob, getJobStatus: getTopicSummaryJobStatus, triggerManually: triggerTopicSummaryJob } = require("./jobs/generateTopicSummaries");
 
 // Connect to MongoDB
 connectDB();
@@ -2782,162 +2784,83 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
     }
 
-    // Helper function to process a single topic (extracted for parallelization)
+    // Helper function to process a single topic using cached summaries
     async function processTopic(topic) {
       try {
-        const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
+        console.log(`[TOPIC PROCESSING] Processing "${topic}" using cached summary service`);
         
-        // Always initialize geoData with userCountry (which is always set, defaults to 'us')
-        // Then enhance it with geo or location if provided
-        let geoData = {
-          city: "",
-          region: "",
-          country: userCountry.toUpperCase() || "US",
-          countryCode: userCountry.toLowerCase() || "us"
-        };
+        // Use the new topic summary service - it will check cache first, generate if needed
+        const topicResult = await getMultipleTopicSummaries([topic], {
+          wordCount,
+          country: userCountry,
+          goodNewsOnly,
+          excludedSources
+        });
         
-        if (geo && typeof geo === 'object') {
-          // Format: { city: "Los Angeles", region: "California", country: "US" }
-          // Enhance geoData with geo object values
-          geoData.city = geo.city || geoData.city;
-          geoData.region = geo.region || geoData.region;
-          geoData.country = geo.country || geo.countryCode || geoData.country;
-          geoData.countryCode = geo.countryCode || geo.country || geoData.countryCode;
-        } else if (location && typeof location === 'string') {
-          // Format: "New York" or "Los Angeles, California"
-          const locationStr = String(location).trim();
-          if (locationStr) {
-            // Try to parse location string (e.g., "New York" or "Los Angeles, California")
-            const parts = locationStr.split(',').map(p => p.trim());
-            
-            // Common US states mapping for better parsing
-            const stateMap = {
-              'california': 'California', 'ca': 'California',
-              'new york': 'New York', 'ny': 'New York',
-              'texas': 'Texas', 'tx': 'Texas',
-              'florida': 'Florida', 'fl': 'Florida',
-              'illinois': 'Illinois', 'il': 'Illinois',
-              'pennsylvania': 'Pennsylvania', 'pa': 'Pennsylvania',
-              'ohio': 'Ohio', 'oh': 'Ohio',
-              'georgia': 'Georgia', 'ga': 'Georgia',
-              'north carolina': 'North Carolina', 'nc': 'North Carolina',
-              'michigan': 'Michigan', 'mi': 'Michigan'
-            };
-            
-            let city = parts[0] || "";
-            let region = parts[1] || "";
-            
-            // If no comma but it looks like a state name, treat as state
-            if (!region && parts.length === 1) {
-              const lowerPart = parts[0].toLowerCase();
-              if (stateMap[lowerPart]) {
-                city = "";
-                region = stateMap[lowerPart];
-              }
-            }
-            
-            // Enhance geoData with parsed location
-            geoData.city = city;
-            geoData.region = region;
-            // Keep userCountry for country/countryCode since location string doesn't include country
-          }
+        const result = topicResult[0]; // Get result for single topic
+        
+        if (!result || !result.summary) {
+          console.warn(`[TOPIC PROCESSING] No summary returned for "${topic}"`);
+          return {
+            summary: null,
+            sourceItems: [{
+              id: `${topic}-error-${Date.now()}`,
+              title: `Issue fetching ${topic}`,
+              summary: `Failed to fetch news for "${topic}".`,
+              source: "",
+              url: "",
+              topic,
+            }],
+            candidates: [],
+            metadata: {}
+          };
         }
         
-        // Debug: Log country information
-        console.log(`🌍 [COUNTRY FILTER] Topic: ${topic}, Country: ${geoData.countryCode || geoData.country || 'none'}, GeoData:`, JSON.stringify(geoData));
-        console.log(`🌍 [COUNTRY FILTER] userCountry: ${userCountry}, geoData.countryCode: ${geoData.countryCode}, geoData.country: ${geoData.country}`);
-        
-        let { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
-        
-        // OPTIMIZED: Use cached user instead of fetching again (eliminates parallel DB queries)
-        if (cachedUser && mongoose.connection.readyState === 1) {
-          articles = prioritizeArticlesByFeedback(articles, cachedUser, topic);
-          console.log(`[FEEDBACK] Prioritized articles for user ${cachedUser.email}: ${articles.length} articles`);
-        }
-
-        // Optimized pool of unfiltered candidates for global backfill
-        const topicCandidates = [];
-        for (let idx = 0; idx < articles.length; idx++) {
-          const a = articles[idx];
-          topicCandidates.push({
-            id: `${topic}-cand-${idx}-${Date.now()}`,
-            title: a.title || "",
-            summary: (a.description || a.title || "")
-              .replace(/\s+/g, " ") // Normalize whitespace
-              .trim()
-              .slice(0, 150), // Reduced for better performance
-            source: a.source || "",
-            url: a.url || "",
-            topic,
-          });
-        }
-
-        const topicLower = String(topic || "").toLowerCase();
-        const isCore = CORE_CATEGORIES.has(topicLower);
-        const isLocal = topicLower === "local";
-
-        // Filter out excluded sources (if any)
-        if (excludedSources && excludedSources.length > 0) {
-          const excludedSet = new Set(excludedSources.map(s => s.toLowerCase()));
-          articles = articles.filter(article => {
-            const articleSource = normalizeSourceName(article.source);
-            return !excludedSet.has(articleSource);
-          });
-          console.log(`[FILTER] Filtered out excluded sources, ${articles.length} articles remaining`);
+        // Log cache hit/miss
+        if (result.fromCache) {
+          console.log(`✅ [CACHE HIT] Used cached summary for "${topic}"`);
+        } else {
+          console.log(`🔄 [GENERATED] Created new summary for "${topic}"`);
         }
         
-        // For US users: post-filter as fallback (API-level filtering should handle most cases)
-        // This ensures we catch any sources that might have slipped through
-        if (userCountry && userCountry.toLowerCase() === 'us' && selectedSources.length === 0) {
-          // Only post-filter if we didn't use API-level filtering (shouldn't happen, but safety check)
-          const beforeCount = articles.length;
-          articles = articles.filter(article => {
-            return isSourceAllowedForUS(article.source);
-          });
-          console.log(`[US FILTER FALLBACK] Post-filtered to allowed US sources: ${beforeCount} -> ${articles.length} articles`);
-        }
-        
-        // Filter relevant articles
-        let relevant = filterRelevantArticles(topic, geoData, articles, perTopic);
-        
-        // Apply uplifting news filter if enabled
-        if (goodNewsOnly) {
-          relevant = relevant.filter(isUpliftingNews);
-        }
-
-        const summaryResult = await summarizeArticles(topic, geoData, relevant, wordCount, goodNewsOnly, req.user);
-        
-        // Handle both old format (string) and new format (object with metadata)
-        const summary = typeof summaryResult === 'string' ? summaryResult : summaryResult.summary;
-        const metadata = typeof summaryResult === 'object' && summaryResult.metadata ? summaryResult.metadata : null;
-
-        // Debug: Check if articles have urlToImage
-        if (relevant.length > 0) {
-          console.log(`🔍 [${topic}] First article urlToImage:`, relevant[0].urlToImage);
-          console.log(`🔍 [${topic}] First article keys:`, Object.keys(relevant[0]));
-        }
-        
-        const sourceItems = relevant.map((a, idx) => ({
+        // Convert source articles to sourceItems format for compatibility
+        const sourceItems = (result.sourceArticles || []).map((a, idx) => ({
           id: `${topic}-${idx}-${Date.now()}`,
           title: a.title || "",
-          summary: (a.description || a.title || "")
-            .replace(/\s+/g, " ") // Normalize whitespace
-            .trim()
-            .slice(0, 180), // Optimized truncation length
-          source: typeof a.source === 'object' ? (a.source?.name || a.source?.id || "") : (a.source || ""),
+          summary: `From ${a.source || 'Unknown'}`,
+          source: a.source || "",
           url: a.url || "",
           topic,
-          imageUrl: a.urlToImage || "",
+          imageUrl: "", // Not stored in cache to save space
         }));
+        
+        // If we don't have enough source items, fetch additional articles for display
+        if (sourceItems.length < 3) {
+          try {
+            const { articles } = await fetchArticlesFromCache(topic, null, 5, excludedSources);
+            const additionalItems = articles.slice(0, 5 - sourceItems.length).map((a, idx) => ({
+              id: `${topic}-${sourceItems.length + idx}-${Date.now()}`,
+              title: a.title || "",
+              summary: (a.description || "").slice(0, 180),
+              source: typeof a.source === 'object' ? (a.source?.name || a.source?.id || "") : (a.source || ""),
+              url: a.url || "",
+              topic,
+              imageUrl: a.urlToImage || "",
+            }));
+            sourceItems.push(...additionalItems);
+          } catch (fetchErr) {
+            console.warn(`[TOPIC PROCESSING] Could not fetch additional articles for "${topic}":`, fetchErr.message);
+          }
+        }
 
         return {
-          summary,
-          metadata, // Include enhanced metadata
+          summary: result.summary,
+          metadata: result.metadata || {},
           sourceItems,
-          candidates: topicCandidates
+          candidates: sourceItems // Use same items as candidates
         };
       } catch (innerErr) {
-        console.error("summarize topic failed", topic, innerErr);
+        console.error(`[TOPIC PROCESSING] Error processing "${topic}":`, innerErr);
         return {
           summary: null,
           sourceItems: [{
@@ -2948,7 +2871,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
             url: "",
             topic,
           }],
-          candidates: []
+          candidates: [],
+          metadata: {}
         };
       }
     }
@@ -5756,6 +5680,11 @@ function startServer() {
     // Initialize automatic fetch for all users (runs at 6am and 6pm daily)
     initializeAutoFetch();
     console.log('✅ Automatic fetch job initialized');
+    
+    // Initialize topic summary generation job (runs every 6 hours)
+    startTopicSummaryJob();
+    console.log('✅ Topic summary generation job initialized');
+    
     const now = new Date();
     if (SCHEDULER_ENABLED) {
       const firstCheckIn = new Date(now.getTime() + (10 * 60 * 1000));

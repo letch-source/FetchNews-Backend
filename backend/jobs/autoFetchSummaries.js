@@ -7,7 +7,8 @@
 
 const cron = require('node-cron');
 const User = require('../models/User');
-const { fetchMultipleTopicsFromCache } = require('../services/cachedArticleFetcher');
+const { getMultipleTopicSummaries } = require('../services/topicSummaryService');
+const { fetchArticlesFromCache } = require('../services/cachedArticleFetcher');
 
 let isJobRunning = false;
 let lastRunTime = null;
@@ -27,21 +28,59 @@ async function generateUserSummaries(user) {
     console.log(`📰 Generating summaries for ${user.email} - ${user.customTopics.length} topics`);
 
     // Get user preferences
-    const wordCount = user.length || 200;
+    const wordCount = user.summaryLength ? parseInt(user.summaryLength) : 200;
     const country = user.selectedCountry || 'us';
+    const goodNewsOnly = user.upliftingNewsOnly || false;
 
-    // Fetch articles from cache for all user's topics
-    const results = await fetchMultipleTopicsFromCache({
-      topics: user.customTopics,
-      country,
+    // Get cached summaries for all user's topics
+    const topicResults = await getMultipleTopicSummaries(user.customTopics, {
       wordCount,
-      goodNewsOnly: false
+      country,
+      goodNewsOnly,
+      excludedSources: user.excludedNewsSources || []
     });
 
-    if (!results || !results.topicSections || results.topicSections.length === 0) {
-      console.log(`⚠️  No articles found for ${user.email}`);
-      return { success: false, reason: 'no_articles' };
+    if (!topicResults || topicResults.length === 0) {
+      console.log(`⚠️  No summaries generated for ${user.email}`);
+      return { success: false, reason: 'no_summaries' };
     }
+
+    // Filter out failed topics
+    const successfulTopics = topicResults.filter(r => r.summary && r.articleCount > 0);
+    
+    if (successfulTopics.length === 0) {
+      console.log(`⚠️  All topics failed for ${user.email}`);
+      return { success: false, reason: 'all_topics_failed' };
+    }
+
+    // Build topic sections for user history
+    const topicSections = await Promise.all(successfulTopics.map(async (result) => {
+      // Fetch a few articles for each topic to display as sources
+      let articles = [];
+      try {
+        const { articles: cachedArticles } = await fetchArticlesFromCache(result.topic, null, 5, user.excludedNewsSources || []);
+        articles = cachedArticles.slice(0, 5).map((a, idx) => ({
+          id: `${result.topic}-${idx}-${Date.now()}`,
+          title: a.title || "",
+          summary: (a.description || "").slice(0, 180),
+          source: typeof a.source === 'object' ? (a.source?.name || a.source?.id || "") : (a.source || ""),
+          url: a.url || "",
+          topic: result.topic,
+          imageUrl: a.urlToImage || ""
+        }));
+      } catch (fetchErr) {
+        console.warn(`Could not fetch articles for ${result.topic}:`, fetchErr.message);
+      }
+
+      return {
+        id: `topic-${result.topic.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,
+        topic: result.topic,
+        summary: result.summary,
+        articles: articles,
+        audioUrl: null, // Audio not generated for auto-fetch
+        metadata: result.metadata || {}
+      };
+    }));
 
     // Get time-based title
     const hour = new Date().getHours();
@@ -54,14 +93,14 @@ async function generateUserSummaries(user) {
     // Add to user's history
     await user.addSummaryToHistory({
       title,
-      summary: `Your ${timeOfDay.toLowerCase()} news update covering ${results.topicSections.length} topics.`,
+      summary: `Your ${timeOfDay.toLowerCase()} news update covering ${topicSections.length} topics.`,
       audioUrl: null, // No combined audio
-      topicSections: results.topicSections,
+      topicSections: topicSections,
       sources: []
     });
 
-    console.log(`✅ Generated summaries for ${user.email} - ${results.topicSections.length} topics`);
-    return { success: true, topicCount: results.topicSections.length };
+    console.log(`✅ Generated summaries for ${user.email} - ${topicSections.length} topics`);
+    return { success: true, topicCount: topicSections.length };
 
   } catch (error) {
     console.error(`❌ Error generating summaries for ${user.email}:`, error.message);
