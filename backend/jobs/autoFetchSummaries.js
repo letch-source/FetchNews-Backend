@@ -9,10 +9,37 @@ const cron = require('node-cron');
 const User = require('../models/User');
 const { getMultipleTopicSummaries } = require('../services/topicSummaryService');
 const { fetchArticlesFromCache } = require('../services/cachedArticleFetcher');
+const { sendFetchReadyNotification } = require('../utils/notifications');
 
 let isJobRunning = false;
 let lastRunTime = null;
 let lastRunStats = { success: 0, failed: 0, total: 0 };
+
+/**
+ * Send a morning Fetch notification (does not depend on summary completion)
+ */
+async function sendMorningFetchNotification(user, fetchTitle) {
+  const deviceToken = user.deviceToken || user.preferences?.deviceToken || null;
+  if (!deviceToken) {
+    return { success: false, reason: 'no_device_token' };
+  }
+
+  const notificationResult = await sendFetchReadyNotification(deviceToken, fetchTitle);
+  if (notificationResult === 'BAD_TOKEN') {
+    console.log(`⚠️  Invalid device token detected for ${user.email}, clearing token`);
+    user.deviceToken = null;
+    await user.save();
+    return { success: false, reason: 'bad_token' };
+  }
+
+  if (notificationResult) {
+    console.log(`🔔 Sent morning Fetch notification to ${user.email}`);
+    return { success: true };
+  }
+
+  console.log(`⚠️  Failed to send morning Fetch notification to ${user.email}`);
+  return { success: false, reason: 'send_failed' };
+}
 
 /**
  * Generate summaries for a single user from cached articles
@@ -82,11 +109,16 @@ async function generateUserSummaries(user) {
       };
     }));
 
-    // Get time-based title
-    const hour = new Date().getHours();
+    // Get time-based title in PST to match cron schedule
+    const now = new Date();
+    const pstHour = parseInt(new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      hour: '2-digit',
+      hour12: false
+    }).formatToParts(now).find(part => part.type === 'hour').value, 10);
     let timeOfDay = 'Morning';
-    if (hour >= 12 && hour < 17) timeOfDay = 'Afternoon';
-    else if (hour >= 17 || hour < 5) timeOfDay = 'Evening';
+    if (pstHour >= 12 && pstHour < 17) timeOfDay = 'Afternoon';
+    else if (pstHour >= 17 || pstHour < 5) timeOfDay = 'Evening';
     
     const title = `${timeOfDay} Fetch`;
 
@@ -122,7 +154,25 @@ async function runAutoFetchJob() {
   console.log('🚀 Starting automatic fetch job at', new Date().toISOString());
 
   try {
-    // Get all users with custom topics
+    // Determine time-of-day in PST once for this run
+    const now = new Date();
+    const pstHour = parseInt(new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      hour: '2-digit',
+      hour12: false
+    }).formatToParts(now).find(part => part.type === 'hour').value, 10);
+    const isMorningRun = pstHour >= 5 && pstHour < 12;
+
+    if (isMorningRun) {
+      const notificationUsers = await User.find({});
+      console.log(`🔔 Morning notifications: ${notificationUsers.length} users (sending when token exists)`);
+
+      for (const user of notificationUsers) {
+        await sendMorningFetchNotification(user, 'Morning Fetch');
+      }
+    }
+
+    // Get all users with custom topics (for summary generation)
     const users = await User.find({
       customTopics: { $exists: true, $not: { $size: 0 } }
     });
