@@ -297,7 +297,7 @@ userSchema.methods.canFetchNews = async function() {
   }
   
   // Define limits
-  const freeUserLimit = 3;
+  const freeUserLimit = 20;
   const premiumUserLimit = 20;
   
   // Premium users limited to 20 summaries per day

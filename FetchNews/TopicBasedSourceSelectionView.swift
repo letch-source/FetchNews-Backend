@@ -465,7 +465,7 @@ struct TopicBasedSourceSelectionView: View {
                     lastFetchedTopics: Array(vm.lastFetchedTopics),
                     selectedTopics: Array(vm.selectedTopics),
                     excludedNewsSources: Array(sourcesToExclude),
-                    scheduledSummaries: []
+                    selectedCountry: vm.selectedCountry
                 )
                 _ = try await ApiClient.updateUserPreferences(preferences)
                 print("✅ Saved excluded news sources to backend: \(sourcesToExclude.count) excluded, \(selectedSources.count) selected")

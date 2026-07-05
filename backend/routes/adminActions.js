@@ -383,6 +383,10 @@ router.post('/users/:email/reset-usage', authenticateToken, async (req, res) => 
 // Debug endpoint to check user data (temporary)
 router.get('/user-data/:email', authenticateToken, async (req, res) => {
   try {
+    if (!isDatabaseAvailable()) {
+      return res.status(503).json({ error: 'Database not available' });
+    }
+
     const { email } = req.params;
     const user = await User.findOne({ email: email.toLowerCase() });
     

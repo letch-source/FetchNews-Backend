@@ -10,6 +10,7 @@ const User = require('../models/User');
 const { getMultipleTopicSummaries } = require('../services/topicSummaryService');
 const { fetchArticlesFromCache } = require('../services/cachedArticleFetcher');
 const { sendFetchReadyNotification } = require('../utils/notifications');
+const { generateTTS } = require('../services/ttsService');
 
 let isJobRunning = false;
 let lastRunTime = null;
@@ -42,25 +43,40 @@ async function sendMorningFetchNotification(user, fetchTitle) {
 }
 
 /**
+ * Build the combined topic list for a user, merging selectedTopics and customTopics.
+ * Deduplicates and filters empty values.
+ */
+function getUserTopicsForAutoFetch(user) {
+  const selectedTopics = Array.isArray(user.selectedTopics) ? user.selectedTopics : [];
+  const customTopics = Array.isArray(user.customTopics) ? user.customTopics : [];
+  return [...new Set(
+    [...selectedTopics, ...customTopics]
+      .map(topic => String(topic || '').trim())
+      .filter(Boolean)
+  )];
+}
+
+/**
  * Generate summaries for a single user from cached articles
  */
 async function generateUserSummaries(user) {
   try {
-    // Skip users with no custom topics
-    if (!user.customTopics || user.customTopics.length === 0) {
-      console.log(`⏭️  Skipping user ${user.email} - no custom topics`);
+    const topics = getUserTopicsForAutoFetch(user);
+
+    if (!topics.length) {
+      console.log(`⏭️  Skipping user ${user.email} - no selected/custom topics`);
       return { success: false, reason: 'no_topics' };
     }
 
-    console.log(`📰 Generating summaries for ${user.email} - ${user.customTopics.length} topics`);
+    console.log(`📰 Generating summaries for ${user.email} - ${topics.length} topics`);
 
     // Get user preferences
-    const wordCount = user.summaryLength ? parseInt(user.summaryLength) : 200;
+    const wordCount = user.summaryLength ? parseInt(user.summaryLength, 10) : 200;
     const country = user.selectedCountry || 'us';
     const goodNewsOnly = user.upliftingNewsOnly || false;
 
     // Get cached summaries for all user's topics
-    const topicResults = await getMultipleTopicSummaries(user.customTopics, {
+    const topicResults = await getMultipleTopicSummaries(topics, {
       wordCount,
       country,
       goodNewsOnly,
@@ -80,7 +96,11 @@ async function generateUserSummaries(user) {
       return { success: false, reason: 'all_topics_failed' };
     }
 
-    // Build topic sections for user history
+    const selectedVoice = (user.selectedVoice || 'alloy').toLowerCase();
+    const playbackRate = Number(user.playbackRate || 1.0);
+    const baseUrl = process.env.BASE_URL || process.env.RENDER_EXTERNAL_URL || '';
+
+    // Build topic sections with per-topic audio
     const topicSections = await Promise.all(successfulTopics.map(async (result) => {
       // Fetch a few articles for each topic to display as sources
       let articles = [];
@@ -99,12 +119,21 @@ async function generateUserSummaries(user) {
         console.warn(`Could not fetch articles for ${result.topic}:`, fetchErr.message);
       }
 
+      // Generate per-topic audio
+      let topicAudioUrl = null;
+      try {
+        const audio = await generateTTS(result.summary, selectedVoice, playbackRate, baseUrl);
+        topicAudioUrl = audio.audioUrl;
+      } catch (audioErr) {
+        console.warn(`Audio generation failed for ${result.topic}:`, audioErr.message);
+      }
+
       return {
         id: `topic-${result.topic.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,
         topic: result.topic,
         summary: result.summary,
         articles: articles,
-        audioUrl: null, // Audio not generated for auto-fetch
+        audioUrl: topicAudioUrl,
         metadata: result.metadata || {}
       };
     }));
@@ -119,14 +148,26 @@ async function generateUserSummaries(user) {
     let timeOfDay = 'Morning';
     if (pstHour >= 12 && pstHour < 17) timeOfDay = 'Afternoon';
     else if (pstHour >= 17 || pstHour < 5) timeOfDay = 'Evening';
-    
+
     const title = `${timeOfDay} Fetch`;
+
+    // Generate combined audio for the full fetch
+    let combinedAudioUrl = null;
+    try {
+      const combinedText = successfulTopics
+        .map(result => `${result.topic}. ${result.summary}`)
+        .join('\n\n');
+      const combinedAudio = await generateTTS(combinedText, selectedVoice, playbackRate, baseUrl);
+      combinedAudioUrl = combinedAudio.audioUrl;
+    } catch (audioErr) {
+      console.warn(`Combined auto-fetch audio failed for ${user.email}:`, audioErr.message);
+    }
 
     // Add to user's history
     await user.addSummaryToHistory({
       title,
       summary: `Your ${timeOfDay.toLowerCase()} news update covering ${topicSections.length} topics.`,
-      audioUrl: null, // No combined audio
+      audioUrl: combinedAudioUrl,
       topicSections: topicSections,
       sources: []
     });
@@ -172,12 +213,15 @@ async function runAutoFetchJob() {
       }
     }
 
-    // Get all users with custom topics (for summary generation)
+    // Get all users who have either selectedTopics or customTopics
     const users = await User.find({
-      customTopics: { $exists: true, $not: { $size: 0 } }
+      $or: [
+        { selectedTopics: { $exists: true, $not: { $size: 0 } } },
+        { customTopics: { $exists: true, $not: { $size: 0 } } }
+      ]
     });
 
-    console.log(`👥 Found ${users.length} users with custom topics`);
+    console.log(`👥 Found ${users.length} users with selected/custom topics`);
 
     lastRunStats = { success: 0, failed: 0, total: users.length };
 

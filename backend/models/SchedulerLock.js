@@ -23,8 +23,8 @@ const schedulerLockSchema = new mongoose.Schema({
   },
   expiresAt: {
     type: Date,
-    required: true,
-    index: true
+    required: true
+    // index defined below via schema.index() with TTL expireAfterSeconds
   },
   heartbeat: {
     type: Date,

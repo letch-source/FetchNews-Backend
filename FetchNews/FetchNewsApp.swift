@@ -54,6 +54,9 @@ struct FetchNewsApp: App {
                                             await vm.initializeIfNeeded()
                                             // Check for scheduled summaries on app launch
                                             await vm.checkForScheduledSummary()
+                                            // Retry APNs token registration in case it was
+                                            // received before the user was authenticated
+                                            await NotificationManager.shared.retryPendingTokenRegistration()
                                         }
                                     }
                                 }
@@ -87,10 +90,11 @@ struct FetchNewsApp: App {
                     .environmentObject(authVM)
             }
             .onChange(of: scenePhase) { oldPhase, newPhase in
-                // Check for scheduled summaries when app becomes active
+                // Check for scheduled summaries and retry APNs token when app becomes active
                 if newPhase == .active && authVM.isAuthenticated {
                     Task {
                         await vm.checkForScheduledSummary()
+                        await NotificationManager.shared.retryPendingTokenRegistration()
                     }
                 }
             }

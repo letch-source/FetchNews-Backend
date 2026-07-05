@@ -20,7 +20,13 @@ final class NewsVM: ObservableObject {
 
     // Selection & state
     @Published var selectedTopics: Set<String> = [] {
-        didSet { debouncedSaveSettings() }
+        didSet { 
+            print("🎯 [TOPICS] selectedTopics didSet triggered")
+            print("   Old: \(oldValue.sorted())")
+            print("   New: \(selectedTopics.sorted())")
+            print("   Stack trace: \(Thread.callStackSymbols.prefix(5).joined(separator: "\n   "))")
+            debouncedSaveSettings() 
+        }
     }
     @Published var length: ApiClient.Length = .short {
         didSet { debouncedSaveSettings() }
@@ -51,6 +57,37 @@ final class NewsVM: ObservableObject {
     
     // Recommended topics (based on user's selected topics)
     @Published var recommendedTopics: [String] = []
+    @Published var isUsingRecommendedFeed: Bool = false
+    private var isLoadingRecommendedFeed: Bool = false
+    @Published var isShowingRecommendedAfterFetch: Bool = false
+    
+    // Scheduled summaries (premium feature)
+    @Published var scheduledSummaries: [ScheduledSummary] = []
+    
+    // Track if we've already loaded remote settings to avoid double-loading
+    private var hasLoadedRemoteSettings = false
+
+    // Guard flag: prevents saves from firing while clearUserState() is running
+    // Without this, selectedTopics.removeAll() triggers debouncedSaveSettings()
+    // which immediately writes [] to UserDefaults and schedules a remote save of []
+    private var isResettingState = false
+
+    private func normalizeTopic(_ topic: String) -> String {
+        let lowercased = topic.lowercased()
+        return ALL_TOPICS.contains(lowercased) ? lowercased : topic
+    }
+
+    private func normalizeTopics(_ topics: Set<String>) -> Set<String> {
+        Set(topics.map { normalizeTopic($0) })
+    }
+
+    private func applyNormalizedTopics(_ topics: Set<String>, source: String) {
+        let normalized = normalizeTopics(topics)
+        if normalized != topics {
+            print("🧹 [TOPICS] Normalized \(source) topics: \(topics.sorted()) -> \(normalized.sorted())")
+        }
+        selectedTopics = normalized
+    }
     
     // Timer for automatic trending topics refresh
     private var trendingTopicsTimer: Timer?
@@ -121,6 +158,7 @@ final class NewsVM: ObservableObject {
     @Published var currentTopicIndex: Int = 0  // Current topic in feed
     @Published var shouldAutoScroll: Bool = false // Trigger for auto-scroll to next topic
     @Published var currentTopicAudioUrl: String? = nil // Current topic's audio URL
+    @Published var forceProgressBarReset: Bool = false // Signal to reset scrubbing state in UI
     private var topicAudioPlayers: [String: AVPlayer] = [:] // Cache of audio players per topic
 
     // Settings (with UserDefaults persistence)
@@ -149,7 +187,9 @@ final class NewsVM: ObservableObject {
 
     // MARK: - Initialization
     init() {
+        print("🚀 [INIT] NewsVM initializing...")
         loadSettings()
+        print("🚀 [INIT] After loadSettings - selectedTopics: \(selectedTopics.sorted())")
         loadCachedTrendingTopics()
         
         // Observe user logout/login notifications to manage user-specific state
@@ -167,8 +207,16 @@ final class NewsVM: ObservableObject {
             forName: .userDidLogin,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
             Task { @MainActor in
+                print("🔑 [AUTH] userDidLogin notification received")
+
+                // Immediately load topics from the authenticated user object
+                // (The login response already contains the user's selectedTopics).
+                // Use the user attached to the notification since NewsVM's weak
+                // authVM back-reference isn't wired up yet this early in login.
+                await self?.loadTopicsFromAuthUser(user: notification.object as? User)
+
                 // Load new user's data when they log in
                 await self?.initializeIfNeeded()
                 await self?.checkForScheduledSummary()
@@ -184,10 +232,10 @@ final class NewsVM: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 print("📱 [LIFECYCLE] App will resign active - force saving preferences")
-                await self?.forceSaveSettings()
+                self?.forceSaveWithBackgroundTask()
             }
         }
-        
+
         NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil,
@@ -195,14 +243,73 @@ final class NewsVM: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 print("📱 [LIFECYCLE] App entered background - force saving preferences")
-                await self?.forceSaveSettings()
+                self?.forceSaveWithBackgroundTask()
             }
         }
         #endif
     }
+
+    #if canImport(UIKit)
+    /// Holds the background task identifier so the expiration handler can reference
+    /// it even though it's assigned after beginBackgroundTask returns.
+    private final class BackgroundTaskBox: @unchecked Sendable {
+        var id: UIBackgroundTaskIdentifier = .invalid
+    }
+
+    /// Runs forceSaveSettings() inside a UIKit background task so iOS grants extra
+    /// execution time for the network PUT to complete. Without this, the app can be
+    /// suspended mid-request when backgrounding right after a topic change, leaving
+    /// the backend with a stale value that then overwrites the newer local selection
+    /// on the next launch (loadRemoteSettings trusts any non-empty backend value).
+    private func forceSaveWithBackgroundTask() {
+        let box = BackgroundTaskBox()
+        box.id = UIApplication.shared.beginBackgroundTask(withName: "ForceSavePreferences") {
+            UIApplication.shared.endBackgroundTask(box.id)
+        }
+        Task { @MainActor [weak self] in
+            await self?.forceSaveSettings()
+            if box.id != .invalid {
+                UIApplication.shared.endBackgroundTask(box.id)
+                box.id = .invalid
+            }
+        }
+    }
+    #endif
     
     // MARK: - Intents
+    
+    /// Load topics immediately from the authenticated user object
+    /// This is called right after login to use the data already in the auth response.
+    /// Accepts the user directly (from the userDidLogin notification) since the weak
+    /// authVM back-reference may not be wired up yet this early in the login flow.
+    func loadTopicsFromAuthUser(user: User? = nil) async {
+        guard let user = user ?? authVM?.currentUser else {
+            print("🔑 [AUTH] No authenticated user, cannot load topics")
+            return
+        }
+        
+        print("🔑 [AUTH] Loading topics from authenticated user")
+        print("   User has \(user.selectedTopics.count) topics: \(user.selectedTopics.sorted())")
+        
+        // Set topics from user object
+        if !user.selectedTopics.isEmpty {
+            applyNormalizedTopics(Set(user.selectedTopics), source: "auth user")
+            print("🔑 [AUTH] ✅ Set selectedTopics to: \(selectedTopics.sorted())")
+            
+            // Save to UserDefaults for next session
+            saveLocalSettings()
+            
+            // Force UI update
+            objectWillChange.send()
+            print("🔑 [AUTH] 🔄 Triggered UI refresh")
+        } else {
+            print("🔑 [AUTH] User has no selected topics")
+        }
+    }
+    
     func initializeIfNeeded() async {
+        print("🔧 [INIT] initializeIfNeeded called - selectedTopics before: \(selectedTopics.sorted())")
+        
         // Request notification permission on first launch
         await requestNotificationPermission()
         
@@ -232,18 +339,23 @@ final class NewsVM: ObservableObject {
             
             // Fetch recommended topics based on user's selected topics
             await fetchRecommendedTopics()
+            await loadRecommendedTopicsFeedIfNeeded()
 
             // Load news sources for premium users in parallel
             if let authVM = authVM, authVM.currentUser?.isPremium == true {
                 async let availableSourcesTask = loadAvailableNewsSources()
                 async let excludedSourcesTask = loadExcludedNewsSources()
+                async let scheduledSummariesTask = loadScheduledSummaries()
                 await availableSourcesTask
                 await excludedSourcesTask
+                await scheduledSummariesTask
             }
         } else {
             // Not authenticated - just fetch trending topics (will update cache)
             await fetchTrendingTopics()
         }
+        
+        print("🔧 [INIT] initializeIfNeeded completed - selectedTopics after: \(selectedTopics.sorted())")
     }
     
     func toggle(_ topic: String) {
@@ -255,6 +367,16 @@ final class NewsVM: ObservableObject {
             print("🔵 [TOPICS] Added '\(topic)' to selectedTopics. Current: \(selectedTopics.sorted())")
         }
         isDirty = true
+        
+        // Refresh recommended topics when user changes their selection
+        Task {
+            await fetchRecommendedTopics()
+            if selectedTopics.isEmpty {
+                await loadRecommendedTopicsFeedIfNeeded()
+            } else {
+                await clearRecommendedFeedIfNeeded()
+            }
+        }
     }
 
     func setLength(_ l: ApiClient.Length) { 
@@ -264,11 +386,8 @@ final class NewsVM: ObservableObject {
     }
     
     func fetchAgain() async {
-        // Set the selected topics to the last fetched topics
-        selectedTopics = lastFetchedTopics
-        isDirty = true
-        // Trigger the fetch
-        await fetch()
+        // Re-fetch the last topics without mutating the user's current selections
+        await fetch(using: lastFetchedTopics, force: true)
     }
     
     
@@ -287,19 +406,30 @@ final class NewsVM: ObservableObject {
     
     // MARK: - Settings Persistence
     private func loadSettings() {
+        print("⚙️ [SETTINGS] loadSettings called")
+        print("   ApiClient.isAuthenticated: \(ApiClient.isAuthenticated)")
+        print("   hasLoadedRemoteSettings: \(hasLoadedRemoteSettings)")
+        
         // First, load from local UserDefaults as fallback
         loadLocalSettings()
+        print("⚙️ [SETTINGS] After loadLocalSettings - selectedTopics: \(selectedTopics.sorted())")
         
         // If user is authenticated, try to load from backend
         if ApiClient.isAuthenticated {
+            print("⚙️ [SETTINGS] User is authenticated, will load remote settings")
             Task {
                 await loadRemoteSettings()
+                print("⚙️ [SETTINGS] After loadRemoteSettings - selectedTopics: \(selectedTopics.sorted())")
             }
+        } else {
+            print("⚙️ [SETTINGS] User not authenticated, skipping remote settings (will load after login)")
         }
     }
     
     private func loadLocalSettings() {
         let defaults = UserDefaults.standard
+        
+        print("📲 [LOCAL LOAD] loadLocalSettings called")
         
         // Migrate old keys to new format if they exist
         let hasOldKeys = defaults.object(forKey: "playbackRate") != nil ||
@@ -308,6 +438,7 @@ final class NewsVM: ObservableObject {
                         defaults.array(forKey: "lastFetchedTopics") != nil
         
         if hasOldKeys {
+            print("📲 [LOCAL] Migrating old keys to new format")
             // Migrate old keys to new format
             if let oldRate = defaults.object(forKey: "playbackRate") as? Double {
                 defaults.set(oldRate, forKey: "FetchNews_playbackRate")
@@ -356,10 +487,21 @@ final class NewsVM: ObservableObject {
         }
         
         if let savedSelectedTopics = defaults.array(forKey: "FetchNews_selectedTopics") as? [String] {
-            selectedTopics = Set(savedSelectedTopics)
-            print("📲 [LOCAL] Loaded selectedTopics from UserDefaults: \(savedSelectedTopics.sorted())")
+            print("📲 [LOCAL LOAD] Found \(savedSelectedTopics.count) topics in UserDefaults: \(savedSelectedTopics.sorted())")
+            let normalized = normalizeTopics(Set(savedSelectedTopics))
+            if normalized != Set(savedSelectedTopics) {
+                print("📲 [LOCAL LOAD] Normalized local topics for persistence")
+            }
+            selectedTopics = normalized
+            print("📲 [LOCAL LOAD] ✅ Set selectedTopics to: \(selectedTopics.sorted())")
+            if normalized != Set(savedSelectedTopics) {
+                saveLocalSettings()
+            }
         } else {
-            print("📲 [LOCAL] No saved selectedTopics in UserDefaults")
+            print("📲 [LOCAL LOAD] ⚠️ No saved selectedTopics in UserDefaults")
+            print("📲 [LOCAL LOAD] Keeping selectedTopics unchanged - will load from backend if authenticated")
+            // DON'T clear selectedTopics here - let remote settings handle it
+            // selectedTopics will be loaded from backend in loadRemoteSettings() if user is authenticated
         }
         
         if let savedSources = defaults.array(forKey: "FetchNews_excludedNewsSources") as? [String] {
@@ -387,6 +529,24 @@ final class NewsVM: ObservableObject {
     }
     
     private func loadRemoteSettings() async {
+        // Prevent double-loading which causes race conditions
+        // Note: This flag is reset on logout in clearUserState()
+        print("⚙️ [SETTINGS] loadRemoteSettings called")
+        print("   hasLoadedRemoteSettings: \(hasLoadedRemoteSettings)")
+        print("   ApiClient.isAuthenticated: \(ApiClient.isAuthenticated)")
+        
+        guard !hasLoadedRemoteSettings else {
+            print("⚙️ [SETTINGS] ⚠️ Skipping loadRemoteSettings - already loaded this session")
+            return
+        }
+        
+        guard ApiClient.isAuthenticated else {
+            print("⚙️ [SETTINGS] ⚠️ Not authenticated, cannot load remote settings")
+            return
+        }
+        
+        print("⚙️ [SETTINGS] ✅ Loading remote settings (first time this session)")
+        
         do {
             let preferences = try await ApiClient.getUserPreferences()
             
@@ -459,22 +619,46 @@ final class NewsVM: ObservableObject {
             // Always update these from backend (they're more dynamic)
             lastFetchedTopics = Set(preferences.lastFetchedTopics)
             
-            // Handle selectedTopics with smart merge: if backend is empty but we have local data, keep local
+            // Handle selectedTopics with smart merge: preserve local data if backend seems outdated
             let loadedTopics = preferences.selectedTopics ?? []
             let currentLocalTopics = selectedTopics // Current topics (loaded from UserDefaults in loadLocalSettings)
             
+            print("📥 [LOAD] Backend has \(loadedTopics.count) topics: \(loadedTopics.sorted())")
+            print("📥 [LOAD] Local has \(currentLocalTopics.count) topics: \(currentLocalTopics.sorted())")
+            
             if loadedTopics.isEmpty && !currentLocalTopics.isEmpty {
                 // Backend is empty but we have local data - keep local and sync to backend
-                print("📥 [LOAD] Backend selectedTopics is empty, but local has \(currentLocalTopics.count) topics. Keeping local and will sync to backend.")
+                print("📥 [LOAD] ⚠️ Backend selectedTopics is empty, but local has \(currentLocalTopics.count) topics. Keeping local and will sync to backend.")
+                print("📥 [LOAD] Local topics being preserved: \(currentLocalTopics.sorted())")
                 // selectedTopics already has local data, don't overwrite
-                // Schedule a sync to backend to fix the discrepancy
+                // Mark that we need to sync to backend
+                isDirty = true
+                // Schedule a sync to backend to fix the discrepancy (immediate, not debounced)
                 Task {
-                    await self.saveRemoteSettings()
+                    print("🔄 [SYNC] Force syncing local topics to backend")
+                    await self.forceSaveSettings()
                 }
+            } else if loadedTopics.count > 0 {
+                // Backend has data - use it as source of truth (ALWAYS trust backend over empty local)
+                let loadedSet = Set(loadedTopics)
+                let normalized = normalizeTopics(loadedSet)
+                selectedTopics = normalized
+                print("📥 [LOAD] ✅ Loaded \(loadedTopics.count) selectedTopics from backend: \(loadedTopics.sorted())")
+                if normalized != loadedSet {
+                    Task {
+                        print("🧹 [LOAD] Normalized backend topics - syncing back to backend")
+                        await saveRemoteSettings()
+                    }
+                }
+                // Also update UserDefaults cache for faster next load
+                saveLocalSettings()
+                // Force UI refresh to ensure views update
+                objectWillChange.send()
+                print("📥 [LOAD] 🔄 Triggered UI refresh")
             } else {
-                // Backend has data or both are empty - use backend as source of truth
-                selectedTopics = Set(loadedTopics)
-                print("📥 [LOAD] Loaded selectedTopics from backend: \(loadedTopics.sorted())")
+                // Both are empty - this is fine for new users OR after rebuild (will load from backend on next load)
+                print("📥 [LOAD] ⚠️ Both backend and local selectedTopics are empty")
+                print("📥 [LOAD]   This could be: 1) New user, 2) Fresh rebuild, 3) Backend save failed previously")
             }
             
             excludedNewsSources = Set(preferences.excludedNewsSources)
@@ -482,14 +666,25 @@ final class NewsVM: ObservableObject {
             // Cache backend values locally for offline use and faster subsequent loads
             // This ensures local settings are available if backend is temporarily unavailable
             saveLocalSettings()
+            
+            // Mark as successfully loaded after all processing is complete
+            hasLoadedRemoteSettings = true
+            print("⚙️ [SETTINGS] ✅ Remote settings loaded successfully")
         } catch {
+            print("⚙️ [SETTINGS] ❌ Failed to load remote settings: \(error)")
             // Backend unavailable - fall back to local settings (already loaded in loadLocalSettings())
             // This ensures the app works offline and settings persist even when backend is down
+            // Don't set hasLoadedRemoteSettings = true so we can retry next time
         }
     }
     
     // Debounced save to reduce API calls
     private func debouncedSaveSettings() {
+        // Skip all saves while clearUserState() is running — we don't want
+        // an empty selectedTopics (or any other cleared state) persisted to
+        // UserDefaults or the backend during a logout/reset.
+        guard !isResettingState else { return }
+
         // Always save to local UserDefaults immediately
         saveLocalSettings()
         
@@ -520,6 +715,9 @@ final class NewsVM: ObservableObject {
     /// Force save settings immediately (used when app is backgrounded)
     func forceSaveSettings() async {
         print("🔥 [FORCE SAVE] Force saving preferences immediately")
+        print("   Current selectedTopics: \(selectedTopics.sorted())")
+        print("   Authenticated: \(ApiClient.isAuthenticated)")
+        
         // Cancel any pending debounced save
         saveSettingsTask?.cancel()
         saveSettingsTask = nil
@@ -530,12 +728,19 @@ final class NewsVM: ObservableObject {
         // Save to backend immediately if authenticated
         if ApiClient.isAuthenticated {
             await saveRemoteSettings()
+        } else {
+            print("🔥 [FORCE SAVE] ⚠️ Not authenticated, skipping backend save")
         }
+        
+        print("🔥 [FORCE SAVE] ✅ Force save completed")
     }
     
     private func saveLocalSettings() {
         let defaults = UserDefaults.standard
         
+        print("💾 [LOCAL SAVE] saveLocalSettings called")
+        print("   selectedTopics to save: \(selectedTopics.sorted())")
+
         // Validate values before saving
         let validPlaybackRate = max(0.5, min(2.0, playbackRate)) // Clamp between 0.5 and 2.0
         let validVoice = availableVoices.contains(selectedVoice) ? selectedVoice : "Alloy"
@@ -549,7 +754,14 @@ final class NewsVM: ObservableObject {
         defaults.set(Array(lastFetchedTopics), forKey: "FetchNews_lastFetchedTopics")
         let topicsArray = Array(selectedTopics).sorted()
         defaults.set(topicsArray, forKey: "FetchNews_selectedTopics")
-        print("💾 [LOCAL] Saved selectedTopics to UserDefaults: \(topicsArray)")
+        defaults.synchronize() // Force immediate write
+        
+        // Verify it was saved
+        if let verified = defaults.array(forKey: "FetchNews_selectedTopics") as? [String] {
+            print("💾 [LOCAL SAVE] ✅ Saved and verified selectedTopics to UserDefaults: \(verified)")
+        } else {
+            print("💾 [LOCAL SAVE] ❌ WARNING: Could not verify save to UserDefaults!")
+        }
         defaults.set(Array(excludedNewsSources), forKey: "FetchNews_excludedNewsSources")
         defaults.set(selectedCountry, forKey: "FetchNews_selectedCountry")
         
@@ -716,37 +928,39 @@ final class NewsVM: ObservableObject {
     }
 
     // MARK: - Fetch flow
-    func fetch() async {
-        guard !selectedTopics.isEmpty, phase == .idle, isDirty else { return }
-        
+    func fetch(using topicsOverride: Set<String>? = nil, force: Bool = false) async {
+        let topicsToFetch = topicsOverride ?? selectedTopics
+        guard !topicsToFetch.isEmpty, phase == .idle, (isDirty || force) else { return }
+        isShowingRecommendedAfterFetch = false
+
         // Check if user can fetch news (prevent unnecessary API calls)
         if let authVM = authVM, !authVM.canFetchNews {
             let limit = authVM.currentUser?.isPremium == true ? 20 : 3
             lastError = "You've reached your daily limit of \(limit) Fetches. Upgrade to Premium for unlimited access."
             return
         }
-        
+
         // Check if premium user has selected at least 5 news sources
         if let authVM = authVM, authVM.currentUser?.isPremium == true {
             // No minimum requirement for excluded sources - can exclude any number
         }
-        
+
         // Cancel any existing request
         currentTask?.cancel()
-        
+
         // Immediately show Fetch Screen with animation
         shouldShowFetchScreen = true
         isBusy = true
         phase = .gather
-        
+
         currentTask = Task {
             combined = nil; items = []; fetchCreatedAt = nil
             resetPlayerState()
             lastError = nil // Clear previous errors
             isDirty = false // Reset dirty flag at start to allow retries
-            
+
             // Note: This is a manual fetch, so when it completes, it will replace any scheduled fetch on the homepage
-            
+
             // Use defer to ensure loading state is always reset, even on cancellation
             defer {
                 Task { @MainActor in
@@ -764,11 +978,11 @@ final class NewsVM: ObservableObject {
 
                 // Check for cancellation before making API call
                 try Task.checkCancellation()
-
+                
         let resp = try await ApiClient.summarize(
-            topics: Array(selectedTopics),
+            topics: Array(topicsToFetch),
             wordCount: length.rawValue,
-            skipTTS: false, // Backend will generate per-topic audio
+            skipTTS: false, // Backend will generate a combined audio track
             goodNewsOnly: upliftingNewsOnly,
             country: selectedCountry
         )
@@ -779,9 +993,10 @@ final class NewsVM: ObservableObject {
                 // and htmlStripped() can destroy paragraph breaks (\n\n)
                 let cleanedCombinedSummary = rawSummary.isEmpty ? "(No summary provided.)" : rawSummary.condenseWhitespace()
 
+                let summaryTitle = (resp.combined?.title ?? "Summary").condenseWhitespace()
+                
                 // Only create combined if we have actual content
                 if !cleanedCombinedSummary.isEmpty && cleanedCombinedSummary != "(No summary provided.)" {
-                    let summaryTitle = (resp.combined?.title ?? "Summary").condenseWhitespace()
                     print("📱 NewsVM: Creating Combined with \(resp.combined?.topicSections?.count ?? 0) topicSections")
                     if let sections = resp.combined?.topicSections {
                         for (i, section) in sections.enumerated() {
@@ -794,7 +1009,7 @@ final class NewsVM: ObservableObject {
                         id: resp.combined?.id ?? resp.items.first?.id ?? "combined",
                         title: summaryTitle,
                         summary: cleanedCombinedSummary,
-                        audioUrl: nil,
+                        audioUrl: resp.combined?.audioUrl,
                         topicSections: resp.combined?.topicSections
                     )
                     // Set now playing title for playback bar
@@ -834,12 +1049,13 @@ final class NewsVM: ObservableObject {
                     throw NetworkError.decodingError(NSError(domain: "NoData", code: 0, userInfo: [NSLocalizedDescriptionKey: "No news articles found for the selected topics. Try different topics or check back later."]))
                 }
 
-                // Per-topic audio is now generated by backend
-                // Topic audio playback is managed by TopicFeedView
-                // Just set the current topic audio URL for reference
-                if let firstTopic = self.combined?.topicSections?.first {
-                    self.currentTopicAudioUrl = firstTopic.audioUrl
+                // Prepare combined audio if available
+                if let audioUrl = self.combined?.audioUrl, !audioUrl.isEmpty {
+                    self.prepareAudio(urlString: audioUrl, title: summaryTitle)
+                } else {
+                    self.resetPlayerState()
                 }
+                self.currentTopicAudioUrl = nil
                 
                 // Record the voice used for this summary
                 self.currentSummaryVoice = self.selectedVoice
@@ -864,7 +1080,7 @@ final class NewsVM: ObservableObject {
                 await saveSummaryToHistory()
                 
                 // Store the topics that were used for this summary before deselecting
-                lastFetchedTopics = selectedTopics
+                lastFetchedTopics = topicsToFetch
                 
                 // Immediately save lastFetchedTopics to backend (not debounced) to ensure persistence
                 if ApiClient.isAuthenticated {
@@ -893,8 +1109,13 @@ final class NewsVM: ObservableObject {
                 // Selected topics should persist for scheduled 6AM/6PM fetches
                 // Users manage their topics via the Topics tab
                 
-                // Refresh recommended topics based on updated selected topics
+                // Refresh recommended topics (lightweight names for HomeView)
                 await fetchRecommendedTopics()
+                
+                // Replace timestamps/playback with recommended topics after fetch
+                _ = await playRecommendedTopicsAfterFetch()
+                
+                // No per-topic feed: skip fetching recommended summaries
                 
                 // Refresh user data to update usage count
                 await authVM?.refreshUser()
@@ -937,6 +1158,20 @@ final class NewsVM: ObservableObject {
     /// Clears all user-specific state when user logs out
     /// This ensures the next user doesn't see the previous user's data
     func clearUserState() {
+        // Cancel any in-flight or pending saves FIRST so they don't
+        // overwrite good data on the backend or leave stale [] in UserDefaults.
+        currentTask?.cancel()
+        currentTask = nil
+        saveSettingsTask?.cancel()
+        saveSettingsTask = nil
+
+        // Suppress all saves triggered by @Published property changes below.
+        // Without this guard, selectedTopics.removeAll() immediately calls
+        // debouncedSaveSettings() -> saveLocalSettings() -> writes [] to
+        // UserDefaults, which causes topics to be lost on the next login.
+        isResettingState = true
+        defer { isResettingState = false }
+
         // Clear summary and audio state
         resetPlayerState()
         combined = nil
@@ -944,50 +1179,71 @@ final class NewsVM: ObservableObject {
         fetchCreatedAt = nil
         shouldShowFetchScreen = false
         nowPlayingTitle = ""
-        
+
         // Clear user-specific topics and preferences
         selectedTopics.removeAll()
         lastFetchedTopics.removeAll()
         customTopics = []
         excludedNewsSources.removeAll()
+        scheduledSummaries = []
 
         // Clear error state
         lastError = nil
-        
+
         // Reset phase and busy state
         phase = .idle
         isBusy = false
         isDirty = true
-        
-        // Cancel any ongoing tasks
-        currentTask?.cancel()
-        currentTask = nil
-        saveSettingsTask?.cancel()
-        saveSettingsTask = nil
-        
+
+        // Reset remote settings loaded flag so next user can load their settings
+        hasLoadedRemoteSettings = false
+
         // Clear voice preview
         voicePreviewPlayer?.pause()
         voicePreviewPlayer = nil
         isPlayingVoicePreview = false
+
+        // Explicitly wipe the per-user UserDefaults keys so the next login
+        // loads fresh data from the backend rather than the previous user's cache.
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "FetchNews_selectedTopics")
+        defaults.removeObject(forKey: "FetchNews_lastFetchedTopics")
+        defaults.removeObject(forKey: "FetchNews_excludedNewsSources")
     }
     
     // MARK: - Audio
     private func resetPlayerState() {
+        print("🔄 resetPlayerState called")
+        
+        // Remove time observer first to stop any further updates
         if let p = player, let token = timeObserverToken {
+            print("   Removing time observer")
             p.removeTimeObserver(token)
             timeObserverToken = nil
         }
+        
+        // Remove end observer
         if let endObs = endObserver {
+            print("   Removing end observer")
             NotificationCenter.default.removeObserver(endObs)
             endObserver = nil
         }
+        
+        // Pause and clear player
         player?.pause()
         player = nil
+        
+        // Reset all state
         canPlay = false
         isPlaying = false
         nowPlayingTitle = ""
         currentTime = 0
         duration = 0
+        
+        print("   ✅ State reset complete - currentTime: \(currentTime), duration: \(duration)")
+        
+        // Force UI update
+        objectWillChange.send()
         updateNowPlaying(isPlaying: false)
     }
 
@@ -1001,16 +1257,24 @@ final class NewsVM: ObservableObject {
     }
 
     private func prepareAudio(urlString: String, title: String) {
+        print("🎵 prepareAudio called")
+        print("   urlString: \(urlString)")
+        print("   title: \(title)")
+        
         guard let url = resolveAudioURL(urlString) else {
-            print("Invalid audio URL:", urlString)
+            print("   ❌ Invalid audio URL:", urlString)
             canPlay = false
             return
         }
+        
+        print("   ✅ Resolved URL: \(url)")
+        
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
             try AVAudioSession.sharedInstance().setActive(true)
+            print("   ✅ Audio session configured")
         } catch {
-            print("AVAudioSession error:", error)
+            print("   ❌ AVAudioSession error:", error)
         }
 
         let item = AVPlayerItem(url: url)
@@ -1023,6 +1287,15 @@ final class NewsVM: ObservableObject {
         nowPlayingTitle = title
         canPlay = true
         isPlaying = false
+        
+        // Explicitly reset time values to ensure UI shows 0:00
+        currentTime = 0
+        duration = 0
+        
+        // Force immediate UI update to show reset state
+        objectWillChange.send()
+        
+        print("   ✅ Audio prepared - canPlay: \(canPlay)")
 
         // Observe time for progress bar
         timeObserverToken = p.addPeriodicTimeObserver(
@@ -1031,10 +1304,17 @@ final class NewsVM: ObservableObject {
         ) { [weak self] time in
             Task { @MainActor in
                 guard let self = self else { return }
-                self.currentTime = time.seconds
-                if let dur = p.currentItem?.duration.seconds, dur.isFinite {
+                let newTime = time.seconds
+                
+                // Only update if the new time is valid
+                if newTime.isFinite && newTime >= 0 {
+                    self.currentTime = newTime
+                }
+                
+                if let dur = p.currentItem?.duration.seconds, dur.isFinite && dur > 0 {
                     self.duration = dur
                 }
+                
                 // Force view update to ensure UI refreshes
                 self.objectWillChange.send()
             }
@@ -1048,9 +1328,14 @@ final class NewsVM: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self else { return }
+                print("🎵 Audio playback ended")
+                print("   Duration was: \(self.duration)")
+                
                 self.isPlaying = false
-                self.currentTime = self.duration
+                self.currentTime = self.duration // Show at end momentarily
                 self.updateNowPlaying(isPlaying: false)
+                
+                print("   ⏭️ Triggering auto-scroll to next topic")
                 
                 // Trigger auto-scroll to next topic in feed
                 self.shouldAutoScroll = true
@@ -1085,21 +1370,46 @@ final class NewsVM: ObservableObject {
     }
 
     func playPause() {
+        print("🎵 playPause() called")
+        print("   Current state: isPlaying=\(isPlaying), canPlay=\(canPlay)")
+        print("   Player exists: \(player != nil)")
+        
         // Stop any voice preview first
         voicePreviewPlayer?.pause()
         voicePreviewPlayer = nil
         isPlayingVoicePreview = false
         
-        guard let p = player else { return }
+        if player == nil {
+            let fallbackAudioUrl = currentTopicAudioUrl
+                ?? combined?.audioUrl
+                ?? combined?.topicSections?.first?.audioUrl
+            let fallbackTitle = currentTopicAudioUrl != nil
+                ? (combined?.topicSections?.first?.topic.capitalized ?? nowPlayingTitle)
+                : (combined?.title ?? nowPlayingTitle)
+            
+            if let audioUrl = fallbackAudioUrl, !audioUrl.isEmpty {
+                print("   🔄 No player - preparing fallback audio")
+                prepareAudio(urlString: audioUrl, title: fallbackTitle.isEmpty ? "Summary" : fallbackTitle)
+            }
+        }
+        
+        guard let p = player else {
+            print("   ⚠️ No player available!")
+            return
+        }
+        
         if isPlaying {
+            print("   ⏸️ Pausing audio")
             p.pause()
             isPlaying = false
             updateNowPlaying(isPlaying: false)
         } else {
+            print("   ▶️ Playing audio at rate \(playbackRate)")
             p.play()
             p.rate = Float(playbackRate)
             isPlaying = true
             updateNowPlaying(isPlaying: true)
+            print("   ✅ Audio started - isPlaying=\(isPlaying)")
         }
     }
 
@@ -1111,6 +1421,27 @@ final class NewsVM: ObservableObject {
                 guard let self = self else { return }
                 self.currentTime = seconds
                 self.updateNowPlaying(isPlaying: self.isPlaying)
+            }
+        }
+    }
+    
+    /// Ensure combined summary audio is prepared and active (for timestamp seeking).
+    func switchToCombinedAudio(autoPlay: Bool = false) {
+        guard let audioUrl = combined?.audioUrl, !audioUrl.isEmpty else {
+            print("⚠️ No combined audio available")
+            return
+        }
+        
+        let title = combined?.title.isEmpty == false ? combined!.title : "Summary"
+        
+        if currentTopicAudioUrl != nil || player == nil || !canPlay || nowPlayingTitle != title {
+            currentTopicAudioUrl = nil
+            prepareAudio(urlString: audioUrl, title: title)
+        }
+        
+        if autoPlay {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.playPause()
             }
         }
     }
@@ -1139,28 +1470,107 @@ final class NewsVM: ObservableObject {
     
     /// Stop audio for current topic
     func stopTopicAudio() {
+        print("⏹️ stopTopicAudio called")
+        print("   Current state - isPlaying: \(isPlaying), currentTime: \(currentTime)")
+        
         if isPlaying {
             player?.pause()
             isPlaying = false
             updateNowPlaying(isPlaying: false)
         }
+        
+        // Reset time to 0 when stopping (prevents bar staying at end)
+        currentTime = 0
+        
+        print("   ✅ Stopped - currentTime reset to: \(currentTime)")
+        
+        // Force UI update
+        objectWillChange.send()
     }
     
     /// Switch to a different topic's audio
     func switchToTopicAudio(for topicSection: TopicSection, autoPlay: Bool = false) {
-        guard let audioUrl = topicSection.audioUrl else { return }
+        print("🎵 switchToTopicAudio called for: \(topicSection.topic)")
+        print("   Has audioUrl: \(topicSection.audioUrl != nil)")
+        print("   Current audioUrl: \(currentTopicAudioUrl ?? "nil")")
+        print("   Current isPlaying: \(isPlaying), canPlay: \(canPlay)")
+        print("   Current time: \(currentTime), duration: \(duration)")
+        print("   autoPlay: \(autoPlay)")
+        
+        guard let audioUrl = topicSection.audioUrl else {
+            print("   ⚠️ No audio URL, returning")
+            return
+        }
+        
+        print("   New Audio URL: \(audioUrl)")
         
         // Only switch if it's a different audio URL
         if currentTopicAudioUrl != audioUrl {
-            let wasPlaying = isPlaying
-            stopTopicAudio()
-            prepareAudio(urlString: audioUrl, title: topicSection.topic.capitalized)
-            currentTopicAudioUrl = audioUrl
+            print("   ✅ Different URL detected - switching audio")
             
-            // Resume playing if it was playing before or autoPlay is true
-            if wasPlaying || autoPlay {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                    self?.playPause()
+            // FIRST: Signal UI to reset any scrubbing state BEFORE changing anything else
+            print("   🔄 Step 1: Signaling UI to reset scrubbing state...")
+            forceProgressBarReset.toggle()
+            print("   🔄 Toggled forceProgressBarReset to: \(forceProgressBarReset)")
+            
+            // SECOND: Stop current audio and explicitly reset ALL state
+            print("   🔄 Step 2: Stopping current audio and resetting state...")
+            stopTopicAudio()
+            
+            // THIRD: Explicitly reset time values
+            print("   🔄 Step 3: Resetting time values...")
+            currentTime = 0
+            duration = 0
+            canPlay = false
+            isPlaying = false
+            
+            print("   ✅ State reset complete - currentTime: \(currentTime), duration: \(duration)")
+            
+            // Force UI update
+            objectWillChange.send()
+            
+            // Small delay to let UI process the reset
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                guard let self = self else { return }
+                
+                // Prepare new audio
+                print("   Preparing new audio...")
+                self.prepareAudio(urlString: audioUrl, title: topicSection.topic.capitalized)
+                self.currentTopicAudioUrl = audioUrl
+                
+                print("   ✅ After prepareAudio - canPlay: \(self.canPlay), isPlaying: \(self.isPlaying)")
+                print("   After prepareAudio - currentTime: \(self.currentTime), duration: \(self.duration)")
+                
+                // Always auto-play when explicitly requested
+                if autoPlay {
+                    print("   🎵 Auto-play requested - will start playback in 0.4s")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                        guard let self = self else { return }
+                        print("   🎵 Starting playback now - isPlaying before: \(self.isPlaying)")
+                        if !self.isPlaying {
+                            self.playPause()
+                            print("   🎵 Playback started - isPlaying after: \(self.isPlaying)")
+                        } else {
+                            print("   ⚠️ Already playing, skipping playPause")
+                        }
+                    }
+                } else {
+                    print("   ℹ️ Auto-play NOT requested")
+                }
+            }
+        } else {
+            print("   ⚠️ Same URL detected")
+            // Even if same URL, reset to beginning if autoPlay is requested
+            if autoPlay {
+                print("   🔄 Same URL but autoPlay requested - seeking to start")
+                currentTime = 0
+                duration = player?.currentItem?.duration.seconds ?? 0
+                seek(to: 0)
+                objectWillChange.send()
+                if !isPlaying {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                        self?.playPause()
+                    }
                 }
             }
         }
@@ -1252,26 +1662,295 @@ final class NewsVM: ObservableObject {
     }
     
     func fetchRecommendedTopics() async {
-        // Only fetch if user has selected topics
-        guard !selectedTopics.isEmpty else {
+        print("🌟 [RECOMMENDED] fetchRecommendedTopics called - selectedTopics: \(selectedTopics.sorted()), authenticated: \(ApiClient.isAuthenticated)")
+
+        // Only fetch if user is authenticated
+        guard ApiClient.isAuthenticated else {
+            print("🌟 [RECOMMENDED] Skipping - user not authenticated")
             await MainActor.run {
                 self.recommendedTopics = []
             }
             return
         }
-        
+
         do {
+            print("🌟 [RECOMMENDED] Fetching from backend...")
             let response = try await ApiClient.getRecommendedTopicNames()
             await MainActor.run {
                 self.recommendedTopics = response.recommendedTopics
-                print("✅ Fetched \(self.recommendedTopics.count) recommended topics: \(self.recommendedTopics.joined(separator: ", "))")
+                print("🌟 [RECOMMENDED] ✅ Fetched \(self.recommendedTopics.count) recommended topics: \(self.recommendedTopics.joined(separator: ", "))")
             }
         } catch {
-            print("Failed to fetch recommended topics: \(error)")
+            print("🌟 [RECOMMENDED] ❌ Failed to fetch recommended topics: \(error)")
             // On error, clear recommended topics
             await MainActor.run {
                 self.recommendedTopics = []
             }
+        }
+    }
+
+    private func playRecommendedTopicsAfterFetch() async -> Bool {
+        guard ApiClient.isAuthenticated else { return false }
+        
+        let recommendedNames: [String]
+        do {
+            let response = try await ApiClient.getRecommendedTopicNames()
+            recommendedNames = response.recommendedTopics
+        } catch {
+            print("🌟 [RECOMMENDED] ❌ Failed to load recommended names after fetch: \(error)")
+            return false
+        }
+        
+        guard !recommendedNames.isEmpty else { return false }
+        
+        do {
+            let resp = try await ApiClient.summarize(
+                topics: recommendedNames,
+                wordCount: length.rawValue,
+                skipTTS: false,
+                goodNewsOnly: upliftingNewsOnly,
+                country: selectedCountry
+            )
+            
+            let rawSummary = resp.combined?.summary ?? resp.items.first?.summary ?? ""
+            let cleanedCombinedSummary = rawSummary.isEmpty ? "(No summary provided.)" : rawSummary.condenseWhitespace()
+            let summaryTitle = (resp.combined?.title ?? "Recommended").condenseWhitespace()
+            
+            guard !cleanedCombinedSummary.isEmpty && cleanedCombinedSummary != "(No summary provided.)" else {
+                return false
+            }
+            
+            let processedItems = await Task.detached {
+                resp.items.map { it in
+                    Item(
+                        id: it.id,
+                        title: it.title.condenseWhitespace(),
+                        summary: it.summary.htmlStripped().condenseWhitespace(),
+                        url: it.url,
+                        source: it.source,
+                        topic: it.topic,
+                        audioUrl: it.audioUrl
+                    )
+                }
+            }.value
+            
+            await MainActor.run {
+                self.resetPlayerState()
+                self.combined = Combined(
+                    id: resp.combined?.id ?? "recommended-\(UUID().uuidString)",
+                    title: summaryTitle,
+                    summary: cleanedCombinedSummary,
+                    audioUrl: resp.combined?.audioUrl,
+                    topicSections: resp.combined?.topicSections
+                )
+                self.items = processedItems
+                self.fetchCreatedAt = Date()
+                self.currentTopicIndex = 0
+                self.currentTopicAudioUrl = nil
+                self.nowPlayingTitle = summaryTitle
+                self.recommendedTopics = recommendedNames
+                self.isShowingRecommendedAfterFetch = true
+            }
+            
+            if let audioUrl = resp.combined?.audioUrl, !audioUrl.isEmpty {
+                prepareAudio(urlString: audioUrl, title: summaryTitle)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    self?.playPause()
+                }
+            } else {
+                resetPlayerState()
+            }
+            
+            return true
+        } catch {
+            print("🌟 [RECOMMENDED] ❌ Failed to load recommended after fetch: \(error)")
+            return false
+        }
+    }
+
+    func loadRecommendedTopicsFeedIfNeeded() async {
+        guard selectedTopics.isEmpty else { return }
+        guard ApiClient.isAuthenticated else { return }
+        guard !isLoadingRecommendedFeed else { return }
+        if isUsingRecommendedFeed, combined?.audioUrl != nil {
+            return
+        }
+
+        isLoadingRecommendedFeed = true
+        defer { isLoadingRecommendedFeed = false }
+
+        do {
+            let namesResponse = try await ApiClient.getRecommendedTopicNames()
+            let recommendedNames = namesResponse.recommendedTopics
+            await MainActor.run {
+                guard !recommendedNames.isEmpty else {
+                    self.isUsingRecommendedFeed = false
+                    return
+                }
+                self.recommendedTopics = recommendedNames
+            }
+
+            let resp = try await ApiClient.summarize(
+                topics: recommendedNames,
+                wordCount: length.rawValue,
+                skipTTS: false,
+                goodNewsOnly: upliftingNewsOnly,
+                country: selectedCountry
+            )
+
+            let rawSummary = resp.combined?.summary ?? resp.items.first?.summary ?? ""
+            let cleanedCombinedSummary = rawSummary.isEmpty ? "(No summary provided.)" : rawSummary.condenseWhitespace()
+            let summaryTitle = (resp.combined?.title ?? "Recommended").condenseWhitespace()
+
+            let processedItems = await Task.detached {
+                resp.items.map { it in
+                    Item(
+                        id: it.id,
+                        title: it.title.condenseWhitespace(),
+                        summary: it.summary.htmlStripped().condenseWhitespace(),
+                        url: it.url,
+                        source: it.source,
+                        topic: it.topic,
+                        audioUrl: it.audioUrl
+                    )
+                }
+            }.value
+
+            await MainActor.run {
+                guard !cleanedCombinedSummary.isEmpty && cleanedCombinedSummary != "(No summary provided.)" else {
+                    self.isUsingRecommendedFeed = false
+                    self.combined = nil
+                    self.items = []
+                    self.fetchCreatedAt = nil
+                    self.resetPlayerState()
+                    return
+                }
+
+                // Replace any stale summary with a recommended feed.
+                self.resetPlayerState()
+                self.combined = Combined(
+                    id: resp.combined?.id ?? "recommended-\(UUID().uuidString)",
+                    title: summaryTitle,
+                    summary: cleanedCombinedSummary,
+                    audioUrl: resp.combined?.audioUrl,
+                    topicSections: resp.combined?.topicSections
+                )
+                self.items = processedItems
+                self.fetchCreatedAt = Date()
+                self.currentTopicIndex = 0
+                self.currentTopicAudioUrl = nil
+                self.nowPlayingTitle = summaryTitle
+                self.isUsingRecommendedFeed = true
+                if let audioUrl = resp.combined?.audioUrl, !audioUrl.isEmpty {
+                    self.prepareAudio(urlString: audioUrl, title: summaryTitle)
+                }
+            }
+        } catch {
+            print("🌟 [RECOMMENDED] ❌ Failed to load recommended feed: \(error)")
+        }
+    }
+
+    private func clearRecommendedFeedIfNeeded() async {
+        guard isUsingRecommendedFeed else { return }
+        await MainActor.run {
+            self.isUsingRecommendedFeed = false
+            self.combined = nil
+            self.items = []
+            self.fetchCreatedAt = nil
+            self.currentTopicIndex = 0
+            self.currentTopicAudioUrl = nil
+            self.nowPlayingTitle = ""
+            self.resetPlayerState()
+        }
+    }
+    
+    func fetchRecommendedTopicSummaries() async {
+        print("🌟 [RECOMMENDED SUMMARIES] Starting background fetch - selectedTopics: \(selectedTopics.sorted())")
+        
+        // Only fetch if user has selected topics
+        guard !selectedTopics.isEmpty else {
+            print("🌟 [RECOMMENDED SUMMARIES] Skipping - no selected topics")
+            return
+        }
+        
+        // Skip if user has too many topics (backend timeout risk)
+        guard selectedTopics.count < 6 else {
+            print("🌟 [RECOMMENDED SUMMARIES] Skipping - user has \(selectedTopics.count) topics (too many for recommendations)")
+            return
+        }
+        
+        // Only fetch if we have a current summary
+        guard combined != nil else {
+            print("🌟 [RECOMMENDED SUMMARIES] Skipping - no current summary")
+            return
+        }
+        
+        // Only fetch if user is authenticated
+        guard ApiClient.isAuthenticated else {
+            print("🌟 [RECOMMENDED SUMMARIES] Skipping - user not authenticated")
+            return
+        }
+        
+        do {
+            // Get recommended topic names first
+            print("🌟 [RECOMMENDED SUMMARIES] Getting topic names...")
+            let response = try await ApiClient.getRecommendedTopicNames()
+            let recommendedNames = Array(response.recommendedTopics.prefix(3))
+            
+            guard !recommendedNames.isEmpty else {
+                print("🌟 [RECOMMENDED SUMMARIES] No recommendations available")
+                return
+            }
+            
+            print("🌟 [RECOMMENDED SUMMARIES] Fetching summaries for: \(recommendedNames.joined(separator: ", "))")
+            
+            // Add delay to ensure user's topics are already loaded
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+            
+            // Fetch full summaries for recommended topics
+            let recommendedResp = try await ApiClient.summarize(
+                topics: recommendedNames,
+                wordCount: length.rawValue,
+                skipTTS: false,
+                goodNewsOnly: upliftingNewsOnly,
+                country: selectedCountry
+            )
+            
+            // Check if we still have the same summary (user didn't fetch again)
+            guard let currentCombined = combined, currentCombined.id == combined?.id else {
+                print("🌟 [RECOMMENDED SUMMARIES] Summary changed, aborting")
+                return
+            }
+            
+            // Get the new recommended topic sections
+            let newRecommendedSections = recommendedResp.combined?.topicSections ?? []
+            
+            guard !newRecommendedSections.isEmpty else {
+                print("🌟 [RECOMMENDED SUMMARIES] No topic sections in response")
+                return
+            }
+            
+            print("🌟 [RECOMMENDED SUMMARIES] ✅ Got \(newRecommendedSections.count) recommended summaries")
+            
+            // Append to existing topic sections by creating a new Combined
+            await MainActor.run {
+                if let existingCombined = self.combined,
+                   var existingSections = existingCombined.topicSections {
+                    existingSections.append(contentsOf: newRecommendedSections)
+                    
+                    // Create new Combined with updated sections
+                    self.combined = Combined(
+                        id: existingCombined.id,
+                        title: existingCombined.title,
+                        summary: existingCombined.summary,
+                        audioUrl: existingCombined.audioUrl,
+                        topicSections: existingSections
+                    )
+                    print("🌟 [RECOMMENDED SUMMARIES] ✅ Appended to feed - now have \(existingSections.count) total topics")
+                }
+            }
+        } catch {
+            print("🌟 [RECOMMENDED SUMMARIES] ❌ Failed: \(error)")
         }
     }
     
@@ -1360,6 +2039,45 @@ final class NewsVM: ObservableObject {
             excludedNewsSources.remove(sourceId)
         } else {
             excludedNewsSources.insert(sourceId)
+        }
+    }
+    
+    // MARK: - Scheduled Summaries Management
+    
+    func loadScheduledSummaries() async {
+        do {
+            let summaries = try await ApiClient.getScheduledSummaries()
+            await MainActor.run {
+                self.scheduledSummaries = summaries
+            }
+        } catch {
+            print("Failed to load scheduled summaries: \(error)")
+            // Silently fail - scheduled summaries are optional
+        }
+    }
+    
+    func createScheduledSummary(_ summary: ScheduledSummary) async throws -> ScheduledSummary {
+        let created = try await ApiClient.createScheduledSummary(summary)
+        await MainActor.run {
+            self.scheduledSummaries.append(created)
+        }
+        return created
+    }
+    
+    func updateScheduledSummary(_ summary: ScheduledSummary) async throws -> ScheduledSummary {
+        let updated = try await ApiClient.updateScheduledSummary(summary)
+        await MainActor.run {
+            if let index = self.scheduledSummaries.firstIndex(where: { $0.id == summary.id }) {
+                self.scheduledSummaries[index] = updated
+            }
+        }
+        return updated
+    }
+    
+    func deleteScheduledSummary(id: String) async throws {
+        try await ApiClient.deleteScheduledSummary(id: id)
+        await MainActor.run {
+            self.scheduledSummaries.removeAll { $0.id == id }
         }
     }
     
@@ -1515,6 +2233,11 @@ final class NewsVM: ObservableObject {
                         print("⚠️ No entries in last 48 hours, using most recent: \(mostRecent.topics.joined(separator: ", "))")
                     }
                 }
+            }
+
+            if selectedTopics.isEmpty {
+                await loadRecommendedTopicsFeedIfNeeded()
+                return
             }
             
             // Always load the most recent fetch (whether scheduled or manual)

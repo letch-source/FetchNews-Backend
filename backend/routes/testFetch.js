@@ -2,7 +2,7 @@ const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 const { fetchArticlesFromCache, getCacheHealth } = require('../services/cachedArticleFetcher');
 const { getMultipleTopicSummaries } = require('../services/topicSummaryService');
-const { combineTopicSummaries, addIntroAndOutro } = require('../index');
+const { combineTopicSummaries, addIntroAndOutro } = require('../utils/summaryHelpers');
 
 const router = express.Router();
 

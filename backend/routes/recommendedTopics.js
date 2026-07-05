@@ -12,7 +12,7 @@ router.get('/', authenticateToken, async (req, res) => {
     const user = req.user;
     
     // Lazy require to avoid circular dependencies
-    const { generateTTS } = require('../index');
+    const { generateTTS } = require('../services/ttsService');
     const { getMultipleTopicSummaries } = require('../services/topicSummaryService');
     const { fetchArticlesFromCache } = require('../services/cachedArticleFetcher');
     

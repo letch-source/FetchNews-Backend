@@ -37,6 +37,17 @@
 	<array>
 		<string>webcredentials:fetchnews-backend.onrender.com</string>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>192.168.0.113</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Fetch News needs access to your microphone to enable voice questions for the AI assistant.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

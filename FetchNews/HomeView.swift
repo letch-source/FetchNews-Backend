@@ -75,6 +75,26 @@ struct HomeView: View {
                         showAll: $showAllSelected
                     )
                     
+                    // Recommended Topics Section (show after user has content)
+                    let hasContent = vm.combined != nil || !vm.items.isEmpty
+                    let _ = print("🎨 [UI] Recommended section check - hasContent: \(hasContent), combined: \(vm.combined != nil), items: \(vm.items.count), recommendedTopics: \(vm.recommendedTopics.count)")
+                    
+                    if hasContent {
+                        RecommendedTopicsSection(
+                            recommendedTopics: vm.recommendedTopics,
+                            selectedTopics: vm.selectedTopics,
+                            onAddTopic: { topic in
+                                vm.toggle(topic)
+                                // Also add to custom topics if not already there
+                                if !vm.customTopics.contains(topic) {
+                                    Task {
+                                        await vm.addCustomTopic(topic)
+                                    }
+                                }
+                            }
+                        )
+                    }
+                    
                     // Trending Topics Section
                     TrendingTopicsSection(
                         trendingTopics: vm.trendingTopics,
@@ -507,6 +527,99 @@ struct CustomTopicsSection: View {
             TopicBrowserView()
                 .environmentObject(vm)
         }
+    }
+}
+
+struct RecommendedTopicsSection: View {
+    let recommendedTopics: [String]
+    let selectedTopics: Set<String>
+    let onAddTopic: (String) -> Void
+    
+    init(recommendedTopics: [String], selectedTopics: Set<String>, onAddTopic: @escaping (String) -> Void) {
+        self.recommendedTopics = recommendedTopics
+        self.selectedTopics = selectedTopics
+        self.onAddTopic = onAddTopic
+        print("🎨 [UI] RecommendedTopicsSection init - \(recommendedTopics.count) topics: \(recommendedTopics.joined(separator: ", "))")
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Only show if we have recommended topics
+            if !recommendedTopics.isEmpty {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text("Reccomended")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                            
+                            Image(systemName: "sparkles")
+                                .font(.subheadline)
+                                .foregroundColor(.yellow)
+                        }
+                        
+                        Text("Based on your interests")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                
+                // Recommended topics with Add buttons
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(recommendedTopics, id: \.self) { topic in
+                            RecommendedTopicChip(
+                                title: smartCapitalized(topic),
+                                isSelected: selectedTopics.contains(topic.lowercased())
+                            ) {
+                                onAddTopic(topic.lowercased())
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+            }
+        }
+    }
+}
+
+struct RecommendedTopicChip: View {
+    let title: String
+    let isSelected: Bool
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption)
+                } else {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.caption)
+                }
+            }
+            .foregroundColor(isSelected ? .white : .primary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(isSelected ? Color.blue : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(isSelected ? Color.clear : Color.gray.opacity(0.3), lineWidth: 1.5)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 

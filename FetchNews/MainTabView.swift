@@ -22,7 +22,7 @@ struct MainTabView: View {
             Group {
                 switch selectedTab {
                 case 0:
-                    TopicFeedView()
+                    SummaryHomeView()
                         .environmentObject(vm)
                         .environmentObject(authVM)
                 case 1:
@@ -38,7 +38,7 @@ struct MainTabView: View {
                         .environmentObject(vm)
                         .environmentObject(authVM)
                 default:
-                    TopicFeedView()
+                    SummaryHomeView()
                         .environmentObject(vm)
                         .environmentObject(authVM)
                 }
@@ -82,8 +82,9 @@ struct MainTabView: View {
                 Spacer()
                 // Show audio bar only on homepage when there's content or when fetching
                 if selectedTab == 0 && (vm.canPlay || vm.combined != nil || !vm.lastFetchedTopics.isEmpty || vm.isBusy || vm.shouldShowFetchScreen) {
+                    let fallbackTitle = vm.selectedTopics.isEmpty ? "Recommended News" : userNewsTitle(from: vm.lastFetchedTopics)
                     CompactNowPlayingBubble(
-                        title: vm.nowPlayingTitle.isEmpty ? userNewsTitle(from: vm.lastFetchedTopics) : vm.nowPlayingTitle,
+                        title: vm.nowPlayingTitle.isEmpty ? fallbackTitle : vm.nowPlayingTitle,
                         isPlaying: vm.isPlaying,
                         current: isScrubbing ? scrubValue : vm.currentTime,
                         duration: vm.duration,
@@ -96,7 +97,7 @@ struct MainTabView: View {
                             isScrubbing = editing
                             if !editing { vm.seek(to: scrubValue) }
                         },
-                        onAIAssistant: vm.combined != nil ? {
+                        onTap: vm.combined != nil ? {
                             // Remember if audio was playing
                             wasPlayingBeforeAssistant = vm.isPlaying
                             // Pause audio before opening assistant
@@ -105,6 +106,7 @@ struct MainTabView: View {
                             }
                             showAIAssistant = true
                         } : nil,
+                        onAIAssistant: nil,
                         hasContent: vm.combined != nil
                     )
                     .padding(.horizontal, 12)

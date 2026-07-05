@@ -2,6 +2,7 @@ const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 const mongoose = require('mongoose');
 const fallbackAuth = require('../utils/fallbackAuth');
+const User = require('../models/User');
 
 const router = express.Router();
 
@@ -13,7 +14,6 @@ router.get('/debug', authenticateToken, async (req, res) => {
     
     let dbUser = null;
     if (isMongoConnected) {
-      const User = require('../models/User');
       dbUser = await User.findById(user._id);
     }
     

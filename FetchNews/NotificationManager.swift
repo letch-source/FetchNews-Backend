@@ -11,10 +11,13 @@ import UIKit
 
 class NotificationManager: NSObject, ObservableObject {
     static let shared = NotificationManager()
-    
+
     @Published var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published var deviceToken: String?
-    
+
+    // Key used to persist a token that arrived before the user was authenticated
+    private let pendingTokenKey = "PendingAPNsToken"
+
     private override init() {
         super.init()
         checkAuthorizationStatus()
@@ -69,37 +72,50 @@ class NotificationManager: NSObject, ObservableObject {
     // Send device token to backend (public so it can be called after auth)
     func sendTokenToBackend(_ token: String) async {
         guard ApiClient.isAuthenticated else {
-            print("⚠️ Not authenticated, skipping token registration")
+            print("⚠️ Not authenticated, storing token for retry")
+            UserDefaults.standard.set(token, forKey: pendingTokenKey)
             return
         }
-        
+
         do {
             let endpoint = "/api/notifications/register-token"
             var req = URLRequest(url: ApiClient.base.appendingPathComponent(endpoint))
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            
+
             if let authToken = ApiClient.getAuthToken() {
                 req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
             }
-            
+
             let body = ["deviceToken": token]
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
-            
+
             let (data, response) = try await URLSession.shared.data(for: req)
-            
+
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw NetworkError.invalidResponse
             }
-            
+
             if httpResponse.statusCode == 200 {
+                UserDefaults.standard.removeObject(forKey: pendingTokenKey)
                 print("✅ Successfully registered push notification token")
             } else {
+                UserDefaults.standard.set(token, forKey: pendingTokenKey)
                 let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
-                print("❌ Failed to register token: \(errorResponse?.error ?? "Unknown error")")
+                print("❌ Backend rejected token registration; will retry later: \(errorResponse?.error ?? "Unknown error")")
             }
         } catch {
+            UserDefaults.standard.set(token, forKey: pendingTokenKey)
             print("❌ Error registering device token: \(error)")
+        }
+    }
+
+    // Retry registering a pending token — call this after successful login and on scene activation
+    func retryPendingTokenRegistration() async {
+        if let pendingToken = UserDefaults.standard.string(forKey: pendingTokenKey) {
+            await sendTokenToBackend(pendingToken)
+        } else if let currentToken = deviceToken {
+            await sendTokenToBackend(currentToken)
         }
     }
     

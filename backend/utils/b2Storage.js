@@ -7,6 +7,9 @@ const B2_BUCKET_NAME = process.env.B2_BUCKET_NAME;
 const B2_ENDPOINT = process.env.B2_ENDPOINT;
 const B2_REGION = process.env.B2_REGION || 'us-west-004';
 
+// Maximum time to wait for a B2 upload before giving up (ms)
+const B2_UPLOAD_TIMEOUT_MS = 8000;
+
 // Create S3 client configured for Backblaze B2
 const b2Client = new S3Client({
   endpoint: `https://${B2_ENDPOINT}`,
@@ -14,6 +17,10 @@ const b2Client = new S3Client({
   credentials: {
     accessKeyId: B2_KEY_ID,
     secretAccessKey: B2_APPLICATION_KEY,
+  },
+  requestHandler: {
+    requestTimeout: B2_UPLOAD_TIMEOUT_MS,
+    connectionTimeout: 4000,
   },
 });
 
@@ -28,6 +35,12 @@ async function uploadAudioToB2(fileBuffer, fileName) {
     throw new Error('B2 credentials not configured. Please check environment variables.');
   }
 
+  // Detect obvious placeholder values and fail fast — don't waste time on a real network call
+  const placeholders = ['your-', 'Backblaze-Key', 'placeholder', 'changeme', 'your_key'];
+  if (placeholders.some(p => B2_APPLICATION_KEY.toLowerCase().includes(p.toLowerCase()))) {
+    throw new Error('B2 application key appears to be a placeholder value.');
+  }
+
   try {
     const uploadParams = {
       Bucket: B2_BUCKET_NAME,
@@ -39,7 +52,14 @@ async function uploadAudioToB2(fileBuffer, fileName) {
     };
 
     const command = new PutObjectCommand(uploadParams);
-    await b2Client.send(command);
+
+    // Race the upload against a hard timeout so a bad credential never stalls the server
+    await Promise.race([
+      b2Client.send(command),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`B2 upload timed out after ${B2_UPLOAD_TIMEOUT_MS}ms`)), B2_UPLOAD_TIMEOUT_MS)
+      ),
+    ]);
 
     // Construct the public URL
     // Format: https://f004.backblazeb2.com/file/bucket-name/file-name

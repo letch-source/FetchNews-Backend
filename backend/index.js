@@ -32,6 +32,7 @@ const topicIntelligenceRoutes = require("./routes/topicIntelligence");
 const { sendEngagementReminder, sendFetchReadyNotification } = require("./utils/notifications");
 const fallbackAuth = require("./utils/fallbackAuth");
 const { uploadAudioToB2, isB2Configured } = require("./utils/b2Storage");
+const { generateTTS } = require("./services/ttsService");
 const User = require("./models/User");
 const GlobalSettings = require("./models/GlobalSettings");
 const ArticleCache = require("./models/ArticleCache");
@@ -755,15 +756,9 @@ if (!fs.existsSync(MEDIA_DIR)) {
 app.use("/media", express.static(MEDIA_DIR, { fallthrough: true }));
 
 // --- TTS Helper Function ---
-/**
- * Generate TTS audio for text and return the audio URL
- * @param {string} text - The text to convert to speech
- * @param {string} voice - The voice to use (alloy, echo, fable, onyx, nova, shimmer)
- * @param {number} speed - The playback speed (0.25 to 4.0)
- * @param {string} baseUrl - The base URL for constructing audio URLs
- * @returns {Promise<{audioUrl: string}>} - Object containing the audio URL
- */
-async function generateTTS(text, voice = 'alloy', speed = 1.0, baseUrl = '') {
+// generateTTS is imported from services/ttsService.js (shared with autoFetchSummaries.js)
+// Keeping this wrapper so existing callers in this file are unaffected.
+async function _generateTTS_UNUSED(text, voice = 'alloy', speed = 1.0, baseUrl = '') {
   if (!OPENAI_API_KEY) {
     throw new Error('OpenAI API key not configured');
   }
@@ -2992,32 +2987,22 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     // Generate a better title based on topics
     let title = await generateCatchyTitle(topics);
 
-    // Generate TTS audio for each topic section (unless skipTTS is true)
+    // Generate a single combined audio track (unless skipTTS is true)
     const skipTTS = req.query.noTts === '1' || req.body.skipTTS === true;
     const selectedVoice = req.user?.selectedVoice || 'alloy';
     const playbackRate = req.user?.playbackRate || 1.0;
+    let combinedAudioUrl = null;
     
-    if (!skipTTS && topicSections.length > 0) {
-      console.log(`🎤 [PER-TOPIC TTS] Generating audio for ${topicSections.length} topics...`);
-      
+    if (!skipTTS && combinedText && combinedText.trim()) {
+      console.log(`🎤 [COMBINED TTS] Generating audio for combined summary...`);
       const baseUrl = req.protocol + '://' + req.get('host');
-      
-      // Generate TTS for each topic in parallel
-      const ttsPromises = topicSections.map(async (section, index) => {
-        try {
-          console.log(`   Generating audio for topic: ${section.topic}`);
-          const audioData = await generateTTS(section.summary, selectedVoice, playbackRate, baseUrl);
-          section.audioUrl = audioData.audioUrl;
-          console.log(`   ✅ Audio generated for ${section.topic}`);
-        } catch (ttsError) {
-          console.error(`   ❌ Failed to generate audio for ${section.topic}:`, ttsError);
-          section.audioUrl = null;
-        }
-      });
-      
-      // Wait for all TTS to complete
-      await Promise.all(ttsPromises);
-      console.log(`🎤 [PER-TOPIC TTS] Completed audio generation for all topics`);
+      try {
+        const audioData = await generateTTS(combinedText, selectedVoice, playbackRate, baseUrl);
+        combinedAudioUrl = audioData.audioUrl;
+        console.log(`🎤 [COMBINED TTS] ✅ Combined audio generated`);
+      } catch (ttsError) {
+        console.error(`🎤 [COMBINED TTS] ❌ Failed to generate combined audio:`, ttsError);
+      }
     }
 
     // Send notification if user is not in app and has device token (after response is sent)
@@ -3025,9 +3010,9 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     const appInForeground = req.query.appInForeground !== 'false' && req.body.appInForeground !== false;
     
     // Send response first
-    console.log(`📊 [TOPIC FEEDBACK] Sending ${topicSections.length} topic sections`);
+    console.log(`📊 [TOPIC FEEDBACK] Sending ${topicSections.length} topic sections (no per-topic audio)`);
     for (const section of topicSections) {
-      console.log(`   - Topic: ${section.topic}, Articles: ${section.articles.length}, Audio: ${section.audioUrl ? 'YES' : 'NO'}`);
+      console.log(`   - Topic: ${section.topic}, Articles: ${section.articles.length}`);
     }
     
     const responseData = {
@@ -3036,8 +3021,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         id: `combined-${Date.now()}`,
         title: title,
         summary: combinedText,
-        audioUrl: null, // No longer generating combined audio - using per-topic instead
-        topicSections: topicSections // Include structured topic data with audio
+        audioUrl: combinedAudioUrl, // Single long summary audio
+        topicSections: topicSections // Include structured topic data (no per-topic audio)
       },
     };
     
@@ -3220,7 +3205,10 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
           return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
         }
 
-        for (const topic of topics) {
+        // Process topics concurrently instead of one-at-a-time — each topic involves an
+        // article search plus a ChatGPT summarization call (several seconds each), and
+        // running them sequentially made an 8-topic fetch take 40-70+ seconds.
+        const topicResults = await Promise.all(topics.map(async (topic) => {
           try {
             const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
             // Normalize geo data structure for batch
@@ -3235,9 +3223,9 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
               country: batchCountry.toUpperCase(),
               countryCode: batchCountry.toLowerCase()
             };
-            
+
             let { articles } = await fetchArticlesForTopic(topic, geoData, perTopic, selectedSources);
-            
+
             // Filter out excluded sources (if any)
             if (excludedSources && excludedSources.length > 0) {
               const excludedSet = new Set(excludedSources.map(s => s.toLowerCase()));
@@ -3246,7 +3234,7 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
                 return !excludedSet.has(articleSource);
               });
             }
-            
+
             // For US users: post-filter as fallback (API-level filtering should handle most cases)
             if (batchCountry && batchCountry.toLowerCase() === 'us' && selectedSources.length === 0) {
               // Only post-filter if we didn't use API-level filtering (shouldn't happen, but safety check)
@@ -3257,9 +3245,10 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
               console.log(`[US FILTER BATCH FALLBACK] Post-filtered to allowed US sources: ${beforeCount} -> ${articles.length} articles`);
             }
 
+            const candidates = [];
             for (let idx = 0; idx < articles.length; idx++) {
               const a = articles[idx];
-              globalCandidates.push({
+              candidates.push({
                 id: `${topic}-cand-${idx}-${Date.now()}`,
                 title: a.title || "",
                 summary: (a.description || a.title || "")
@@ -3276,7 +3265,7 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
             const isCore = CORE_CATEGORIES.has(topicLower);
 
             let relevant = filterRelevantArticles(topic, { country: location }, articles, perTopic);
-            
+
             // Apply uplifting news filter if enabled
             if (goodNewsOnly) {
               relevant = relevant.filter(isUpliftingNews);
@@ -3286,9 +3275,6 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
             // Handle both old format (string) and new format (object with metadata)
             const summary = typeof summaryResult === 'string' ? summaryResult : summaryResult.summary;
             const metadata = typeof summaryResult === 'object' && summaryResult.metadata ? summaryResult.metadata : null;
-            
-            // Track summaries with their topics and metadata for transition generation
-            if (summary) summariesWithTopics.push({ summary: summary, topic: topic, metadata: metadata });
 
             // Debug: Check if articles have urlToImage
             if (relevant.length > 0) {
@@ -3308,26 +3294,49 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
               imageUrl: a.urlToImage || "",
             }));
 
-            items.push(...sourceItems);
-            
-            // Store structured topic section
-            if (summary) {
-              topicSections.push({
-                topic: topic,
-                summary: summary,
-                articles: sourceItems,
-                metadata: metadata
-              });
-            }
+            return { topic, candidates, summary, metadata, sourceItems };
           } catch (innerErr) {
             console.error("batch summarize topic failed", topic, innerErr);
-            items.push({
-              id: `${topic}-error-${Date.now()}`,
-              title: `Issue fetching ${topic}`,
-              summary: `Failed to fetch news for "${topic}".`,
-              source: "",
-              url: "",
+            return {
               topic,
+              candidates: [],
+              summary: null,
+              metadata: null,
+              sourceItems: [],
+              errorItem: {
+                id: `${topic}-error-${Date.now()}`,
+                title: `Issue fetching ${topic}`,
+                summary: `Failed to fetch news for "${topic}".`,
+                source: "",
+                url: "",
+                topic,
+              },
+            };
+          }
+        }));
+
+        // Aggregate in original topic order (Promise.all preserves array order
+        // regardless of which topic's work finished first).
+        for (const r of topicResults) {
+          globalCandidates.push(...r.candidates);
+
+          if (r.errorItem) {
+            items.push(r.errorItem);
+            continue;
+          }
+
+          if (r.summary) {
+            summariesWithTopics.push({ summary: r.summary, topic: r.topic, metadata: r.metadata });
+          }
+
+          items.push(...r.sourceItems);
+
+          if (r.summary) {
+            topicSections.push({
+              topic: r.topic,
+              summary: r.summary,
+              articles: r.sourceItems,
+              metadata: r.metadata
             });
           }
         }
@@ -3352,37 +3361,21 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
         // Generate a better title based on topics
         let title = await generateCatchyTitle(topics);
 
-        // Generate TTS audio for each topic section (unless skipTTS is true)
+        // Generate a single combined audio track (unless skipTTS is true)
         const skipTTS = req.query.noTts === '1' || req.body.skipTTS === true || b.skipTTS === true;
         const selectedVoice = req.user?.selectedVoice || 'alloy';
         const playbackRate = req.user?.playbackRate || 1.0;
+        let combinedAudioUrl = null;
         
-        if (!skipTTS && topicSections.length > 0) {
-          console.log(`🎤 [BATCH TTS] Generating audio for ${topicSections.length} topics...`);
-          
+        if (!skipTTS && combinedText && combinedText.trim()) {
+          console.log(`🎤 [BATCH TTS] Generating combined audio...`);
           const baseUrl = req.protocol + '://' + req.get('host');
-          
-          // Generate TTS for each topic in parallel
-          const ttsPromises = topicSections.map(async (section, index) => {
-            try {
-              console.log(`   Generating audio for topic: ${section.topic}`);
-              const audioData = await generateTTS(section.summary, selectedVoice, playbackRate, baseUrl);
-              section.audioUrl = audioData.audioUrl;
-              console.log(`   ✅ Audio generated for ${section.topic}`);
-            } catch (ttsError) {
-              console.error(`   ❌ Failed to generate audio for ${section.topic}:`, ttsError);
-              section.audioUrl = null;
-            }
-          });
-          
-          // Wait for all TTS to complete
-          await Promise.all(ttsPromises);
-          console.log(`🎤 [BATCH TTS] Completed audio generation for all topics`);
-          
-          // Log final audio status
-          console.log(`📊 [BATCH] Topic sections with audio:`);
-          for (const section of topicSections) {
-            console.log(`   - Topic: ${section.topic}, Audio: ${section.audioUrl ? 'YES' : 'NO'}`);
+          try {
+            const audioData = await generateTTS(combinedText, selectedVoice, playbackRate, baseUrl);
+            combinedAudioUrl = audioData.audioUrl;
+            console.log(`🎤 [BATCH TTS] ✅ Combined audio generated`);
+          } catch (ttsError) {
+            console.error(`🎤 [BATCH TTS] ❌ Failed to generate combined audio:`, ttsError);
           }
         } else {
           console.log(`⏭️ [BATCH] Skipping TTS generation (skipTTS=${skipTTS})`);
@@ -3394,8 +3387,8 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
             id: `combined-${Date.now()}`,
             title: title,
             summary: combinedText,
-            audioUrl: null, // No longer generating combined audio - using per-topic instead
-            topicSections: topicSections // Include structured topic data with audio
+            audioUrl: combinedAudioUrl, // Single long summary audio
+            topicSections: topicSections // Include structured topic data (no per-topic audio)
           },
         };
       })

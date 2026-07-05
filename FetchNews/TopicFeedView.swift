@@ -15,25 +15,40 @@ struct TopicFeedView: View {
     @State private var showingArticles: TopicSection? = nil
     @State private var isSaved: Bool = false
     @State private var isSaving: Bool = false
-    @State private var recommendedTopics: [TopicSection] = []
-    @State private var isLoadingRecommended: Bool = false
+    @State private var showAIAssistant = false
+    @State private var wasPlayingBeforeAssistant = false
     @State private var discoveryTopicIndex: Int = 0
     @State private var predefinedTopics: [TopicCategory] = []
     @State private var isLoadingPredefinedTopics = false
+    @State private var isNavigatingForward: Bool = true
+    @State private var isDiscoveryNavigatingForward: Bool = true
+    @State private var welcomeSection: TopicSection? = nil
+    @State private var isLoadingWelcome = false
     
-    // Get topic sections from combined summary (My Topics)
+    // Get topic sections from combined summary (My Topics + Recommended)
     private var myTopicSections: [TopicSection] {
         let sections = vm.combined?.topicSections ?? []
         
         print("📱 TopicFeedView: myTopicSections - sections count: \(sections.count)")
         if let combined = vm.combined {
             print("   Combined exists - topicSections: \(combined.topicSections?.count ?? 0)")
+            if let topicSections = combined.topicSections {
+                for (i, section) in topicSections.enumerated() {
+                    let isSelected = vm.selectedTopics.contains(section.topic.lowercased())
+                    print("   Section \(i): \(section.topic) - \(isSelected ? "MY TOPIC" : "RECOMMENDED")")
+                    print("     Has audioUrl: \(section.audioUrl != nil)")
+                    if let url = section.audioUrl {
+                        print("     URL: \(url)")
+                    }
+                }
+            }
         }
         
         // FALLBACK: If we have a combined summary but no topic sections, create a single section
         // This happens with historical summaries from before per-topic feature
         if sections.isEmpty, let combined = vm.combined {
             print("📱 Creating fallback topic section for legacy summary (no per-topic data)")
+            print("   Legacy audioUrl: \(combined.audioUrl ?? "nil")")
             return [TopicSection(
                 id: combined.id,
                 topic: "Your News",
@@ -47,8 +62,22 @@ struct TopicFeedView: View {
         return sections
     }
     
+    // Split topics into My Topics and Recommended
+    private var selectedTopicSections: [TopicSection] {
+        myTopicSections.filter { vm.selectedTopics.contains($0.topic.lowercased()) }
+    }
+    
+    private var recommendedTopicSections: [TopicSection] {
+        myTopicSections.filter { !vm.selectedTopics.contains($0.topic.lowercased()) }
+    }
+    
     private var allTopics: [TopicSection] {
-        myTopicSections + recommendedTopics
+        // Insert welcome section at the beginning if it exists
+        if let welcome = welcomeSection {
+            return [welcome] + selectedTopicSections + recommendedTopicSections
+        } else {
+            return selectedTopicSections + recommendedTopicSections
+        }
     }
     
     // Get unselected topics for discovery
@@ -74,11 +103,17 @@ struct TopicFeedView: View {
             }
         }
         .onChange(of: currentPageIndex) { oldValue, newValue in
+            isNavigatingForward = newValue > oldValue
             handlePageChange(from: oldValue, to: newValue)
         }
         .sheet(item: $showingArticles) { topic in
             ArticlesSheetView(topicSection: topic)
                 .environmentObject(vm)
+        }
+        .sheet(isPresented: $showAIAssistant, onDismiss: {
+            handleAIAssistantDismiss()
+        }) {
+            aiAssistantSheet
         }
         .task(id: "loadInitialData") {
             await loadInitialData()
@@ -86,12 +121,17 @@ struct TopicFeedView: View {
         .onChange(of: vm.combined?.id) { _, _ in
             Task {
                 await checkIfSaved()
-                // Reload recommended topics if summary changed
-                if myTopicSections.isEmpty {
-                    await loadRecommendedTopics()
-                }
                 // Reset to first page when new summary loads
+                isNavigatingForward = true
                 currentPageIndex = 0
+            }
+        }
+        .onChange(of: vm.shouldAutoScroll) { _, shouldScroll in
+            if shouldScroll {
+                // Auto-advance to next topic when audio finishes
+                advanceToNextTopic()
+                // Reset the flag
+                vm.shouldAutoScroll = false
             }
         }
     }
@@ -102,145 +142,124 @@ struct TopicFeedView: View {
             loadingStateView
         } else if !allTopics.isEmpty {
             // Main feed with simple page navigation (shows user topics + recommended topics)
-            let _ = print("📱 Showing feed with \(myTopicSections.count) my topics + \(recommendedTopics.count) recommended topics")
+            let _ = print("📱 Showing feed with \(selectedTopicSections.count) my topics + \(recommendedTopicSections.count) recommended topics")
             
             ZStack {
                 // Current page
-                if let currentTopic = allTopics[safe: currentPageIndex] {
-                    VerticalTopicPageView(
-                        topicSection: currentTopic,
-                        topicIndex: currentPageIndex,
-                        totalTopics: allTopics.count,
-                        isMyTopic: currentPageIndex < myTopicSections.count,
-                        onArticlesButtonTap: {
-                            showingArticles = currentTopic
-                        },
-                        onSwipeNext: {
-                            if currentPageIndex < allTopics.count - 1 {
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                                    currentPageIndex += 1
+                ZStack {
+                    if let currentTopic = allTopics[safe: currentPageIndex] {
+                        // Show welcome page if this is the first item and it's the welcome section
+                        if currentPageIndex == 0 && currentTopic.topic == "Welcome" {
+                            WelcomePageView(
+                                welcomeSection: currentTopic,
+                                onSwipeNext: {
+                                    if currentPageIndex < allTopics.count - 1 {
+                                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                            isNavigatingForward = true
+                                            currentPageIndex += 1
+                                        }
+                                    }
                                 }
-                            }
-                        },
-                        onSwipePrevious: {
-                            if currentPageIndex > 0 {
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                                    currentPageIndex -= 1
-                                }
-                            }
+                            )
+                            .id(currentTopic.id)
+                            .transition(.asymmetric(
+                                insertion: .move(edge: isNavigatingForward ? .bottom : .top),
+                                removal: .move(edge: isNavigatingForward ? .top : .bottom)
+                            ))
+                        } else {
+                            VerticalTopicPageView(
+                                topicSection: currentTopic,
+                                topicIndex: currentPageIndex,
+                                totalTopics: allTopics.count,
+                                isMyTopic: vm.selectedTopics.contains(currentTopic.topic.lowercased()),
+                                isSaved: isSaved,
+                                isSaving: isSaving,
+                                onArticlesButtonTap: {
+                                    showingArticles = currentTopic
+                                },
+                                onSwipeNext: {
+                                    if currentPageIndex < allTopics.count - 1 {
+                                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                            isNavigatingForward = true
+                                            currentPageIndex += 1
+                                        }
+                                    }
+                                },
+                                onSwipePrevious: {
+                                    if currentPageIndex > 0 {
+                                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                            isNavigatingForward = false
+                                            currentPageIndex -= 1
+                                        }
+                                    }
+                                },
+                                onToggleSave: {
+                                    toggleSave()
+                                },
+                                onAddTopic: {
+                                    addRecommendedTopicToSelected(currentTopic.topic)
+                                },
+                                onAIAssistant: vm.combined != nil ? {
+                                    // Remember if audio was playing
+                                    wasPlayingBeforeAssistant = vm.isPlaying
+                                    // Pause audio before opening assistant
+                                    if vm.isPlaying {
+                                        vm.playPause()
+                                    }
+                                    showAIAssistant = true
+                                } : nil
+                            )
+                            .id(currentTopic.id)
+                            .transition(.asymmetric(
+                                insertion: .move(edge: isNavigatingForward ? .bottom : .top),
+                                removal: .move(edge: isNavigatingForward ? .top : .bottom)
+                            ))
                         }
+                    }
+                }
+                .ignoresSafeArea()
+                .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { _ in
+                    // Auto-advance to next topic when audio finishes
+                    autoAdvanceToNextTopic()
+                }
+                
+                // Static gradients (don't move with page transitions)
+                VStack {
+                    LinearGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: Color(.systemBackground), location: 0.0),
+                            .init(color: Color(.systemBackground).opacity(0.5), location: 0.4),
+                            .init(color: Color(.systemBackground).opacity(0.0), location: 1.0)
+                        ]),
+                        startPoint: .top,
+                        endPoint: .bottom
                     )
-                    .id(currentTopic.id)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .bottom),
-                        removal: .move(edge: .top)
-                    ))
+                    .frame(height: 120)
+                    .allowsHitTesting(false)
+                    
+                    Spacer()
+                }
+                .ignoresSafeArea(edges: .top)
+                
+                VStack {
+                    Spacer()
+                    
+                    LinearGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: Color(.systemBackground).opacity(0.0), location: 0.0),
+                            .init(color: Color(.systemBackground).opacity(0.5), location: 0.5),
+                            .init(color: Color(.systemBackground), location: 1.0)
+                        ]),
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 200)
+                    .allowsHitTesting(false)
                 }
             }
-            .ignoresSafeArea()
-            .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { _ in
-                // Auto-advance to next topic when audio finishes
-                autoAdvanceToNextTopic()
-            }
                     
-                    // Page indicator (right side for vertical scrolling)
-                    HStack {
-                        Spacer()
-                        VStack(spacing: 12) {
-                            Spacer()
-                            
-                            // Visual dots
-                            VStack(spacing: 6) {
-                                ForEach(0..<min(allTopics.count, 5), id: \.self) { index in
-                                    Circle()
-                                        .fill(index == currentPageIndex ? Color.white : Color.white.opacity(0.3))
-                                        .frame(width: index == currentPageIndex ? 8 : 6, 
-                                               height: index == currentPageIndex ? 8 : 6)
-                                }
-                                if allTopics.count > 5 {
-                                    Text("⋮")
-                                        .foregroundColor(.white.opacity(0.6))
-                                        .font(.caption)
-                                }
-                            }
-                            
-                            // Topic label
-                            VStack(spacing: 2) {
-                                Text("\(currentPageIndex + 1)/\(allTopics.count)")
-                                    .font(.caption2)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.white)
-                            }
-                            
-                            Spacer()
-                        }
-                        .padding(.trailing, 16)
-                        .padding(.bottom, vm.canPlay ? 100 : 20)
-                    }
-                    
-                    // Compact audio player at bottom
-                    if vm.canPlay {
-                        VStack {
-                            Spacer()
-                            CompactTopicAudioPlayer(
-                                topicSection: allTopics[safe: currentPageIndex]
-                            )
-                            .padding(.bottom, 80)
-                        }
-                    }
-                    
-                    // Top buttons
-                    VStack {
-                        HStack {
-                            // Fetch button - top left corner (for testing)
-                            Button(action: fetchAllNews) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: vm.isBusy ? "arrow.clockwise" : "arrow.down.circle.fill")
-                                        .font(.system(size: 20, weight: .semibold))
-                                        .rotationEffect(vm.isBusy ? .degrees(360) : .degrees(0))
-                                        .animation(vm.isBusy ? Animation.linear(duration: 1).repeatForever(autoreverses: false) : .default, value: vm.isBusy)
-                                    Text("Fetch")
-                                        .font(.system(size: 15, weight: .semibold))
-                                }
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 10)
-                                .background(Color.blue.opacity(0.8))
-                                .clipShape(Capsule())
-                                .overlay(
-                                    Capsule()
-                                        .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                                )
-                            }
-                            .disabled(vm.isBusy)
-                            .padding(.top, 60)
-                            .padding(.leading, 20)
-                            
-                            Spacer()
-                            
-                            // Save button - top right corner
-                            if vm.combined != nil {
-                                Button(action: {
-                                    toggleSave()
-                                }) {
-                                    Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
-                                        .font(.system(size: 22, weight: .semibold))
-                                        .foregroundColor(isSaved ? .yellow : .white)
-                                        .frame(width: 44, height: 44)
-                                        .background(Color.black.opacity(0.6))
-                                        .clipShape(Circle())
-                                        .overlay(
-                                            Circle()
-                                                .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                                        )
-                                }
-                                .disabled(isSaving)
-                                .padding(.top, 60)
-                                .padding(.trailing, 20)
-                            }
-                        }
-                        Spacer()
-                    }
+                    // Audio player is shown in ContentView as floating overlay
+                    // (removed duplicate in-page audio player)
         } else if vm.combined == nil {
             emptyStateView
         }
@@ -266,10 +285,10 @@ struct TopicFeedView: View {
     
     @ViewBuilder
     private var emptyStateView: some View {
-        let _ = print("📱 Empty state - Loading: predefined=\(isLoadingPredefinedTopics), recommended=\(isLoadingRecommended)")
+        let _ = print("📱 Empty state - Loading: predefined=\(isLoadingPredefinedTopics)")
         let _ = print("   Unselected topics count: \(unselectedTopics.count)")
         let _ = print("   Custom topics count: \(vm.customTopics.count)")
-        if isLoadingPredefinedTopics || isLoadingRecommended {
+        if isLoadingPredefinedTopics {
             VStack(spacing: 24) {
                 ProgressView()
                 Text("Loading topics...")
@@ -281,50 +300,52 @@ struct TopicFeedView: View {
             
             ZStack {
                 // Current discovery card
-                if discoveryTopicIndex < discoveryTopicsList.count {
-                    let item = discoveryTopicsList[discoveryTopicIndex]
-                    TopicDiscoveryCard(
-                        topic: item.topic,
-                        onAdd: {
-                            addTopic(item.topic, at: item.index)
-                        },
-                        onFetchAll: fetchAllNews,
-                        hasSelectedTopics: !vm.customTopics.isEmpty
-                    )
-                    .id(item.topic)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .bottom),
-                        removal: .move(edge: .top)
-                    ))
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 100)
-                            .onEnded { value in
-                                let verticalMovement = value.translation.height
-                                let horizontalMovement = abs(value.translation.width)
-                                
-                                // Only respond to primarily vertical swipes
-                                if abs(verticalMovement) > horizontalMovement * 2 {
-                                    if verticalMovement > 0 {
-                                        // Swiped down -> go to previous page
-                                        if discoveryTopicIndex > 0 {
-                                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                                                discoveryTopicIndex -= 1
+                ZStack {
+                    if discoveryTopicIndex < discoveryTopicsList.count {
+                        let item = discoveryTopicsList[discoveryTopicIndex]
+                        TopicDiscoveryCard(
+                            topic: item.topic,
+                            onAdd: {
+                                addTopic(item.topic, at: item.index)
+                            }
+                        )
+                        .id(item.topic)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: isDiscoveryNavigatingForward ? .bottom : .top),
+                            removal: .move(edge: isDiscoveryNavigatingForward ? .top : .bottom)
+                        ))
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 100)
+                                .onEnded { value in
+                                    let verticalMovement = value.translation.height
+                                    let horizontalMovement = abs(value.translation.width)
+                                    
+                                    // Only respond to primarily vertical swipes
+                                    if abs(verticalMovement) > horizontalMovement * 2 {
+                                        if verticalMovement > 0 {
+                                            // Swiped down -> go to previous page
+                                            if discoveryTopicIndex > 0 {
+                                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                                    isDiscoveryNavigatingForward = false
+                                                    discoveryTopicIndex -= 1
+                                                }
                                             }
-                                        }
-                                    } else {
-                                        // Swiped up -> go to next page
-                                        if discoveryTopicIndex < discoveryTopicsList.count - 1 {
-                                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                                                discoveryTopicIndex += 1
+                                        } else {
+                                            // Swiped up -> go to next page
+                                            if discoveryTopicIndex < discoveryTopicsList.count - 1 {
+                                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                                    isDiscoveryNavigatingForward = true
+                                                    discoveryTopicIndex += 1
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
-                    )
+                        )
+                    }
                 }
                 
-                // Top gradient fade (for status bar)
+                // Static gradients (don't move with card transitions)
                 VStack {
                     LinearGradient(
                         gradient: Gradient(stops: [
@@ -335,13 +356,13 @@ struct TopicFeedView: View {
                         startPoint: .top,
                         endPoint: .bottom
                     )
-                    .frame(height: 80)
+                    .frame(height: 120)
                     .allowsHitTesting(false)
                     
                     Spacer()
                 }
+                .ignoresSafeArea(edges: .top)
                 
-                // Bottom gradient fade (for nav bar and buttons)
                 VStack {
                     Spacer()
                     
@@ -432,37 +453,24 @@ struct TopicFeedView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
             
-            Text("You've selected topics. Fetch news to get started!")
+            Text("You've selected topics. Go to the topic selection screen to fetch news!")
                 .font(.body)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
-            
-            Button(action: fetchAllNews) {
-                HStack(spacing: 12) {
-                    Image(systemName: "arrow.down.circle.fill")
-                    Text("Fetch News Now")
-                        .fontWeight(.semibold)
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 32)
-                .padding(.vertical, 16)
-                .background(
-                    LinearGradient(
-                        colors: [Color.blue, Color.blue.opacity(0.8)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-                .cornerRadius(12)
-                .shadow(color: Color.blue.opacity(0.3), radius: 8, x: 0, y: 4)
-            }
         }
     }
     
-    private func fetchAllNews() {
-        Task {
-            await vm.fetch()
+    @ViewBuilder
+    private var aiAssistantSheet: some View {
+        if let combined = vm.combined {
+            AIAssistantView(
+                fetchId: combined.id,
+                fetchSummary: combined.summary,
+                fetchTopics: Array(vm.lastFetchedTopics)
+            )
+            .environmentObject(vm)
+            .environmentObject(authVM)
         }
     }
     
@@ -470,78 +478,91 @@ struct TopicFeedView: View {
     
     private func loadInitialData() async {
         print("📱 TopicFeedView: Loading initial data...")
-        print("   Current state: myTopics=\(myTopicSections.count), recommended=\(recommendedTopics.count)")
+        print("   Current state: myTopics=\(myTopicSections.count), recommended=\(recommendedTopicSections.count)")
         print("   Combined summary: \(vm.combined != nil ? "exists" : "nil")")
         print("   Authentication: \(ApiClient.isAuthenticated ? "YES" : "NO")")
         print("   User: \(authVM.currentUser?.email ?? "none")")
+        
+        // Load welcome message first
+        await loadWelcomeMessage()
+        
         await checkIfSaved()
-        await loadRecommendedTopics()
         await loadPredefinedTopicsForDiscovery()
         print("📱 TopicFeedView: Initial data load complete")
-        print("   Final state: myTopics=\(myTopicSections.count), recommended=\(recommendedTopics.count), discovery=\(unselectedTopics.count)")
+        print("   Final state: welcome=\(welcomeSection != nil ? "YES" : "NO"), myTopics=\(selectedTopicSections.count), recommended=\(recommendedTopicSections.count), discovery=\(unselectedTopics.count)")
         
         // Ensure first topic's audio is loaded and ready to play
         await MainActor.run {
+            print("📱 Attempting to load first topic's audio...")
+            print("   vm.combined: \(vm.combined != nil ? "exists" : "nil")")
+            print("   vm.canPlay: \(vm.canPlay)")
+            print("   allTopics.count: \(allTopics.count)")
+            
             if let firstTopic = allTopics.first {
+                print("   First topic: \(firstTopic.topic)")
+                print("   Has audioUrl: \(firstTopic.audioUrl != nil)")
+                if let url = firstTopic.audioUrl {
+                    print("   Audio URL: \(url)")
+                }
                 vm.switchToTopicAudio(for: firstTopic, autoPlay: false)
+                
+                // Check state after switch
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    print("📱 After switchToTopicAudio:")
+                    print("   vm.canPlay: \(vm.canPlay)")
+                    print("   vm.currentTopicAudioUrl: \(vm.currentTopicAudioUrl ?? "nil")")
+                }
+            } else {
+                print("   ⚠️ No topics available!")
             }
+        }
+    }
+    
+    private func loadWelcomeMessage() async {
+        // Only load welcome if we have topics to show
+        guard !myTopicSections.isEmpty else {
+            print("📱 Skipping welcome message - no topics to show")
+            return
+        }
+        
+        print("📱 Loading welcome message...")
+        await MainActor.run {
+            isLoadingWelcome = true
+        }
+        
+        do {
+            let welcome = try await ApiClient.getWelcomeMessage()
+            await MainActor.run {
+                self.welcomeSection = welcome
+                self.isLoadingWelcome = false
+                print("✅ Welcome message loaded: \"\(welcome.summary)\"")
+            }
+        } catch {
+            await MainActor.run {
+                self.isLoadingWelcome = false
+            }
+            // Log error but don't fail - welcome is optional
+            print("⚠️ Failed to load welcome message (continuing without it): \(error)")
+        }
+    }
+    
+    private func handleAIAssistantDismiss() {
+        if wasPlayingBeforeAssistant && !vm.isPlaying {
+            vm.playPause()
+        }
+        wasPlayingBeforeAssistant = false
+        
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            vm.objectWillChange.send()
         }
     }
     
     private func handlePageChangeIfNeeded(from oldValue: Int, to newValue: Int) {
-        // Load more recommended topics if user is nearing the end
-        let totalTopics = allTopics.count
-        if newValue >= totalTopics - 2 && !isLoadingRecommended {
-            // User is near the end, could load more recommended topics here if needed
-            // For now, recommended topics are loaded once on app launch
-        }
+        // Recommended topics are now included in the batch fetch
+        // No need to load more dynamically
     }
     
-    private func loadRecommendedTopics() async {
-        // Load recommended topics to show on homepage
-        // Don't guard on myTopicSections - we want to show recommended even if user hasn't fetched their own
-        guard recommendedTopics.isEmpty else { 
-            print("📱 Skipping recommended topics load - already have \(recommendedTopics.count) topics")
-            return 
-        }
-        guard !isLoadingRecommended else { 
-            print("📱 Skipping recommended topics load - already loading")
-            return 
-        }
-        
-        print("📱 Loading recommended topics...")
-        await MainActor.run {
-            isLoadingRecommended = true
-        }
-        
-        do {
-            // Add a small delay to ensure view is stable before making request
-            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-            
-            let recommended = try await ApiClient.getRecommendedTopics()
-            await MainActor.run {
-                self.recommendedTopics = recommended
-                self.isLoadingRecommended = false
-                print("✅ Loaded \(recommended.count) recommended topics")
-                if recommended.isEmpty {
-                    print("⚠️ Warning: Recommended topics array is empty - backend may need data")
-                }
-            }
-        } catch {
-            await MainActor.run {
-                self.isLoadingRecommended = false
-            }
-            // Only log non-cancellation errors
-            if (error as NSError).code != NSURLErrorCancelled {
-                print("❌ Failed to load recommended topics: \(error)")
-                if let networkError = error as? NetworkError {
-                    print("   Network error details: \(networkError)")
-                }
-            } else {
-                print("⚠️ Recommended topics request was cancelled (view may have updated)")
-            }
-        }
-    }
     
     private func checkIfSaved() async {
         guard let summaryId = vm.combined?.id else {
@@ -603,12 +624,27 @@ struct TopicFeedView: View {
     
     private func handlePageChange(from oldIndex: Int, to newIndex: Int) {
         print("📄 Page changed from \(oldIndex) to \(newIndex)")
-        vm.currentTopicIndex = newIndex
+        print("   Current audio state - isPlaying: \(vm.isPlaying), canPlay: \(vm.canPlay)")
+        print("   Current time: \(vm.currentTime), duration: \(vm.duration)")
         
-        // Switch audio to new topic and auto-play
+        vm.currentTopicIndex = newIndex
+
+        // Switch audio to new topic and auto-play (only for topics with audio)
         if let topicSection = allTopics[safe: newIndex] {
-            vm.switchToTopicAudio(for: topicSection, autoPlay: true) // Auto-play when switching topics
+            // Auto-play any topic that has audio (both selected and recommended topics now have audio)
+            if topicSection.audioUrl != nil {
+                print("   🎵 Will switch to audio for topic: \(topicSection.topic)")
+                print("   Audio URL: \(topicSection.audioUrl ?? "nil")")
+                
+                // Call immediately without delay - the switchToTopicAudio function handles timing
+                vm.switchToTopicAudio(for: topicSection, autoPlay: true)
+            } else {
+                print("   ⚠️ Topic has no audio: \(topicSection.topic)")
+            }
         }
+        
+        // Recommended topics are now included in the batch fetch,
+        // so no need to load them separately
     }
     
     private func autoAdvanceToNextTopic() {
@@ -620,6 +656,7 @@ struct TopicFeedView: View {
         
         print("📄 Audio finished, auto-advancing to next topic...")
         withAnimation {
+            isNavigatingForward = true
             currentPageIndex += 1
         }
     }
@@ -713,9 +750,44 @@ struct TopicFeedView: View {
             // Auto-advance to next topic
             if index < discoveryTopicsList.count - 1 {
                 withAnimation {
+                    isDiscoveryNavigatingForward = true
                     discoveryTopicIndex = index + 1
                 }
             }
+        }
+    }
+    
+    private func addRecommendedTopicToSelected(_ topic: String) {
+        Task {
+            print("🌟 Adding recommended topic to selected: \(topic)")
+            await vm.addCustomTopic(topic)
+            
+            // Show a brief success indicator (optional - the badge will change automatically)
+            await MainActor.run {
+                // Force view update to show the topic is now selected
+                vm.objectWillChange.send()
+            }
+        }
+    }
+    
+    private func advanceToNextTopic() {
+        print("🎵 Auto-advancing to next topic")
+        
+        // Check if there's a next topic
+        guard currentPageIndex < allTopics.count - 1 else {
+            print("   ⚠️ Already at last topic, not advancing")
+            return
+        }
+        
+        // Small delay to ensure audio player state has settled
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [self] in
+            // Animate to next page
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                isNavigatingForward = true
+                currentPageIndex += 1
+            }
+            
+            print("   ✅ Advanced to topic \(currentPageIndex + 1)/\(allTopics.count)")
         }
     }
 }
@@ -727,9 +799,14 @@ struct VerticalTopicPageView: View {
     let topicIndex: Int
     let totalTopics: Int
     let isMyTopic: Bool
+    let isSaved: Bool
+    let isSaving: Bool
     let onArticlesButtonTap: () -> Void
     let onSwipeNext: () -> Void
     let onSwipePrevious: () -> Void
+    let onToggleSave: () -> Void
+    let onAddTopic: () -> Void
+    var onAIAssistant: (() -> Void)? = nil
 
     @EnvironmentObject var vm: NewsVM
     @State private var scrollOffset: CGFloat = 0
@@ -778,9 +855,124 @@ struct VerticalTopicPageView: View {
                         .background(Color(.systemGray6))
                         .cornerRadius(12)
                         .padding(.horizontal, 20)
+                        .padding(.bottom, 16)
+                        
+                        // Action buttons (Add Topic for recommended, Save Summary for all)
+                        HStack(spacing: 12) {
+                            // Add to Topics button - only for recommended topics
+                            if !isMyTopic {
+                                Button(action: onAddTopic) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "plus.circle.fill")
+                                            .font(.system(size: 18, weight: .semibold))
+                                        Text("Add Topic")
+                                            .font(.system(size: 15, weight: .semibold))
+                                    }
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 12)
+                                    .background(Color.purple)
+                                    .clipShape(Capsule())
+                                    .shadow(color: Color.purple.opacity(0.3), radius: 4, x: 0, y: 2)
+                                }
+                            }
+                            
+                            Spacer()
+                            
+                            // Save Summary button
+                            if vm.combined != nil {
+                                Button(action: onToggleSave) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                                            .font(.system(size: 18, weight: .semibold))
+                                        Text(isSaved ? "Saved" : "Save")
+                                            .font(.system(size: 15, weight: .semibold))
+                                    }
+                                    .foregroundColor(isSaved ? .yellow : .white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 12)
+                                    .background(isSaved ? Color(.systemGray5) : Color.blue)
+                                    .clipShape(Capsule())
+                                    .shadow(color: (isSaved ? Color.gray : Color.blue).opacity(0.3), radius: 4, x: 0, y: 2)
+                                }
+                                .disabled(isSaving)
+                                .opacity(isSaving ? 0.6 : 1.0)
+                            }
+                        }
+                        .padding(.horizontal, 20)
                         .padding(.bottom, 24)
                         
-                        // Summary text with fade effect at top
+                        // Show full topic content (summary + articles)
+                        fullTopicContent
+                        
+                        // Bottom padding for audio player
+                        Spacer(minLength: vm.canPlay ? 250 : 150)
+                        
+                        // Bottom detector
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: BottomReachedPreferenceKey.self,
+                                value: geo.frame(in: .named("scroll")).maxY < geometry.size.height + 100
+                            )
+                        }
+                        .frame(height: 1)
+                    }
+                }
+                .coordinateSpace(name: "scroll")
+                .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
+                    scrollOffset = value
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showStickyHeader = value < -20
+                        // More lenient threshold - allow navigation when near the top
+                        isAtTop = value > -100
+                    }
+                }
+                .onPreferenceChange(BottomReachedPreferenceKey.self) { value in
+                    isAtBottom = value
+                }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 100)
+                        .onEnded { value in
+                            let verticalMovement = value.translation.height
+                            let horizontalMovement = abs(value.translation.width)
+                            
+                            // Only respond to strong vertical swipes
+                            if abs(verticalMovement) > 100 && abs(verticalMovement) > horizontalMovement * 2 {
+                                if verticalMovement > 0 && isAtTop {
+                                    onSwipePrevious()
+                                } else if verticalMovement < 0 && isAtBottom {
+                                    onSwipeNext()
+                                }
+                            }
+                        }
+                )
+                
+                // Sticky header overlay
+                if showStickyHeader {
+                    VStack(spacing: 0) {
+                        HStack {
+                            Text(smartCapitalized(topicSection.topic))
+                                .font(.headline)
+                                .fontWeight(.bold)
+                                .foregroundColor(.primary)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 16)
+                        .background(Color.darkGreyBackground.opacity(0.95))
+                        
+                        Divider()
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+        }
+    }
+    
+    // Full topic content view (summary + articles)
+    @ViewBuilder
+    private var fullTopicContent: some View {
+        // Summary text with fade effect at top
                         ZStack(alignment: .top) {
                             // Summary text
                             VStack(alignment: .leading, spacing: 12) {
@@ -821,6 +1013,39 @@ struct VerticalTopicPageView: View {
                             }
                         }
                         
+                        // AI Assistant button
+                        if vm.combined != nil {
+                            Button(action: {
+                                // Show AI assistant for this topic's summary
+                                // The parent view will handle the sheet presentation
+                                if let onAIAction = onAIAssistant {
+                                    onAIAction()
+                                }
+                            }) {
+                                HStack {
+                                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                                        .font(.system(size: 18, weight: .semibold))
+                                    Text("Ask AI About This Topic")
+                                        .fontWeight(.semibold)
+                                    Spacer()
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 14, weight: .semibold))
+                                }
+                                .foregroundColor(.white)
+                                .padding()
+                                .background(
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [Color.purple, Color.blue]),
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .cornerRadius(12)
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.top, 32)
+                        }
+                        
                         // Articles button at bottom
                         if !topicSection.articles.isEmpty {
                             Button(action: onArticlesButtonTap) {
@@ -839,119 +1064,8 @@ struct VerticalTopicPageView: View {
                                 .cornerRadius(12)
                             }
                             .padding(.horizontal, 20)
-                            .padding(.top, 32)
+                            .padding(.top, 16)
                         }
-                        
-                        // Bottom padding for audio player
-                        Spacer(minLength: vm.canPlay ? 250 : 150)
-                        
-                        // Bottom detector
-                        GeometryReader { geo in
-                            Color.clear.preference(
-                                key: BottomReachedPreferenceKey.self,
-                                value: geo.frame(in: .named("scroll")).maxY < geometry.size.height + 100
-                            )
-                        }
-                        .frame(height: 1)
-                    }
-                }
-                .coordinateSpace(name: "scroll")
-                .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
-                    scrollOffset = value
-                    // Show sticky header when scrolled down
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showStickyHeader = value < -20
-                    }
-                    // Check if at top (within 50 points)
-                    isAtTop = value > -50
-                }
-                .onPreferenceChange(BottomReachedPreferenceKey.self) { value in
-                    isAtBottom = value
-                }
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 100)
-                        .onEnded { value in
-                            let verticalMovement = value.translation.height
-                            let horizontalMovement = abs(value.translation.width)
-                            
-                            // Only respond to strong vertical swipes (not horizontal or small movements)
-                            if abs(verticalMovement) > 100 && abs(verticalMovement) > horizontalMovement * 2 {
-                                if verticalMovement > 0 {
-                                    // Swiped down -> go to previous page (only if at top)
-                                    if isAtTop {
-                                        onSwipePrevious()
-                                    }
-                                } else {
-                                    // Swiped up -> go to next page (only if at bottom)
-                                    if isAtBottom {
-                                        onSwipeNext()
-                                    }
-                                }
-                            }
-                        }
-                )
-                
-                // Sticky header (appears when scrolling)
-                if showStickyHeader {
-                    VStack(spacing: 0) {
-                        HStack {
-                            Text(smartCapitalized(topicSection.topic))
-                                .font(.headline)
-                                .fontWeight(.bold)
-                                .foregroundColor(.primary)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 16)
-                        .background(Color.darkGreyBackground.opacity(0.95))
-                        
-                        Divider()
-                    }
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                }
-                
-                // Top gradient fade (for status bar)
-                VStack {
-                    LinearGradient(
-                        gradient: Gradient(stops: [
-                            .init(color: Color(.systemBackground), location: 0.0),
-                            .init(color: Color(.systemBackground).opacity(0.5), location: 0.4),
-                            .init(color: Color(.systemBackground).opacity(0.0), location: 1.0)
-                        ]),
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 80)
-                    .allowsHitTesting(false)
-                    
-                    Spacer()
-                }
-                
-                // Bottom gradient fade (for nav bar and buttons)
-                VStack {
-                    Spacer()
-                    
-                    LinearGradient(
-                        gradient: Gradient(stops: [
-                            .init(color: Color(.systemBackground).opacity(0.0), location: 0.0),
-                            .init(color: Color(.systemBackground).opacity(0.5), location: 0.5),
-                            .init(color: Color(.systemBackground), location: 1.0)
-                        ]),
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 200)
-                    .allowsHitTesting(false)
-                }
-            }
-        }
-        .onAppear {
-            // Ensure audio is loaded for this topic when page appears
-            // autoPlay is controlled by the page navigation
-            if topicSection.audioUrl != nil {
-                vm.switchToTopicAudio(for: topicSection, autoPlay: false)
-            }
-        }
     }
 }
 
@@ -962,6 +1076,7 @@ struct CompactTopicAudioPlayer: View {
     @EnvironmentObject var vm: NewsVM
     @State private var isScrubbing = false
     @State private var scrubValue: Double = 0
+    var onAIAssistant: (() -> Void)? = nil
     
     private func formatTime(_ seconds: Double) -> String {
         guard seconds.isFinite, seconds >= 0 else { return "0:00" }
@@ -988,6 +1103,18 @@ struct CompactTopicAudioPlayer: View {
                     }
                     .disabled(!vm.canPlay)
                     .opacity(vm.canPlay ? 1.0 : 0.5)
+                    
+                    // AI Assistant button
+                    if let aiAction = onAIAssistant, vm.combined != nil {
+                        Button(action: aiAction) {
+                            Image(systemName: "bubble.left.and.bubble.right.fill")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(.blue)
+                                .frame(width: 44, height: 44)
+                        }
+                        .disabled(!vm.canPlay || vm.combined == nil)
+                        .opacity(vm.canPlay && vm.combined != nil ? 1.0 : 0.5)
+                    }
                     
                     // Progress bar
                     VStack(spacing: 6) {
@@ -1023,6 +1150,33 @@ struct CompactTopicAudioPlayer: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
             .background(Color(.systemBackground))
+        }
+        // PRIMARY: Reset scrubbing when view model explicitly signals
+        .onChange(of: vm.forceProgressBarReset) { _, _ in
+            print("🎵 [TopicFeedView] ⚡️ FORCE RESET signal received")
+            print("   Current state - isScrubbing: \(isScrubbing), scrubValue: \(scrubValue)")
+            print("   VM state - currentTime: \(vm.currentTime), duration: \(vm.duration)")
+            isScrubbing = false
+            scrubValue = 0
+            print("   ✅ Reset complete - isScrubbing: \(isScrubbing), scrubValue: \(scrubValue)")
+        }
+        // BACKUP: Reset scrubbing state when audio URL changes
+        .onChange(of: vm.currentTopicAudioUrl) { _, newURL in
+            print("🎵 [TopicFeedView] Audio URL changed to: \(newURL ?? "nil")")
+            if !isScrubbing {  // Only log if not already handled by force reset
+                print("   Resetting scrubbing state")
+                isScrubbing = false
+                scrubValue = 0
+            }
+        }
+        // BACKUP: Reset when player is being prepared
+        .onChange(of: vm.canPlay) { oldValue, newValue in
+            if oldValue == true && newValue == false && !isScrubbing {
+                print("🎵 [TopicFeedView] canPlay went false (preparing new audio)")
+                print("   Resetting scrubbing state")
+                isScrubbing = false
+                scrubValue = 0
+            }
         }
     }
 }
@@ -1126,8 +1280,6 @@ extension Array {
 struct TopicDiscoveryCard: View {
     let topic: String
     let onAdd: () -> Void
-    let onFetchAll: () -> Void
-    let hasSelectedTopics: Bool
     
     var body: some View {
         ZStack {
@@ -1185,18 +1337,6 @@ struct TopicDiscoveryCard: View {
                         .cornerRadius(16)
                         .shadow(color: Color.blue.opacity(0.5), radius: 15, x: 0, y: 8)
                     }
-                    
-                    // Fetch all button (if user has selected topics)
-                    if hasSelectedTopics {
-                        Button(action: onFetchAll) {
-                            Text("Fetch news from my topics")
-                                .font(.callout)
-                                .fontWeight(.medium)
-                                .foregroundColor(.white.opacity(0.8))
-                                .underline()
-                        }
-                        .padding(.top, 8)
-                    }
                 }
                 .padding(.horizontal, 30)
                 
@@ -1242,6 +1382,103 @@ struct TopicDiscoveryCard: View {
         case let t where t.contains("space"): return "sparkles"
         case let t where t.contains("ai"), let t where t.contains("artificial"): return "cpu"
         default: return "newspaper.fill"
+        }
+    }
+}
+
+// MARK: - Welcome Page View
+
+struct WelcomePageView: View {
+    let welcomeSection: TopicSection
+    let onSwipeNext: () -> Void
+    
+    @EnvironmentObject var vm: NewsVM
+    @State private var isAtBottom: Bool = false
+    
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .top) {
+                // Background gradient
+                LinearGradient(
+                    colors: [
+                        Color.blue.opacity(0.2),
+                        Color.purple.opacity(0.2),
+                        Color.darkGreyBackground
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+                
+                // Main content
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        // Top padding
+                        Color.clear.frame(height: 120)
+                        
+                        // Welcome icon
+                        Image(systemName: "waveform.circle.fill")
+                            .font(.system(size: 80))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [.blue, .purple],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .shadow(color: Color.blue.opacity(0.3), radius: 20)
+                            .padding(.bottom, 32)
+                        
+                        // Welcome message
+                        Text(welcomeSection.summary)
+                            .font(.system(size: 32, weight: .bold))
+                            .foregroundColor(.primary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                            .padding(.bottom, 48)
+                        
+                        // Swipe hint
+                        VStack(spacing: 12) {
+                            Image(systemName: "chevron.up")
+                                .font(.title2)
+                                .foregroundColor(.secondary)
+                                .opacity(0.6)
+                            Text("Swipe up to start")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.bottom, 40)
+                        
+                        // Bottom padding for audio player
+                        Spacer(minLength: vm.canPlay ? 250 : 150)
+                        
+                        // Bottom detector
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: BottomReachedPreferenceKey.self,
+                                value: geo.frame(in: .named("scroll")).maxY < geometry.size.height + 100
+                            )
+                        }
+                        .frame(height: 1)
+                    }
+                }
+                .coordinateSpace(name: "scroll")
+                .onPreferenceChange(BottomReachedPreferenceKey.self) { value in
+                    isAtBottom = value
+                }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 100)
+                        .onEnded { value in
+                            let verticalMovement = value.translation.height
+                            let horizontalMovement = abs(value.translation.width)
+                            
+                            // Only respond to strong vertical swipes up
+                            if verticalMovement < -100 && abs(verticalMovement) > horizontalMovement * 2 {
+                                onSwipeNext()
+                            }
+                        }
+                )
+            }
         }
     }
 }

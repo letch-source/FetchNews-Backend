@@ -71,6 +71,11 @@ struct ContentView: View {
     @State private var isScrubbing = false
     @State private var scrubValue: Double = 0
 
+    // Computed property for audio progress display
+    // Shows scrubValue when user is actively scrubbing, otherwise shows actual playback time
+    private var displayedProgress: Double {
+        return isScrubbing ? scrubValue : vm.currentTime
+    }
 
     private var fetchDisabled: Bool {
         vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty
@@ -331,7 +336,7 @@ struct ContentView: View {
                 NowPlayingBubble(
                     title: fetchedTitle,
                     isPlaying: vm.isPlaying,
-                    current: isScrubbing ? scrubValue : vm.currentTime,
+                    current: displayedProgress,
                     duration: vm.duration,
                     onPlayPause: { vm.playPause() },
                     onScrubChange: { newValue in
@@ -339,8 +344,12 @@ struct ContentView: View {
                         if !isScrubbing { vm.seek(to: newValue) }
                     },
                     onScrubEdit: { editing in
+                        print("🎵 [ContentView] Scrubbing \(editing ? "started" : "ended") - scrubValue: \(scrubValue)")
                         isScrubbing = editing
-                        if !editing { vm.seek(to: scrubValue) }
+                        if !editing {
+                            print("   Seeking to: \(scrubValue)")
+                            vm.seek(to: scrubValue)
+                        }
                     }
                 )
                 .padding(.horizontal, 12)
@@ -352,6 +361,33 @@ struct ContentView: View {
         // iOS 17+ onChange form (no deprecation warning)
         .onChange(of: vm.combined?.id, initial: false) { _, _ in
             expandSummary = false
+        }
+        // PRIMARY: Reset scrubbing when view model explicitly signals
+        .onChange(of: vm.forceProgressBarReset) { _, _ in
+            print("🎵 [ContentView] ⚡️ FORCE RESET signal received")
+            print("   Current state - isScrubbing: \(isScrubbing), scrubValue: \(scrubValue)")
+            print("   VM state - currentTime: \(vm.currentTime), duration: \(vm.duration)")
+            isScrubbing = false
+            scrubValue = 0
+            print("   ✅ Reset complete - isScrubbing: \(isScrubbing), scrubValue: \(scrubValue)")
+        }
+        // BACKUP: Reset scrubbing state when audio URL changes
+        .onChange(of: vm.currentTopicAudioUrl) { _, newURL in
+            print("🎵 [ContentView] Audio URL changed to: \(newURL ?? "nil")")
+            if !isScrubbing {  // Only log if not already handled by force reset
+                print("   Resetting scrubbing state")
+                isScrubbing = false
+                scrubValue = 0
+            }
+        }
+        // BACKUP: Reset when player is being prepared
+        .onChange(of: vm.canPlay) { oldValue, newValue in
+            if oldValue == true && newValue == false && !isScrubbing {
+                print("🎵 [ContentView] canPlay went false (preparing new audio)")
+                print("   Resetting scrubbing state")
+                isScrubbing = false
+                scrubValue = 0
+            }
         }
         .onDisappear {
             vm.cancelCurrentRequest()
@@ -489,6 +525,8 @@ struct CompactNowPlayingBubble: View {
     let onScrubChange: (Double) -> Void
     let onScrubEdit: (Bool) -> Void
     var onTap: (() -> Void)? = nil
+    var onAIAssistant: (() -> Void)? = nil
+    let hasContent: Bool
 
     private func format(_ seconds: Double) -> String {
         guard seconds.isFinite, seconds >= 0 else { return "0:00" }
@@ -512,6 +550,22 @@ struct CompactNowPlayingBubble: View {
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(Color(.systemGray4), lineWidth: 0.5)
             )
+            
+            // AI Assistant button
+            if hasContent, let aiAction = onAIAssistant {
+                Button { aiAction() } label: {
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .frame(width: 28, height: 28)
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(6)
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(.systemGray4), lineWidth: 0.5)
+                )
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {

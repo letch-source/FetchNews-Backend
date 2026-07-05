@@ -673,6 +673,33 @@ struct FetchScreen: View {
                 .environmentObject(authVM)
             }
         }
+        // PRIMARY: Reset scrubbing when view model explicitly signals
+        .onChange(of: vm.forceProgressBarReset) { _, _ in
+            print("🎵 [FetchScreen] ⚡️ FORCE RESET signal received")
+            print("   Current state - isScrubbing: \(isScrubbing), scrubValue: \(scrubValue)")
+            print("   VM state - currentTime: \(vm.currentTime), duration: \(vm.duration)")
+            isScrubbing = false
+            scrubValue = 0
+            print("   ✅ Reset complete - isScrubbing: \(isScrubbing), scrubValue: \(scrubValue)")
+        }
+        // BACKUP: Reset scrubbing state when audio URL changes
+        .onChange(of: vm.currentTopicAudioUrl) { _, newURL in
+            print("🎵 [FetchScreen] Audio URL changed to: \(newURL ?? "nil")")
+            if !isScrubbing {  // Only log if not already handled by force reset
+                print("   Resetting scrubbing state")
+                isScrubbing = false
+                scrubValue = 0
+            }
+        }
+        // BACKUP: Reset when player is being prepared
+        .onChange(of: vm.canPlay) { oldValue, newValue in
+            if oldValue == true && newValue == false && !isScrubbing {
+                print("🎵 [FetchScreen] canPlay went false (preparing new audio)")
+                print("   Resetting scrubbing state")
+                isScrubbing = false
+                scrubValue = 0
+            }
+        }
     }
 }
 

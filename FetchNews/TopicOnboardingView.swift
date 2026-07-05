@@ -126,15 +126,20 @@ struct TopicOnboardingView: View {
         isSubmitting = true
         
         Task {
+            let normalizedTopics = Set(selectedTopics.map { topic in
+                let lowercased = topic.lowercased()
+                return ALL_TOPICS.contains(lowercased) ? lowercased : topic
+            })
+
             // Add all selected topics to custom topics
-            for topic in selectedTopics {
+            for topic in normalizedTopics {
                 await vm.addCustomTopic(topic)
             }
             
             // IMPORTANT: Save selectedTopics immediately (not debounced) so onboarding doesn't show again
             // Set selectedTopics first
             await MainActor.run {
-                vm.selectedTopics = selectedTopics
+                vm.selectedTopics = normalizedTopics
             }
             
             // Save preferences immediately (bypass debounce) to ensure it's saved before we check
@@ -145,9 +150,9 @@ struct TopicOnboardingView: View {
                     upliftingNewsOnly: vm.upliftingNewsOnly,
                     length: String(vm.length.rawValue),
                     lastFetchedTopics: Array(vm.lastFetchedTopics),
-                    selectedTopics: Array(selectedTopics), // Save the selected topics
+                    selectedTopics: Array(normalizedTopics), // Save the selected topics
                     excludedNewsSources: Array(vm.excludedNewsSources),
-                    scheduledSummaries: []
+                    selectedCountry: vm.selectedCountry
                 )
                 _ = try await ApiClient.updateUserPreferences(preferences)
                 print("✅ Saved selectedTopics to backend: \(selectedTopics.count) topics - \(selectedTopics.joined(separator: ", "))")

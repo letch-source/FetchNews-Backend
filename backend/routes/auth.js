@@ -1,14 +1,15 @@
 const express = require('express');
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 const { OAuth2Client } = require('google-auth-library');
 const { generateToken, authenticateToken } = require('../middleware/auth');
 const fallbackAuth = require('../utils/fallbackAuth');
-const User = require('../models/User'); // Import once at top
-const { 
-  sendPasswordResetEmail, 
-  sendVerificationEmail, 
-  isValidEmail, 
-  isDisposableEmail 
+const User = require('../models/User');
+const {
+  sendPasswordResetEmail,
+  sendVerificationEmail,
+  isValidEmail,
+  isDisposableEmail
 } = require('../utils/emailService');
 
 const router = express.Router();
@@ -577,8 +578,8 @@ router.get('/usage', authenticateToken, async (req, res) => {
   }
 });
 
-// Admin endpoint to manually set premium status (for testing)
-router.post('/admin/set-premium', async (req, res) => {
+// Admin endpoint to manually set premium status (for testing) — requires authentication
+router.post('/admin/set-premium', authenticateToken, async (req, res) => {
   try {
     const { email, isPremium } = req.body;
     
@@ -662,8 +663,7 @@ router.post('/forgot-password', async (req, res) => {
         console.log(`Password reset email sent to ${email}`);
       }
     } else {
-      // For fallback, generate a simple token
-      resetToken = require('crypto').randomBytes(32).toString('hex');
+      resetToken = crypto.randomBytes(32).toString('hex');
       const resetUrl = `${process.env.FRONTEND_ORIGIN || 'https://your-app.com'}/reset-password?token=${resetToken}`;
       console.log(`Password reset link for ${email}: ${resetUrl}`);
       console.log('Note: Email sending not supported in fallback mode');
@@ -690,10 +690,6 @@ router.post('/reset-password', async (req, res) => {
 
     let user;
     if (isDatabaseAvailable()) {
-      // User is already imported at top
-      const crypto = require('crypto');
-      
-      // Hash the token to compare with stored hash
       const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
       
       user = await User.findOne({
@@ -736,11 +732,8 @@ router.get('/verify-email', async (req, res) => {
       return res.status(400).json({ error: 'Email verification not available in fallback mode' });
     }
 
-    const crypto = require('crypto');
-    
-    // Hash the token to compare with stored hash
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
-    
+
     const user = await User.findOne({
       emailVerificationToken: hashedToken,
       emailVerificationExpires: { $gt: Date.now() }

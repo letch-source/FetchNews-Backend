@@ -200,8 +200,9 @@ final class AuthVM: ObservableObject {
         
         do {
             let response = try await ApiClient.getCurrentUser()
-            currentUser = response.user
-            saveUser(user: response.user)
+            let sanitized = sanitizeUserForSession(response.user)
+            currentUser = sanitized
+            saveUser(user: sanitized)
         } catch {
             print("Failed to refresh user: \(error)")
         }
@@ -212,16 +213,20 @@ final class AuthVM: ObservableObject {
     private func handleAuthSuccess(response: AuthResponse) async {
         print("🔑 Handling auth success for user: \(response.user.email)")
         isAuthenticated = true
-        currentUser = response.user
+        let sanitized = sanitizeUserForSession(response.user)
+        currentUser = sanitized
         saveToken(token: response.token)
-        saveUser(user: response.user)
+        saveUser(user: sanitized)
         
         // Set user's timezone automatically
         await setUserTimezone()
         
         // Notify that user has logged in so NewsVM can load their data
-        NotificationCenter.default.post(name: .userDidLogin, object: nil)
-        
+        // Pass the user directly since NewsVM's weak authVM back-reference isn't
+        // wired up yet at this point (it's only set in HomeView/ContentView's onAppear,
+        // which hasn't run during the login transition).
+        NotificationCenter.default.post(name: .userDidLogin, object: sanitized)
+
         print("💾 Auth data saved, isAuthenticated: \(isAuthenticated)")
     }
     
@@ -247,7 +252,9 @@ final class AuthVM: ObservableObject {
                 if let user = try? JSONDecoder().decode(User.self, from: userData) {
                     print("✅ Successfully decoded user: \(user.email)")
                     isAuthenticated = true
-                    currentUser = user
+                    let sanitized = sanitizeUserForSession(user)
+                    currentUser = sanitized
+                    saveUser(user: sanitized)
                     // Set the token in ApiClient
                     ApiClient.setAuthToken(token)
                     print("🔑 Authentication restored successfully")
@@ -275,7 +282,9 @@ final class AuthVM: ObservableObject {
                 if let user = try? JSONDecoder().decode(User.self, from: userData) {
                     print("✅ Successfully decoded user: \(user.email)")
                     isAuthenticated = true
-                    currentUser = user
+                    let sanitized = sanitizeUserForSession(user)
+                    currentUser = sanitized
+                    saveUser(user: sanitized)
                     // Set the token in ApiClient
                     ApiClient.setAuthToken(token)
                     
@@ -286,7 +295,7 @@ final class AuthVM: ObservableObject {
                     await setUserTimezone()
                     
                     // Notify that user session was restored so NewsVM can load their data
-                    NotificationCenter.default.post(name: .userDidLogin, object: nil)
+                    NotificationCenter.default.post(name: .userDidLogin, object: sanitized)
                     
                     // Check if onboarding is needed based on latest user data
                     // Check both selectedTopics and customTopics - if user has topics in "My Topics", skip onboarding
@@ -326,13 +335,31 @@ final class AuthVM: ObservableObject {
     }
     
     private func saveUser(user: User) {
-        print("💾 Saving user to UserDefaults: \(user.email)")
-        if let userData = try? JSONEncoder().encode(user) {
+        let sanitized = sanitizeUserForSession(user)
+        print("💾 Saving user to UserDefaults: \(sanitized.email)")
+        if let userData = try? JSONEncoder().encode(sanitized) {
             UserDefaults.standard.set(userData, forKey: userKey)
             print("✅ User data saved successfully")
         } else {
             print("❌ Failed to encode user data")
         }
+    }
+
+    private func sanitizeUserForSession(_ user: User) -> User {
+        // Drop potentially large history payloads from session/userdefaults storage.
+        User(
+            id: user.id,
+            email: user.email,
+            emailVerified: user.emailVerified,
+            isPremium: user.isPremium,
+            dailyUsageCount: user.dailyUsageCount,
+            subscriptionId: user.subscriptionId,
+            subscriptionExpiresAt: user.subscriptionExpiresAt,
+            customTopics: user.customTopics,
+            summaryHistory: [],
+            selectedTopics: user.selectedTopics,
+            name: user.name
+        )
     }
     
     // MARK: - Computed Properties

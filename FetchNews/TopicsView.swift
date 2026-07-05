@@ -95,6 +95,16 @@ struct TopicsView: View {
                         showingTopicBrowser: $showingTopicBrowser
                     )
                     
+                    // Fetch button
+                    DynamicFetchButton(state: vm.fetchButtonState) {
+                        Task { await vm.fetch() }
+                    }
+                    .disabled(vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty)
+                    .opacity((vm.isBusy || vm.phase != .idle || vm.selectedTopics.isEmpty || !vm.isDirty) ? 0.6 : 1.0)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    
                     
                     // Info box
                     VStack(alignment: .leading, spacing: 12) {

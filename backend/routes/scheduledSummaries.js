@@ -749,8 +749,7 @@ router.post('/:id/execute', authenticateToken, async (req, res) => {
 // Export function for use by scheduler
 async function executeScheduledSummary(user, summary) {
   try {
-    // Lazy require to avoid circular dependency with index.js
-    const { addIntroAndOutro, combineTopicSummaries } = require('../index');
+    const { addIntroAndOutro, combineTopicSummaries } = require('../utils/summaryHelpers');
     const { getMultipleTopicSummaries } = require('../services/topicSummaryService');
     const { fetchArticlesFromCache } = require('../services/cachedArticleFetcher');
     
@@ -923,164 +922,17 @@ async function executeScheduledSummary(user, summary) {
       lengthCategory = 'medium';
     }
     
-    // Generate per-topic audio (instead of combined audio)
-    console.log(`[SCHEDULER] 🎤 Generating audio for ${topicSections.length} topics...`);
-    
-    const { generateTTS } = require('../index');
-    
-    // Generate TTS for each topic in parallel
-    const ttsPromises = topicSections.map(async (section, index) => {
-      try {
-        console.log(`[SCHEDULER]    Generating audio for topic: ${section.topic}`);
-        const audioData = await generateTTS(section.summary, selectedVoice, playbackRate);
-        section.audioUrl = audioData.audioUrl;
-        console.log(`[SCHEDULER]    ✅ Audio generated for ${section.topic}`);
-      } catch (ttsError) {
-        console.error(`[SCHEDULER]    ❌ Failed to generate audio for ${section.topic}:`, ttsError);
-        section.audioUrl = null;
-      }
-    });
-    
-    // Wait for all TTS to complete
-    await Promise.all(ttsPromises);
-    console.log(`[SCHEDULER] 🎤 Completed audio generation for all topics`);
-    
-    // No longer generating combined audio - use per-topic audio instead
+    // Generate a single combined audio track
+    const { generateTTS } = require('../services/ttsService');
     let audioUrl = null;
-    
-    // LEGACY CODE BELOW (for backward compatibility if needed):
     try {
-      const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-      if (false && OPENAI_API_KEY) { // Disabled - using per-topic audio now
-        // Clean and prepare text for TTS
-        const cleaned = String(combinedText)
-          .replace(/[\n\r\u2018\u2019\u201C\u201D]/g, (match) => {
-            switch(match) {
-              case '\n': case '\r': return ' ';
-              case '\u2018': case '\u2019': return "'";
-              case '\u201C': case '\u201D': return '"';
-              default: return match;
-            }
-          })
-          .replace(/\s+/g, " ")
-          .trim();
-        
-        // Split text into chunks if it exceeds OpenAI's 4096 character limit
-        const maxChunkLength = 4000;
-        const textChunks = splitTextIntoChunks(cleaned, maxChunkLength);
-        
-        console.log(`[SCHEDULER] TTS processing ${textChunks.length} chunk(s) for total ${cleaned.length} characters`);
-        
-        // Generate TTS
-        const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-        const normalizedVoice = String(selectedVoice || "alloy").toLowerCase();
-        const availableVoices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
-        const voiceToUse = availableVoices.includes(normalizedVoice) ? normalizedVoice : "alloy";
-        
-        const modelPriority = ["tts-1", "tts-1-hd"];
-        let finalBuffer = null;
-        let lastErr = null;
-        
-        // Generate audio for each chunk
-        for (let chunkIndex = 0; chunkIndex < textChunks.length; chunkIndex++) {
-          const chunk = textChunks[chunkIndex];
-          console.log(`[SCHEDULER] Generating audio for chunk ${chunkIndex + 1}/${textChunks.length} (${chunk.length} chars)`);
-          
-          let chunkSpeech = null;
-          
-          // Try models in order for this chunk
-          for (const model of modelPriority) {
-            try {
-              console.log(`[SCHEDULER] TTS Attempt - Chunk ${chunkIndex + 1}, Model: ${model}, Voice: ${voiceToUse}`);
-              chunkSpeech = await openai.audio.speech.create({
-                model,
-                voice: voiceToUse,
-                input: chunk,
-                format: "mp3",
-              });
-              if (chunkSpeech) {
-                console.log(`[SCHEDULER] TTS Success - Chunk ${chunkIndex + 1}, Model: ${model}`);
-                break;
-              }
-            } catch (e) {
-              lastErr = e;
-              console.error(`[SCHEDULER] TTS chunk ${chunkIndex + 1} failed with ${model}/${voiceToUse}:`, e.message);
-            }
-          }
-          
-          // If selected voice failed, try fallback to alloy
-          if (!chunkSpeech && voiceToUse !== "alloy") {
-            console.log(`[SCHEDULER] TTS Fallback - Chunk ${chunkIndex + 1}, trying alloy voice`);
-            for (const model of modelPriority) {
-              try {
-                chunkSpeech = await openai.audio.speech.create({
-                  model,
-                  voice: "alloy",
-                  input: chunk,
-                  format: "mp3",
-                });
-                if (chunkSpeech) {
-                  console.log(`[SCHEDULER] TTS Fallback Success - Chunk ${chunkIndex + 1}, Model: ${model}`);
-                  break;
-                }
-              } catch (e) {
-                lastErr = e;
-                console.error(`[SCHEDULER] TTS chunk ${chunkIndex + 1} fallback failed with ${model}/alloy:`, e.message);
-              }
-            }
-          }
-          
-          if (!chunkSpeech) {
-            throw lastErr || new Error(`Failed to generate audio for chunk ${chunkIndex + 1}`);
-          }
-          
-          // Convert to buffer and concatenate
-          const chunkBuffer = Buffer.from(await chunkSpeech.arrayBuffer());
-          
-          if (finalBuffer === null) {
-            finalBuffer = chunkBuffer;
-          } else {
-            // Concatenate MP3 buffers
-            finalBuffer = Buffer.concat([finalBuffer, chunkBuffer]);
-          }
-        }
-        
-        if (finalBuffer) {
-          // Save audio file
-          const buffer = finalBuffer;
-          const fileBase = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
-          
-          // Upload to B2 if configured, otherwise save locally
-          if (isB2Configured()) {
-            try {
-              console.log('[SCHEDULER] 📤 Uploading audio to Backblaze B2...');
-              audioUrl = await uploadAudioToB2(buffer, fileBase);
-              console.log('[SCHEDULER] ✅ Audio uploaded to B2 successfully');
-            } catch (b2Error) {
-              console.error('[SCHEDULER] ❌ B2 upload failed, falling back to local storage:', b2Error);
-              // Fallback to local storage
-              const mediaDir = path.join(__dirname, '../media');
-              const filePath = path.join(mediaDir, fileBase);
-              await fs.mkdir(mediaDir, { recursive: true });
-              await fs.writeFile(filePath, buffer);
-              const baseUrl = process.env.BASE_URL || 'https://fetchnews-backend.onrender.com';
-              audioUrl = `${baseUrl}/media/${fileBase}`;
-            }
-          } else {
-            console.log('[SCHEDULER] ⚠️  B2 not configured, using local storage');
-            const mediaDir = path.join(__dirname, '../media');
-            const filePath = path.join(mediaDir, fileBase);
-            await fs.mkdir(mediaDir, { recursive: true });
-            await fs.writeFile(filePath, buffer);
-            const baseUrl = process.env.BASE_URL || 'https://fetchnews-backend.onrender.com';
-            audioUrl = `${baseUrl}/media/${fileBase}`;
-          }
-          
-          console.log(`[SCHEDULER] Audio generated for scheduled fetch "${title}"`);
-        }
-      }
+      console.log(`[SCHEDULER] 🎤 Generating combined audio...`);
+      const baseUrl = process.env.BASE_URL || 'https://fetchnews-backend.onrender.com';
+      const audioData = await generateTTS(combinedText, selectedVoice, playbackRate, baseUrl);
+      audioUrl = audioData.audioUrl;
+      console.log(`[SCHEDULER] 🎤 ✅ Combined audio generated`);
     } catch (audioError) {
-      console.error(`[SCHEDULER] Failed to generate audio for scheduled fetch:`, audioError);
+      console.error(`[SCHEDULER] 🎤 ❌ Failed to generate combined audio:`, audioError);
       // Continue without audio - summary is still valuable
     }
     
@@ -1091,14 +943,14 @@ async function executeScheduledSummary(user, summary) {
       summary: combinedText,
       topics: allTopics,
       length: lengthCategory,
-      audioUrl: audioUrl, // Legacy - no longer used
-      topicSections: topicSections, // NEW: Per-topic sections with individual audio
+      audioUrl: audioUrl,
+      topicSections: topicSections, // Structured topic sections (no per-topic audio)
       sources: items.slice(0, 10) // Keep top 10 sources
     };
     
     console.log(`[SCHEDULER] 📊 Saving summary with ${topicSections.length} topic sections to history`);
     for (const section of topicSections) {
-      console.log(`[SCHEDULER]    - ${section.topic}: ${section.articles.length} articles, Audio: ${section.audioUrl ? 'YES' : 'NO'}`);
+      console.log(`[SCHEDULER]    - ${section.topic}: ${section.articles.length} articles`);
     }
     
     if (mongoose.connection.readyState === 1) {

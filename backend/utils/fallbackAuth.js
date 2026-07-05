@@ -439,8 +439,8 @@ const fallbackAuth = {
       return { allowed: true, reason: 'premium' };
     }
     
-    // Free users limited to 3 fetches per day
-    const freeUserLimit = 3;
+    // Free users limited to 20 fetches per day
+    const freeUserLimit = 20;
     if (user.dailyUsageCount >= freeUserLimit) {
       return { allowed: false, reason: 'daily_limit_reached', dailyCount: user.dailyUsageCount, limit: freeUserLimit };
     }

@@ -16,9 +16,9 @@ extension Notification.Name {
 
 final class ApiClient {
         // Production backend URL:
-        static let base = URL(string: "https://fetchnews-backend.onrender.com")!
-        // Local development backend URL (doesn't work with iOS Simulator):
-        // static let base = URL(string: "http://localhost:3001")!
+        // static let base = URL(string: "https://fetchnews-backend.onrender.com")!
+        // Local development backend URL:
+        static let base = URL(string: "http://192.168.0.113:3001")!
     private static var authToken: String?
     
     // MARK: - Authentication Methods
@@ -746,6 +746,35 @@ final class ApiClient {
         }
     }
 
+    // MARK: - Welcome Message
+    
+    static func getWelcomeMessage() async throws -> TopicSection {
+        let endpoint = "/api/generate-welcome"
+        let url = base.appendingPathComponent(endpoint)
+        
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // Add authentication header if available
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await session.data(for: req)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(TopicSection.self, from: data)
+        } else {
+            let errorResponse = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NetworkError.serverError(errorResponse.error)
+        }
+    }
+    
     static func summarize(topics: [String], wordCount: Int, skipTTS: Bool = true, goodNewsOnly: Bool = false, country: String? = nil) async throws -> SummarizeResponse {
         let endpoint = topics.count == 1 ? "/api/summarize" : "/api/summarize/batch"
         var comps = URLComponents(url: base.appendingPathComponent(endpoint), resolvingAgainstBaseURL: false)!
