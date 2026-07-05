@@ -138,51 +138,54 @@ async function sendPushNotification(deviceToken, title, body, data = {}) {
       return false;
     }
     
-    // Check for BadEnvironmentKeyInToken error and invalid token errors
+    // Check for environment-mismatch and invalid-token errors
     if (result.failed && result.failed.length > 0) {
       const failedNotification = result.failed[0];
       const reason = failedNotification.response?.reason;
-      
-      // Check for invalid/bad device token reasons
+
+      // Reasons that can ALSO occur simply because the token belongs to the other
+      // APNs environment (e.g. a development-built app's token sent to the production
+      // gateway commonly comes back as BadDeviceToken, not BadEnvironmentKeyInToken as
+      // you might expect) — retry with the fallback environment before concluding the
+      // token is actually dead. Only if the fallback attempt ALSO fails with one of
+      // these reasons do we treat it as genuinely invalid and signal removal.
       const invalidTokenReasons = [
         'BadDeviceToken',
         'Unregistered',
-        'InvalidToken'
+        'InvalidToken',
+        'BadEnvironmentKeyInToken'
       ];
-      
-      if (reason && invalidTokenReasons.includes(reason)) {
-        console.error(`[NOTIFICATIONS] Invalid device token detected (${reason}): ${deviceToken.substring(0, 8)}...`);
-        return 'BAD_TOKEN'; // Signal to caller that token should be removed
-      }
-      
-      const badEnvError = result.failed.find(f => 
-        f.response && f.response.reason === 'BadEnvironmentKeyInToken'
-      );
-      
-      if (badEnvError && fallbackProvider) {
-        console.log(`[NOTIFICATIONS] Environment mismatch detected (token is ${fallbackEnv}, server using ${primaryEnv}), retrying with ${fallbackEnv}...`);
-        
+
+      if (reason && invalidTokenReasons.includes(reason) && fallbackProvider) {
+        console.log(`[NOTIFICATIONS] ${reason} on ${primaryEnv} gateway — retrying with ${fallbackEnv} in case the token belongs to that environment...`);
+
         // Retry with the other environment
         result = await fallbackProvider.send(notification, deviceToken);
-        
-        if (result.failed && result.failed.length > 0) {
-          const retryFailedNotification = result.failed[0];
-          const retryReason = retryFailedNotification.response?.reason;
-          
-          // Check for invalid token on retry too
-          if (retryReason && invalidTokenReasons.includes(retryReason)) {
-            console.error(`[NOTIFICATIONS] Invalid device token detected on retry (${retryReason}): ${deviceToken.substring(0, 8)}...`);
-            return 'BAD_TOKEN';
-          }
-          
-          console.error(`[NOTIFICATIONS] Failed to send notification (${fallbackEnv}):`, result.failed);
-          return false;
-        }
-        
+
         if (result.sent && result.sent.length > 0) {
           console.log(`[NOTIFICATIONS] Successfully sent notification to ${deviceToken.substring(0, 8)}... (using ${fallbackEnv} environment)`);
           return true;
         }
+
+        if (result.failed && result.failed.length > 0) {
+          const retryFailedNotification = result.failed[0];
+          const retryReason = retryFailedNotification.response?.reason;
+
+          // Only now, after both environments rejected it, treat the token as dead
+          if (retryReason && invalidTokenReasons.includes(retryReason)) {
+            console.error(`[NOTIFICATIONS] Invalid device token confirmed on both environments (${reason} then ${retryReason}): ${deviceToken.substring(0, 8)}...`);
+            return 'BAD_TOKEN';
+          }
+
+          console.error(`[NOTIFICATIONS] Failed to send notification (${fallbackEnv}):`, result.failed);
+          return false;
+        }
+
+        return false;
+      } else if (reason && invalidTokenReasons.includes(reason)) {
+        // No fallback provider available to retry against
+        console.error(`[NOTIFICATIONS] Invalid device token detected (${reason}): ${deviceToken.substring(0, 8)}...`);
+        return 'BAD_TOKEN';
       } else {
         // Other error, log and return
         console.error(`[NOTIFICATIONS] Failed to send notification (${primaryEnv}):`, result.failed);

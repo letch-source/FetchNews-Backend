@@ -361,6 +361,11 @@ struct UserResponse: Codable {
 
 struct ErrorResponse: Codable {
     let error: String
+    // Present on some errors (e.g. daily fetch limit) — a friendlier, more specific
+    // message than `error` alone. Prefer this for display when available.
+    let message: String?
+    let dailyCount: Int?
+    let limit: Int?
 }
 
 struct CustomTopicsResponse: Codable {

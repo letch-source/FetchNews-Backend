@@ -16,9 +16,9 @@ extension Notification.Name {
 
 final class ApiClient {
         // Production backend URL:
-        // static let base = URL(string: "https://fetchnews-backend.onrender.com")!
+        static let base = URL(string: "https://fetchnews-backend.onrender.com")!
         // Local development backend URL:
-        static let base = URL(string: "http://192.168.0.113:3001")!
+        // static let base = URL(string: "http://192.168.0.113:3001")!
     private static var authToken: String?
     
     // MARK: - Authentication Methods
@@ -822,13 +822,19 @@ final class ApiClient {
             guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? -1
                 print("Summarize API error: HTTP \(statusCode)")
-                
+
                 // Log response body for debugging
                 if let responseString = String(data: data, encoding: .utf8) {
                     print("Error response body: \(responseString)")
                 }
-                
-                throw URLError(.badServerResponse)
+
+                // Surface the backend's actual error message (e.g. "You've used all 20
+                // of your daily Fetches...") instead of a generic URLError(.badServerResponse),
+                // which just shows up to the user as an unhelpful "-1011" network error.
+                if let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
+                    throw NetworkError.serverError(errorResponse.message ?? errorResponse.error)
+                }
+                throw NetworkError.serverError("Request failed with status \(statusCode)")
             }
             
             
@@ -861,12 +867,21 @@ final class ApiClient {
                 // Silently handle cancellation - this is expected when tasks are cancelled
                 throw CancellationError()
             }
-            
+
             // Check for Swift Task cancellation
             if error is CancellationError {
                 throw error
             }
-            
+
+            // Already a NetworkError (e.g. the serverError(...) thrown above when the
+            // response wasn't 2xx) — pass it through as-is. Without this, it falls
+            // through to NetworkError.unknown(error) below, which wraps its
+            // description as "Network error: <inner description>", double-prefixing
+            // messages like "Server error: You've used all 20 of your daily Fetches...".
+            if let networkError = error as? NetworkError {
+                throw networkError
+            }
+
             print("Error in summarize: \(error)")
             if let urlError = error as? URLError {
                 switch urlError.code {

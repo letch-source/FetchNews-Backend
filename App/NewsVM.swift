@@ -1182,7 +1182,14 @@ final class NewsVM: ObservableObject {
                 
                 // Handle different types of errors
                 if let networkError = error as? NetworkError {
-                    lastError = networkError.errorDescription
+                    // serverError carries an already-complete, user-facing sentence from
+                    // the backend (e.g. daily limit messages) — show it as-is rather than
+                    // prefixing with the generic "Server error: " used for other cases.
+                    if case .serverError(let message) = networkError {
+                        lastError = message
+                    } else {
+                        lastError = networkError.errorDescription
+                    }
                 } else if let urlError = error as? URLError {
                     // Check for cancellation error code
                     if urlError.code == .cancelled {
@@ -2447,26 +2454,37 @@ extension NewsVM {
     // Request notification permissions on first launch
     func requestNotificationPermission() async {
         let center = UNUserNotificationCenter.current()
-        
+
         // Check current authorization status
         let settings = await center.notificationSettings()
-        
-        guard settings.authorizationStatus == .notDetermined else {
-            // Already requested, don't ask again
-            return
-        }
-        
-        // Request authorization
-        do {
-            let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
-            if granted {
-                print("✅ Notification permission granted")
-            } else {
-                print("❌ Notification permission denied")
+
+        if settings.authorizationStatus == .notDetermined {
+            // Request authorization
+            do {
+                let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+                if granted {
+                    print("✅ Notification permission granted")
+                } else {
+                    print("❌ Notification permission denied")
+                }
+            } catch {
+                print("Failed to request notification permission: \(error)")
             }
-        } catch {
-            print("Failed to request notification permission: \(error)")
         }
+
+        // Register for remote (push) notifications whenever we're authorized — not just
+        // the first time permission is granted. Without this call, iOS never asks APNs
+        // for a device token, so didRegisterForRemoteNotificationsWithDeviceToken never
+        // fires, the backend never receives a token, and server-sent push notifications
+        // (scheduled summaries, morning fetch alerts, etc.) can never reach the device,
+        // no matter how correctly APNs is configured server-side. Apple's guidance is to
+        // call this on every launch, since it also refreshes/re-confirms the token.
+        #if canImport(UIKit)
+        let currentStatus = await center.notificationSettings().authorizationStatus
+        if currentStatus == .authorized {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+        #endif
     }
     
     // Send a notification when a scheduled fetch is ready
