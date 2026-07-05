@@ -20,16 +20,23 @@ final class NewsVM: ObservableObject {
 
     // Selection & state
     @Published var selectedTopics: Set<String> = [] {
-        didSet { 
+        didSet {
             print("🎯 [TOPICS] selectedTopics didSet triggered")
             print("   Old: \(oldValue.sorted())")
             print("   New: \(selectedTopics.sorted())")
-            print("   Stack trace: \(Thread.callStackSymbols.prefix(5).joined(separator: "\n   "))")
-            debouncedSaveSettings() 
+            // Only cache locally here — do NOT schedule a remote push. This property
+            // gets reassigned by loadLocalSettings()/loadRemoteSettings()/login-restore
+            // too, and those aren't user edits. Auto-pushing on every assignment meant
+            // a stale/empty value read from local cache at launch could win a race
+            // against the backend GET and overwrite real synced data. Remote saves for
+            // actual user edits are triggered explicitly at the call site instead
+            // (toggle(), addCustomTopic(), removeCustomTopic(), deleteSelectedCustomTopics()).
+            guard !isResettingState else { return }
+            saveLocalSettings()
         }
     }
     @Published var length: ApiClient.Length = .short {
-        didSet { debouncedSaveSettings() }
+        didSet { debouncedSaveSettings(source: "length.didSet") }
     }
     @Published var phase: Phase = .idle
     @Published var isBusy: Bool = false
@@ -102,22 +109,22 @@ final class NewsVM: ObservableObject {
     
     // Last fetched topics for "Fetch again" functionality
     @Published var lastFetchedTopics: Set<String> = [] {
-        didSet { debouncedSaveSettings() }
+        didSet { debouncedSaveSettings(source: "lastFetchedTopics.didSet") }
     }
-    
+
     // News sources (premium feature)
     @Published var excludedNewsSources: Set<String> = [] {
-        didSet { debouncedSaveSettings() }
+        didSet { debouncedSaveSettings(source: "excludedNewsSources.didSet") }
     }
     @Published var availableNewsSources: [NewsSource] = []
     @Published var newsSourcesByCategory: [String: [NewsSource]] = [:]
-    
+
     // User location
     @Published var userLocation: String = ""
-    
+
     // User country (for news filtering)
     @Published var selectedCountry: String = "us" {
-        didSet { debouncedSaveSettings() }
+        didSet { debouncedSaveSettings(source: "selectedCountry.didSet") }
     }
     
     // Subscription UI
@@ -146,6 +153,17 @@ final class NewsVM: ObservableObject {
     // Debouncing for settings save
     private var saveSettingsTask: Task<Void, Never>?
 
+    // Serializes remote preference saves. Without this, overlapping saves (e.g. a
+    // debounced save still in flight when willResignActive/didEnterBackground both
+    // fire a force-save moments apart) are independent concurrent network requests
+    // with no guaranteed completion order — an older request built from a stale
+    // selectedTopics snapshot can land *after* a newer, correct one and silently
+    // overwrite it on the backend. Coalescing through here ensures saves run one at
+    // a time and any save that lands always reflects the current in-memory state.
+    private var isSavingRemote = false
+    private var remoteSaveNeededAgain = false
+    private var pendingSaveSource = "unknown"
+
     @Published var canPlay: Bool = false
     @Published var isPlaying: Bool = false
     @Published var nowPlayingTitle: String = ""
@@ -163,13 +181,13 @@ final class NewsVM: ObservableObject {
 
     // Settings (with UserDefaults persistence)
     @Published var playbackRate: Double = 1.0 {
-        didSet { debouncedSaveSettings() }
+        didSet { debouncedSaveSettings(source: "playbackRate.didSet") }
     }
     @Published var selectedVoice: String = "Alloy" {
-        didSet { debouncedSaveSettings() }
+        didSet { debouncedSaveSettings(source: "selectedVoice.didSet") }
     }
     @Published var upliftingNewsOnly: Bool = false {
-        didSet { debouncedSaveSettings() }
+        didSet { debouncedSaveSettings(source: "upliftingNewsOnly.didSet") }
     }
     
     // Available voices
@@ -232,7 +250,7 @@ final class NewsVM: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 print("📱 [LIFECYCLE] App will resign active - force saving preferences")
-                self?.forceSaveWithBackgroundTask()
+                self?.forceSaveWithBackgroundTask(source: "willResignActive")
             }
         }
 
@@ -243,7 +261,7 @@ final class NewsVM: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 print("📱 [LIFECYCLE] App entered background - force saving preferences")
-                self?.forceSaveWithBackgroundTask()
+                self?.forceSaveWithBackgroundTask(source: "didEnterBackground")
             }
         }
         #endif
@@ -261,13 +279,13 @@ final class NewsVM: ObservableObject {
     /// suspended mid-request when backgrounding right after a topic change, leaving
     /// the backend with a stale value that then overwrites the newer local selection
     /// on the next launch (loadRemoteSettings trusts any non-empty backend value).
-    private func forceSaveWithBackgroundTask() {
+    private func forceSaveWithBackgroundTask(source: String) {
         let box = BackgroundTaskBox()
         box.id = UIApplication.shared.beginBackgroundTask(withName: "ForceSavePreferences") {
             UIApplication.shared.endBackgroundTask(box.id)
         }
         Task { @MainActor [weak self] in
-            await self?.forceSaveSettings()
+            await self?.forceSaveSettings(source: source)
             if box.id != .invalid {
                 UIApplication.shared.endBackgroundTask(box.id)
                 box.id = .invalid
@@ -359,14 +377,17 @@ final class NewsVM: ObservableObject {
     }
     
     func toggle(_ topic: String) {
-        if selectedTopics.contains(topic) { 
+        if selectedTopics.contains(topic) {
             selectedTopics.remove(topic)
             print("🔵 [TOPICS] Removed '\(topic)' from selectedTopics. Current: \(selectedTopics.sorted())")
-        } else { 
+        } else {
             selectedTopics.insert(topic)
             print("🔵 [TOPICS] Added '\(topic)' to selectedTopics. Current: \(selectedTopics.sorted())")
         }
         isDirty = true
+        // This is a genuine user edit, so schedule the debounced remote save explicitly
+        // (selectedTopics' didSet no longer does this automatically — see its comment).
+        debouncedSaveSettings(source: "toggle(\(topic))")
         
         // Refresh recommended topics when user changes their selection
         Task {
@@ -582,7 +603,7 @@ final class NewsVM: ObservableObject {
                     print("🔄 Backend has default length (200), preserving local value: \(currentLocalLength.label) (\(currentLocalLength.rawValue))")
                     // Save the local preference to backend to sync it
                     Task {
-                        await saveRemoteSettings()
+                        await syncRemoteSettings(source: "loadRemoteSettings-lengthDefaultPreserveLocal")
                     }
                     lengthUpdated = false // We're preserving, not updating
                 } else {
@@ -596,7 +617,7 @@ final class NewsVM: ObservableObject {
                 print("⚠️ Backend returned invalid length: '\(preferences.length)', keeping local value: \(currentLocalLength.label)")
                 if currentLocalLength != .short {
                     Task {
-                        await saveRemoteSettings()
+                        await syncRemoteSettings(source: "loadRemoteSettings-lengthInvalid")
                     }
                 }
                 lengthUpdated = false // We're preserving, not updating
@@ -636,7 +657,7 @@ final class NewsVM: ObservableObject {
                 // Schedule a sync to backend to fix the discrepancy (immediate, not debounced)
                 Task {
                     print("🔄 [SYNC] Force syncing local topics to backend")
-                    await self.forceSaveSettings()
+                    await self.forceSaveSettings(source: "loadRemoteSettings-backendEmptyLocalHasData")
                 }
             } else if loadedTopics.count > 0 {
                 // Backend has data - use it as source of truth (ALWAYS trust backend over empty local)
@@ -647,7 +668,7 @@ final class NewsVM: ObservableObject {
                 if normalized != loadedSet {
                     Task {
                         print("🧹 [LOAD] Normalized backend topics - syncing back to backend")
-                        await saveRemoteSettings()
+                        await syncRemoteSettings(source: "loadRemoteSettings-normalizeTopics")
                     }
                 }
                 // Also update UserDefaults cache for faster next load
@@ -679,7 +700,7 @@ final class NewsVM: ObservableObject {
     }
     
     // Debounced save to reduce API calls
-    private func debouncedSaveSettings() {
+    private func debouncedSaveSettings(source: String) {
         // Skip all saves while clearUserState() is running — we don't want
         // an empty selectedTopics (or any other cleared state) persisted to
         // UserDefaults or the backend during a logout/reset.
@@ -687,47 +708,58 @@ final class NewsVM: ObservableObject {
 
         // Always save to local UserDefaults immediately
         saveLocalSettings()
-        
+
         // Cancel any pending save task
         saveSettingsTask?.cancel()
-        
+
         // Debounce remote save by 1 second
         saveSettingsTask = Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-            if !Task.isCancelled && ApiClient.isAuthenticated {
-                await saveRemoteSettings()
+            guard !Task.isCancelled && ApiClient.isAuthenticated else { return }
+            // saveRemoteSettings() bundles EVERY field (including selectedTopics) into
+            // one PUT, no matter which property's didSet triggered this. lastFetchedTopics,
+            // length, etc. all get updated early during loadRemoteSettings()/history sync —
+            // before selectedTopics has been resolved from the backend — so without this
+            // guard, an unrelated field update could push a still-stale/empty selectedTopics
+            // and overwrite real synced data. Wait until the initial remote load has
+            // established the authoritative value at least once this session.
+            guard hasLoadedRemoteSettings else {
+                print("💾 [SAVE] Skipping remote save — remote settings not loaded yet this session (source: \(source))")
+                return
             }
+            await syncRemoteSettings(source: "debounced:\(source)")
         }
     }
-    
+
     private func saveSettings() {
         // Always save to local UserDefaults first
         saveLocalSettings()
-        
+
         // If user is authenticated, also save to backend
         if ApiClient.isAuthenticated {
             Task {
-                await saveRemoteSettings()
+                await syncRemoteSettings(source: "saveSettings")
             }
         }
     }
-    
+
     /// Force save settings immediately (used when app is backgrounded)
-    func forceSaveSettings() async {
+    func forceSaveSettings(source: String = "forceSaveSettings") async {
         print("🔥 [FORCE SAVE] Force saving preferences immediately")
         print("   Current selectedTopics: \(selectedTopics.sorted())")
         print("   Authenticated: \(ApiClient.isAuthenticated)")
-        
+        print("   Source: \(source)")
+
         // Cancel any pending debounced save
         saveSettingsTask?.cancel()
         saveSettingsTask = nil
-        
+
         // Save to local immediately
         saveLocalSettings()
-        
+
         // Save to backend immediately if authenticated
         if ApiClient.isAuthenticated {
-            await saveRemoteSettings()
+            await syncRemoteSettings(source: source)
         } else {
             print("🔥 [FORCE SAVE] ⚠️ Not authenticated, skipping backend save")
         }
@@ -771,7 +803,28 @@ final class NewsVM: ObservableObject {
         // Note: synchronize() is not needed on modern iOS - UserDefaults auto-saves
     }
     
-    private func saveRemoteSettings() async {
+    /// Coalescing entry point for all remote preference saves — see isSavingRemote's
+    /// doc comment for why this exists. Every call site should go through this
+    /// instead of calling saveRemoteSettings() directly.
+    /// `source` is a short label identifying the call site, purely for diagnostics —
+    /// it's sent to the backend as a header so we can see in the server log which
+    /// client code path triggered a given save, without correlating two log streams.
+    private func syncRemoteSettings(source: String) async {
+        pendingSaveSource = source
+        if isSavingRemote {
+            remoteSaveNeededAgain = true
+            return
+        }
+        isSavingRemote = true
+        defer { isSavingRemote = false }
+        repeat {
+            remoteSaveNeededAgain = false
+            let thisSource = pendingSaveSource
+            await saveRemoteSettings(source: thisSource)
+        } while remoteSaveNeededAgain
+    }
+
+    private func saveRemoteSettings(source: String) async {
         do {
             let preferences = UserPreferences(
                 selectedVoice: selectedVoice,
@@ -784,9 +837,9 @@ final class NewsVM: ObservableObject {
                 selectedCountry: selectedCountry
             )
             
-            print("💾 [SAVE] Saving preferences to backend - selectedTopics: \(Array(selectedTopics).sorted())")
-            let updated = try await ApiClient.updateUserPreferences(preferences)
-            print("✅ [SAVE] Backend confirmed selectedTopics saved: \(updated.selectedTopics?.sorted() ?? [])")
+            print("💾 [SAVE] Saving preferences to backend - selectedTopics: \(Array(selectedTopics).sorted()) - source: \(source)")
+            let updated = try await ApiClient.updateUserPreferences(preferences, source: source)
+            print("✅ [SAVE] Backend confirmed selectedTopics saved: \(updated.selectedTopics?.sorted() ?? []) - source: \(source)")
         } catch {
             print("❌ [SAVE] Failed to save preferences to backend: \(error.localizedDescription)")
             // Silently fail - local settings are already saved
@@ -1614,12 +1667,12 @@ final class NewsVM: ObservableObject {
                 self.selectedTopics.insert(topic)
             }
             // Save to backend preferences immediately to persist selectedTopics
-            await saveRemoteSettings()
+            await syncRemoteSettings(source: "addCustomTopic(\(topic))")
         } catch {
             // Silently fail - user can try again
         }
     }
-    
+
     func removeCustomTopic(_ topic: String) async {
         do {
             let updatedTopics = try await ApiClient.removeCustomTopic(topic)
@@ -1630,12 +1683,12 @@ final class NewsVM: ObservableObject {
                 self.selectedTopics.remove(topic)
             }
             // Save to backend preferences immediately
-            await saveRemoteSettings()
+            await syncRemoteSettings(source: "removeCustomTopic(\(topic))")
         } catch {
             // Silently fail - user can try again
         }
     }
-    
+
     func updateCustomTopics(_ topics: [String]) async {
         do {
             let updatedTopics = try await ApiClient.updateCustomTopics(topics)
@@ -1993,6 +2046,9 @@ final class NewsVM: ObservableObject {
                 print("DEBUG: After deletion - custom topics: \(self.customTopics)")
                 print("DEBUG: After deletion - selected topics: \(self.selectedTopics)")
             }
+            // Genuine user edit — persist the updated selection to the backend explicitly
+            // (selectedTopics' didSet no longer auto-saves remotely, see its comment).
+            await syncRemoteSettings(source: "deleteSelectedCustomTopics")
         } catch {
             print("Failed to delete custom topics: \(error)")
         }

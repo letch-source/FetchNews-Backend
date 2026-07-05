@@ -63,6 +63,7 @@ router.put('/', authenticateToken, async (req, res) => {
     const preferences = req.body;
     
     console.log(`[PREFERENCES] Updating preferences for user ${user.email}`);
+    console.log(`[PREFERENCES] Save source (client call site): ${req.headers['x-save-source'] || 'not sent'}`);
     console.log(`[PREFERENCES] MongoDB readyState: ${mongoose.connection.readyState}`);
     console.log(`[PREFERENCES] selectedVoice received: ${preferences.selectedVoice}`);
     console.log(`[PREFERENCES] selectedTopics received: ${JSON.stringify(preferences.selectedTopics)}`);

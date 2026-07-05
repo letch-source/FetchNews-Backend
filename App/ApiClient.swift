@@ -1110,12 +1110,16 @@ final class ApiClient {
         return preferences
     }
     
-    static func updateUserPreferences(_ preferences: UserPreferences) async throws -> UserPreferences {
+    static func updateUserPreferences(_ preferences: UserPreferences, source: String = "unknown") async throws -> UserPreferences {
         let endpoint = "/api/preferences"
         var req = URLRequest(url: base.appendingPathComponent(endpoint))
         req.httpMethod = "PUT"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+        // Diagnostic only: tells the backend log which client code path triggered
+        // this save, so we can see who's actually sending an empty selectedTopics
+        // without having to manually correlate two separate log streams.
+        req.setValue(source, forHTTPHeaderField: "X-Save-Source")
+
         if let token = authToken {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
