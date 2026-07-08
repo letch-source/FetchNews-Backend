@@ -67,6 +67,16 @@ final class NewsVM: ObservableObject {
     @Published var isUsingRecommendedFeed: Bool = false
     private var isLoadingRecommendedFeed: Bool = false
     @Published var isShowingRecommendedAfterFetch: Bool = false
+
+    // Temporarily disables the recommended-topics *summarize* calls (full GPT
+    // summarization + TTS generation for ~8 recommended topics) that otherwise fire
+    // automatically after every manual fetch (playRecommendedTopicsAfterFetch) and
+    // whenever no topics are selected (loadRecommendedTopicsFeedIfNeeded). Each of
+    // those is a second full-cost fetch happening silently in the background, which
+    // was quietly doubling both OpenAI cost and daily-fetch-limit consumption. Does
+    // NOT affect fetchRecommendedTopics(), which only fetches lightweight topic name
+    // suggestions for the UI chips (no summarization/TTS, negligible cost).
+    private let recommendedFetchesEnabled = false
     
     // Scheduled summaries (premium feature)
     @Published var scheduledSummaries: [ScheduledSummary] = []
@@ -1750,8 +1760,9 @@ final class NewsVM: ObservableObject {
     }
 
     private func playRecommendedTopicsAfterFetch() async -> Bool {
+        guard recommendedFetchesEnabled else { return false }
         guard ApiClient.isAuthenticated else { return false }
-        
+
         let recommendedNames: [String]
         do {
             let response = try await ApiClient.getRecommendedTopicNames()
@@ -1829,6 +1840,7 @@ final class NewsVM: ObservableObject {
     }
 
     func loadRecommendedTopicsFeedIfNeeded() async {
+        guard recommendedFetchesEnabled else { return }
         guard selectedTopics.isEmpty else { return }
         guard ApiClient.isAuthenticated else { return }
         guard !isLoadingRecommendedFeed else { return }
