@@ -68,7 +68,9 @@ async function uploadAudioToB2(fileBuffer, fileName) {
     console.log(`✅ Audio uploaded to B2: ${publicUrl}`);
     return publicUrl;
   } catch (error) {
-    console.error('❌ Failed to upload to B2:', error);
+    const statusCode = error?.$metadata?.httpStatusCode;
+    const code = error?.Code || error?.name;
+    console.error(`❌ Failed to upload to B2: ${code || 'Error'} (status ${statusCode || 'n/a'}) - ${error.message}`);
     throw new Error(`B2 upload failed: ${error.message}`);
   }
 }
