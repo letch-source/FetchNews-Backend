@@ -775,7 +775,7 @@ final class ApiClient {
         }
     }
     
-    static func summarize(topics: [String], wordCount: Int, skipTTS: Bool = true, goodNewsOnly: Bool = false, country: String? = nil) async throws -> SummarizeResponse {
+    static func summarize(topics: [String], wordCount: Int, skipTTS: Bool = true, goodNewsOnly: Bool = false, country: String? = nil, isRecommendedFeed: Bool = false) async throws -> SummarizeResponse {
         let endpoint = topics.count == 1 ? "/api/summarize" : "/api/summarize/batch"
         var comps = URLComponents(url: base.appendingPathComponent(endpoint), resolvingAgainstBaseURL: false)!
         if skipTTS { comps.queryItems = [URLQueryItem(name: "noTts", value: "1")] }
@@ -790,7 +790,7 @@ final class ApiClient {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
-        let body: [String: Any]
+        var body: [String: Any]
         if topics.count == 1 {
             // Single topic - send directly
             var singleBody: [String: Any] = ["topics": topics, "wordCount": wordCount, "goodNewsOnly": goodNewsOnly]
@@ -806,6 +806,11 @@ final class ApiClient {
             }
             body = ["batches": [batchBody]]
         }
+        // Marks this as an automatic recommended-feed load rather than a user-initiated
+        // fetch, so the backend can exempt it from the daily Fetch limit (both the check
+        // and the usage increment) — this happens on nearly every launch/topic change and
+        // shouldn't silently consume the same quota as pressing the Fetch button.
+        body["isRecommendedFeed"] = isRecommendedFeed
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         
         // Debug: Log the request details

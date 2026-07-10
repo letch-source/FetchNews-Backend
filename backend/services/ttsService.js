@@ -1,8 +1,8 @@
 /**
  * TTS Service
  * Shared text-to-speech helper using OpenAI.
- * Extracted from index.js so it can be reused by autoFetchSummaries.js
- * and any other job or route that needs audio generation.
+ * Extracted from index.js so it can be reused by any job or route that
+ * needs audio generation.
  */
 
 const fs = require('fs');

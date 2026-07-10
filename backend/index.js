@@ -38,9 +38,26 @@ const GlobalSettings = require("./models/GlobalSettings");
 const ArticleCache = require("./models/ArticleCache");
 const { runCategorizationJob, scheduleCategorization, getJobStatus } = require("./jobs/categorizeArticles");
 const { getCacheHealth, fetchArticlesFromCache, fetchMultipleTopicsFromCache } = require("./services/cachedArticleFetcher");
-const { initializeAutoFetch, getJobStatus: getAutoFetchStatus, triggerManualFetch } = require("./jobs/autoFetchSummaries");
 const { getMultipleTopicSummaries, getCacheHealth: getTopicSummaryCacheHealth } = require("./services/topicSummaryService");
 const { startJob: startTopicSummaryJob, getJobStatus: getTopicSummaryJobStatus, triggerManually: triggerTopicSummaryJob } = require("./jobs/generateTopicSummaries");
+
+// Runs async fn(item) over items with at most `limit` in flight at once. Used to
+// cap how many topics summarize concurrently within a single request — full
+// Promise.all() across all topics let the CPU-heavy GPT/tagging work for every
+// topic land in the same instant, which was stalling the whole Node process for
+// tens of seconds under any concurrent load on Render's shared-CPU plan.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < items.length) {
+      const i = nextIndex++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 // Connect to MongoDB
 connectDB();
@@ -626,29 +643,6 @@ app.use("/api/scheduler", schedulerHealthRoutes);
 const testFetchRoutes = require("./routes/testFetch");
 app.use("/api/test-fetch", testFetchRoutes);
 
-// Auto-fetch job status and manual trigger
-app.get("/api/auto-fetch/status", authenticateToken, async (req, res) => {
-  try {
-    const status = getAutoFetchStatus();
-    res.json(status);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post("/api/auto-fetch/trigger", authenticateToken, async (req, res) => {
-  try {
-    // Only allow admins or in development
-    if (process.env.NODE_ENV === 'production' && !req.user.isAdmin) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-    const result = await triggerManualFetch();
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // Serve admin website
 // Admin directory is located in backend/admin (relative to this file)
 const adminPath = path.join(__dirname, "admin");
@@ -756,7 +750,7 @@ if (!fs.existsSync(MEDIA_DIR)) {
 app.use("/media", express.static(MEDIA_DIR, { fallthrough: true }));
 
 // --- TTS Helper Function ---
-// generateTTS is imported from services/ttsService.js (shared with autoFetchSummaries.js)
+// generateTTS is imported from services/ttsService.js.
 // Keeping this wrapper so existing callers in this file are unaffected.
 async function _generateTTS_UNUSED(text, voice = 'alloy', speed = 1.0, baseUrl = '') {
   if (!OPENAI_API_KEY) {
@@ -2872,8 +2866,8 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       }
     }
 
-    // Process all topics in parallel for better performance
-    const topicResults = await Promise.all(topics.map(topic => processTopic(topic)));
+    // Process topics with capped concurrency (see mapWithConcurrency above)
+    const topicResults = await mapWithConcurrency(topics, 2, topic => processTopic(topic));
     
     // Build structured topic sections with their articles
     const topicSections = [];
@@ -3005,10 +2999,6 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
       }
     }
 
-    // Send notification if user is not in app and has device token (after response is sent)
-    // Check appInForeground from query params or body (defaults to true for backward compatibility)
-    const appInForeground = req.query.appInForeground !== 'false' && req.body.appInForeground !== false;
-    
     // Send response first
     console.log(`📊 [TOPIC FEEDBACK] Sending ${topicSections.length} topic sections (no per-topic audio)`);
     for (const section of topicSections) {
@@ -3032,9 +3022,11 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
     
     res.json(responseData);
 
-    // Send notification asynchronously after response (don't wait for it)
-    if (!appInForeground && req.user) {
-      console.log(`[NOTIFICATIONS] User ${req.user.email} not in foreground, will send notification`);
+    // Send notification asynchronously after response (don't wait for it). Always
+    // attempt this if the user has a device token — the client never reliably knows
+    // its own foreground state by the time this fires (it may already be suspended),
+    // so gating on a client-reported flag meant this almost never ran in practice.
+    if (req.user) {
       setImmediate(async () => {
         try {
           // OPTIMIZED: Use cached user for notifications (already has latest device token)
@@ -3073,11 +3065,7 @@ app.post("/api/summarize", optionalAuth, async (req, res) => {
         }
       });
     } else {
-      if (req.user) {
-        console.log(`[NOTIFICATIONS] User ${req.user.email} is in foreground (appInForeground=${appInForeground}), skipping notification`);
-      } else {
-        console.log(`[NOTIFICATIONS] No authenticated user, skipping notification`);
-      }
+      console.log(`[NOTIFICATIONS] No authenticated user, skipping notification`);
     }
   } catch (e) {
     console.error("Summarize endpoint error:", e);
@@ -3205,10 +3193,15 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
           return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
         }
 
-        // Process topics concurrently instead of one-at-a-time — each topic involves an
-        // article search plus a ChatGPT summarization call (several seconds each), and
-        // running them sequentially made an 8-topic fetch take 40-70+ seconds.
-        const topicResults = await Promise.all(topics.map(async (topic) => {
+        // Process topics with capped concurrency instead of one-at-a-time or all at
+        // once — each topic involves an article search plus a ChatGPT summarization
+        // call (several seconds each). Running them sequentially made an 8-topic
+        // fetch take 40-70+ seconds; running them fully in parallel let every
+        // topic's CPU-heavy GPT/tagging work land in the same instant, which was
+        // enough to stall the whole Node process for tens of seconds under any
+        // concurrent load on Render's shared-CPU plan. Capping at 2 in flight keeps
+        // most of the speedup while bounding the peak CPU spike.
+        const topicResults = await mapWithConcurrency(topics, 2, async (topic) => {
           try {
             const perTopic = wordCount >= 1500 ? 20 : wordCount >= 800 ? 12 : 6;
             // Normalize geo data structure for batch
@@ -3313,9 +3306,9 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
               },
             };
           }
-        }));
+        });
 
-        // Aggregate in original topic order (Promise.all preserves array order
+        // Aggregate in original topic order (mapWithConcurrency preserves array order
         // regardless of which topic's work finished first).
         for (const r of topicResults) {
           globalCandidates.push(...r.candidates);
@@ -3416,15 +3409,13 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
       }
     }
 
-    // Send notification if user is not in app and has device token (after response is sent)
-    // Check appInForeground from first batch (all batches should have same value)
-    const appInForeground = batches.length > 0 && batches[0].appInForeground !== false;
-    
     // Send response first
     res.json({ results, batches: results });
 
-    // Send notification asynchronously after response (don't wait for it)
-    if (!appInForeground && req.user) {
+    // Send notification asynchronously after response (don't wait for it). Always
+    // attempt this if the user has a device token — see the /api/summarize handler
+    // above for why gating on a client-reported foreground flag doesn't work here.
+    if (req.user) {
       setImmediate(async () => {
         try {
           // OPTIMIZED: Use cached user for notifications (already has latest device token)
@@ -5721,10 +5712,6 @@ function startServer() {
     // Schedule article categorization job (runs at 6am and 6pm daily)
     scheduleCategorization();
     console.log('✅ Article categorization job scheduled');
-    
-    // Initialize automatic fetch for all users (runs at 6am and 6pm daily)
-    initializeAutoFetch();
-    console.log('✅ Automatic fetch job initialized');
     
     // Initialize topic summary generation job (runs every 6 hours)
     startTopicSummaryJob();

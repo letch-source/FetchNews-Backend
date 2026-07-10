@@ -1016,6 +1016,17 @@ final class NewsVM: ObservableObject {
         isBusy = true
         phase = .gather
 
+        #if canImport(UIKit)
+        // Without this, backgrounding the app shortly after pressing Fetch lets iOS
+        // suspend networking mid-request, which surfaces as an NSURLErrorTimedOut
+        // (-1001) instead of the summarize call ever completing. Same pattern as
+        // forceSaveWithBackgroundTask below.
+        let fetchBackgroundTaskBox = BackgroundTaskBox()
+        fetchBackgroundTaskBox.id = UIApplication.shared.beginBackgroundTask(withName: "ManualFetch") {
+            UIApplication.shared.endBackgroundTask(fetchBackgroundTaskBox.id)
+        }
+        #endif
+
         currentTask = Task {
             combined = nil; items = []; fetchCreatedAt = nil
             resetPlayerState()
@@ -1030,6 +1041,12 @@ final class NewsVM: ObservableObject {
                     phase = .idle
                     isBusy = false
                 }
+                #if canImport(UIKit)
+                if fetchBackgroundTaskBox.id != .invalid {
+                    UIApplication.shared.endBackgroundTask(fetchBackgroundTaskBox.id)
+                    fetchBackgroundTaskBox.id = .invalid
+                }
+                #endif
             }
 
             do {
@@ -1124,18 +1141,11 @@ final class NewsVM: ObservableObject {
                 self.currentSummaryVoice = self.selectedVoice
                 self.needsNewAudio = false
                 
-                // Check if app is still in foreground after fetch completes
-                let appInForeground = await MainActor.run {
-                    UIApplication.shared.applicationState == .active
-                }
-                
-                if !appInForeground {
-                    // User closed the app while Fetch was processing, send notification
-                    let fetchTitle = self.combined?.title ?? "Your Fetch"
-                    Task {
-                        try? await ApiClient.sendFetchReadyNotification(fetchTitle: fetchTitle)
-                    }
-                }
+                // Note: the backend now always sends the Fetch-ready push notification
+                // itself after generating the summary, regardless of this client's
+                // foreground state at completion time — that path is reliable even if
+                // this task gets suspended before reaching here. Calling a client-side
+                // notification trigger in addition would just duplicate it.
 
                 isDirty = false
                 
