@@ -3418,9 +3418,9 @@ app.post("/api/summarize/batch", optionalAuth, async (req, res) => {
     if (req.user) {
       setImmediate(async () => {
         try {
-          // OPTIMIZED: Use cached user for notifications (already has latest device token)
-          let userWithToken = cachedUser || req.user;
-          
+          // req.user was reloaded fresh above (line ~3101), so it already has the latest device token
+          let userWithToken = req.user;
+
           if (userWithToken && userWithToken.deviceToken) {
             // Generate title from first batch topics
             const firstBatch = batches[0];

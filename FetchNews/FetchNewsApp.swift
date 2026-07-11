@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UserNotifications
 
 @main
 struct FetchNewsApp: App {
@@ -91,10 +92,23 @@ struct FetchNewsApp: App {
             }
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 // Check for scheduled summaries and retry APNs token when app becomes active
-                if newPhase == .active && authVM.isAuthenticated {
-                    Task {
-                        await vm.checkForScheduledSummary()
-                        await NotificationManager.shared.retryPendingTokenRegistration()
+                if newPhase == .active {
+                    // Clear the badge and dismiss any delivered notifications now that the
+                    // user is back in the app — otherwise these only cleared on cold launch
+                    // or on tapping a notification directly, so backgrounding and returning
+                    // without tapping left stale badges/notifications in place.
+                    if #available(iOS 17.0, *) {
+                        UNUserNotificationCenter.current().setBadgeCount(0)
+                    } else {
+                        UIApplication.shared.applicationIconBadgeNumber = 0
+                    }
+                    UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+
+                    if authVM.isAuthenticated {
+                        Task {
+                            await vm.checkForScheduledSummary()
+                            await NotificationManager.shared.retryPendingTokenRegistration()
+                        }
                     }
                 }
             }

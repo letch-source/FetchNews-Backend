@@ -78,7 +78,7 @@ initializeAPNs();
  * @param {object} data - Additional data payload
  * @returns {Promise<boolean>} - Success status
  */
-async function sendPushNotification(deviceToken, title, body, data = {}) {
+async function sendPushNotification(deviceToken, title, body, data = {}, collapseId = null) {
   if (!apnProviderProduction && !apnProviderDevelopment) {
     console.log('[NOTIFICATIONS] APNs not configured, skipping notification');
     return false;
@@ -91,16 +91,23 @@ async function sendPushNotification(deviceToken, title, body, data = {}) {
 
   try {
     const notification = new apn.Notification();
-    
+
     // Set notification properties
     notification.alert = {
       title: title,
       body: body
     };
-    
+
     notification.sound = 'default';
     notification.badge = 1;
     notification.topic = process.env.APN_BUNDLE_ID || 'com.finlaysmith.FetchNews';
+
+    // Notifications sharing a collapse ID replace each other on the device instead
+    // of stacking, so a stale "ready" alert from a missed day doesn't linger once a
+    // newer one for the same thing arrives.
+    if (collapseId) {
+      notification.collapseId = collapseId;
+    }
     
     // Add custom data
     notification.payload = {
@@ -220,7 +227,8 @@ async function sendScheduledSummaryNotification(deviceToken, summaryTitle, summa
       notificationType: 'scheduledSummary',
       summaryId: summaryId,
       action: 'openSummary'
-    }
+    },
+    `scheduledSummary-${summaryId}`
   );
 }
 
@@ -237,7 +245,8 @@ async function sendFetchReadyNotification(deviceToken, fetchTitle) {
     {
       notificationType: 'fetchReady',
       action: 'openApp'
-    }
+    },
+    'fetchReady'
   );
 }
 
@@ -263,7 +272,8 @@ async function sendEngagementReminder(deviceToken, message = null) {
     {
       notificationType: 'engagementReminder',
       action: 'openApp'
-    }
+    },
+    'engagementReminder'
   );
 }
 
