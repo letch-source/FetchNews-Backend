@@ -150,21 +150,24 @@ async function sendPushNotification(deviceToken, title, body, data = {}, collaps
       const failedNotification = result.failed[0];
       const reason = failedNotification.response?.reason;
 
-      // Reasons that can ALSO occur simply because the token belongs to the other
-      // APNs environment (e.g. a development-built app's token sent to the production
-      // gateway commonly comes back as BadDeviceToken, not BadEnvironmentKeyInToken as
-      // you might expect) — retry with the fallback environment before concluding the
-      // token is actually dead. Only if the fallback attempt ALSO fails with one of
-      // these reasons do we treat it as genuinely invalid and signal removal.
+      // Reasons that genuinely mean the DEVICE TOKEN itself is dead (HTTP 400-class,
+      // per Apple's docs) — a development-built app's token sent to the production
+      // gateway commonly comes back as BadDeviceToken, so retry with the fallback
+      // environment before concluding the token is actually dead.
       const invalidTokenReasons = [
         'BadDeviceToken',
         'Unregistered',
-        'InvalidToken',
-        'BadEnvironmentKeyInToken'
+        'InvalidToken'
       ];
 
+      // BadEnvironmentKeyInToken is an HTTP 403 provider-credential error (same class
+      // as InvalidProviderToken/ExpiredProviderToken) — it means our .p8 key/JWT was
+      // rejected for that specific environment, not that the device token is bad.
+      // Treating it as a dead-token signal was clearing valid tokens on every send.
+      const providerAuthReasons = ['BadEnvironmentKeyInToken'];
+
       if (reason && invalidTokenReasons.includes(reason) && fallbackProvider) {
-        console.log(`[NOTIFICATIONS] ${reason} on ${primaryEnv} gateway — retrying with ${fallbackEnv} in case the token belongs to that environment...`);
+        console.log(`[NOTIFICATIONS] ${reason} on ${primaryEnv} gateway (status ${failedNotification.status}) — retrying with ${fallbackEnv} in case the token belongs to that environment...`);
 
         // Retry with the other environment
         result = await fallbackProvider.send(notification, deviceToken);
@@ -178,7 +181,12 @@ async function sendPushNotification(deviceToken, title, body, data = {}, collaps
           const retryFailedNotification = result.failed[0];
           const retryReason = retryFailedNotification.response?.reason;
 
-          // Only now, after both environments rejected it, treat the token as dead
+          if (retryReason && providerAuthReasons.includes(retryReason)) {
+            console.error(`[NOTIFICATIONS] ${fallbackEnv} gateway rejected our provider credentials (${retryReason}, status ${retryFailedNotification.status}) — this is an APNs key/config issue, not a bad device token. Leaving token in place:`, retryFailedNotification);
+            return false;
+          }
+
+          // Only now, after both environments rejected it as a device-token error, treat it as dead
           if (retryReason && invalidTokenReasons.includes(retryReason)) {
             console.error(`[NOTIFICATIONS] Invalid device token confirmed on both environments (${reason} then ${retryReason}): ${deviceToken.substring(0, 8)}...`);
             return 'BAD_TOKEN';
@@ -191,11 +199,14 @@ async function sendPushNotification(deviceToken, title, body, data = {}, collaps
         return false;
       } else if (reason && invalidTokenReasons.includes(reason)) {
         // No fallback provider available to retry against
-        console.error(`[NOTIFICATIONS] Invalid device token detected (${reason}): ${deviceToken.substring(0, 8)}...`);
+        console.error(`[NOTIFICATIONS] Invalid device token detected (${reason}, status ${failedNotification.status}): ${deviceToken.substring(0, 8)}...`);
         return 'BAD_TOKEN';
+      } else if (reason && providerAuthReasons.includes(reason)) {
+        console.error(`[NOTIFICATIONS] ${primaryEnv} gateway rejected our provider credentials (${reason}, status ${failedNotification.status}) — this is an APNs key/config issue, not a bad device token. Leaving token in place:`, failedNotification);
+        return false;
       } else {
         // Other error, log and return
-        console.error(`[NOTIFICATIONS] Failed to send notification (${primaryEnv}):`, result.failed);
+        console.error(`[NOTIFICATIONS] Failed to send notification (${primaryEnv}, status ${failedNotification.status}):`, failedNotification);
         return false;
       }
     }
