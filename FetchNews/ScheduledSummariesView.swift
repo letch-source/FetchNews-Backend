@@ -112,23 +112,6 @@ struct ScheduledSummariesView: View {
                                 .onTapGesture {
                                     editingSummary = summary
                                 }
-                                
-                                // Manual trigger button for testing
-                                Button(action: {
-                                    Task {
-                                        await triggerScheduledSummaries()
-                                    }
-                                }) {
-                                    HStack {
-                                        Image(systemName: "play.circle.fill")
-                                            .foregroundColor(.green)
-                                        Text("Test Execute Now")
-                                            .foregroundColor(.green)
-                                        Spacer()
-                                    }
-                                    .padding(.vertical, 8)
-                                }
-                                .buttonStyle(PlainButtonStyle())
                             }
                         }
                     }
@@ -217,15 +200,6 @@ struct ScheduledSummariesView: View {
             return formatter.string(from: time)
         }
         return timeString
-    }
-    
-    private func triggerScheduledSummaries() async {
-        do {
-            let response = try await ApiClient.triggerScheduledSummaries()
-            print("Scheduled summaries triggered: \(response.message)")
-        } catch {
-            print("Failed to trigger scheduled summaries: \(error)")
-        }
     }
 }
 
