@@ -1,3 +1,23 @@
-# Ignore environment files
+# Environment / secrets
 .env
+.env.*
+!.env.template
 backend/.env
+backend/.env.bak
+
+# Dependencies (installed on deploy)
+node_modules/
+backend/node_modules/
+
+# Runtime data (created by the server at startup)
+backend/data.json
+backend/users.json
+backend/data.sqlite*
+backend/server_data/
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+
+# OS
+.DS_Store
