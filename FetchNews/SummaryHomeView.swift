@@ -282,6 +282,8 @@ struct SummaryHomeView: View {
             }
         }
         .onAppear {
+            let sectionArticles = (vm.combined?.topicSections ?? []).reduce(0) { $0 + $1.articles.count }
+            print("📰 [SOURCES] SummaryHomeView v2 — items=\(vm.items.count), sectionArticles=\(sectionArticles), linkable=\(sourceItems.count), summary=\(vm.combined?.id ?? "nil")")
             if vm.currentTopicAudioUrl != nil {
                 vm.switchToCombinedAudio(autoPlay: false)
             }
