@@ -1357,9 +1357,19 @@ final class NewsVM: ObservableObject {
             print("   ❌ AVAudioSession error:", error)
         }
 
-        let item = AVPlayerItem(url: url)
+        // Ask for precise duration/timing. The combined audio is several OpenAI MP3 chunks joined
+        // end to end, and without this AVFoundation may estimate the length from the first
+        // frames. Chapter times are text position × duration, so a wrong duration makes every
+        // chapter drift, and the drift grows the later the chapter is in the summary.
+        let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        let item = AVPlayerItem(asset: asset)
         let p = AVPlayer(playerItem: item)
         p.automaticallyWaitsToMinimizeStalling = false
+        Task {
+            if let precise = try? await asset.load(.duration) {
+                print("🎵 [AUDIO] Precise duration: \(String(format: "%.1f", precise.seconds))s")
+            }
+        }
 
         // Remove previous observers before swapping
         resetPlayerState()

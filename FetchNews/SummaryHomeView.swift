@@ -26,6 +26,35 @@ struct SummaryHomeView: View {
         return filtered.isEmpty ? sections : filtered
     }
     
+    private struct SourceLink {
+        let url: URL
+        let title: String
+        let source: String
+    }
+
+    /// Articles behind the current summary, one row per unique link. Comes from vm.items, which is
+    /// filled both by a fresh fetch and when a summary is restored from history. Placeholder items
+    /// the backend adds for failed topics have no URL, so they drop out here.
+    private var sourceItems: [SourceLink] {
+        var seen = Set<String>()
+        var result: [SourceLink] = []
+        let pool = vm.items.isEmpty
+            ? (vm.combined?.topicSections ?? []).flatMap { $0.articles }
+            : vm.items
+        for item in pool {
+            guard let url = normalizedURL(from: item.url),
+                  seen.insert(url.absoluteString).inserted else { continue }
+            let source = (item.source ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            result.append(SourceLink(
+                url: url,
+                title: title.isEmpty ? (source.isEmpty ? "Article" : source) : title,
+                source: source
+            ))
+        }
+        return result
+    }
+
     /// Collapses all whitespace runs (including paragraph breaks) to single spaces and lowercases,
     /// so section text can be located inside the combined text even if the two were
     /// whitespace-normalized differently (the combined summary is condensed on the client,
@@ -170,6 +199,50 @@ struct SummaryHomeView: View {
                                 .lineSpacing(4)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.top, chapters.isEmpty ? 0 : 8)
+                        }
+
+                        // Sources — every summary links back to its original articles
+                        if !sourceItems.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Sources")
+                                    .font(.title3)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                                ForEach(sourceItems, id: \.url) { entry in
+                                    Link(destination: entry.url) {
+                                        HStack(alignment: .top, spacing: 10) {
+                                            Image(systemName: "link")
+                                                .font(.caption)
+                                                .foregroundColor(.blue)
+                                                .padding(.top, 3)
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                if !entry.source.isEmpty {
+                                                    Text(entry.source)
+                                                        .font(.caption)
+                                                        .foregroundColor(.secondary)
+                                                }
+                                                Text(entry.title)
+                                                    .font(.subheadline)
+                                                    .foregroundColor(.primary)
+                                                    .multilineTextAlignment(.leading)
+                                                    .lineLimit(2)
+                                            }
+                                            Spacer(minLength: 0)
+                                            Image(systemName: "arrow.up.right")
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                                .padding(.top, 3)
+                                        }
+                                        .padding(.vertical, 10)
+                                        .padding(.horizontal, 14)
+                                        .background(Color(.secondarySystemBackground))
+                                        .cornerRadius(10)
+                                    }
+                                }
+                            }
+                            .padding(.top, 16)
                         }
 
                     } else if let error = vm.lastError {
