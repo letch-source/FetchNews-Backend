@@ -134,6 +134,37 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
+// Remove a single summary from history by id.
+// Idempotent: an id that is already gone still returns 200, so a retried
+// swipe-to-delete on the client doesn't get stuck on an error.
+router.delete('/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = req.user;
+
+    let summaryHistory;
+    if (mongoose.connection.readyState === 1) {
+      summaryHistory = await user.removeSummaryFromHistory(id);
+    } else {
+      summaryHistory = await fallbackAuth.removeSummaryFromHistory(user, id);
+    }
+
+    // Convert timestamps to ISO strings for frontend compatibility
+    const formattedHistory = summaryHistory.map(entry => ({
+      ...entry.toObject ? entry.toObject() : entry,
+      timestamp: entry.timestamp instanceof Date ? entry.timestamp.toISOString() : entry.timestamp
+    }));
+
+    res.json({
+      message: 'Summary removed from history successfully',
+      summaryHistory: formattedHistory
+    });
+  } catch (error) {
+    console.error('Remove summary from history error:', error);
+    res.status(500).json({ error: 'Failed to remove summary from history' });
+  }
+});
+
 // Clear summary history
 router.delete('/', authenticateToken, async (req, res) => {
   try {

@@ -98,7 +98,8 @@ Legacy, defined directly in `index.js` alongside the router: `GET /api/user`, `P
 | PUT | `/api/news-sources` | Y | Y | `{excludedSources: [String]}` |
 | GET | `/api/summary-history` | Y | Y | `[SummaryHistoryEntry]` |
 | POST | `/api/summary-history` | Y | Y | `{summaryData}` |
-| DELETE | `/api/summary-history` | Y | Y | clears all history |
+| DELETE | `/api/summary-history/:id` | Y | Y | removes one entry; idempotent (200 even if the id is already gone) -> `{message, summaryHistory[]}` |
+| DELETE | `/api/summary-history` | Y | | clears all history |
 | GET | `/api/saved-summaries` | Y | Y | |
 | POST | `/api/saved-summaries` | Y | Y | `{summaryData}` |
 | DELETE | `/api/saved-summaries/:id` | Y | Y | |
@@ -160,10 +161,10 @@ a different route) today. Decide per item whether to fix the client or add the r
    has `POST /api/scheduled-summaries/:id/execute`.
 4. `ApiClient.getAdminActions` -> `GET /api/admin-actions`. Server mounts the admin actions router
    at `GET /api/admin/`.
-5. `ApiClient.deleteSummaryFromHistory` -> `DELETE /api/summary-history/:id`. Server only has
-   `DELETE /api/summary-history` (clear all). Also: `/api/auth/signup` and `/api/auth/login` exist
-   both in `routes/auth.js` (as `/register`, `/login`) and as older handlers in `index.js`; the
-   router is mounted first so it wins for `/login`. `signup` has no router equivalent.
+5. ~~`ApiClient.deleteSummaryFromHistory` -> `DELETE /api/summary-history/:id`~~ fixed by adding
+   that route. Still open: `/api/auth/signup` and `/api/auth/login` exist both in `routes/auth.js`
+   (as `/register`, `/login`) and as older handlers in `index.js`; the router is mounted first so it
+   wins for `/login`. `signup` has no router equivalent (and the client's `signup` has no callers).
 6. `/api/test-fetch` routes are mounted without auth (the `authenticateToken` lines are commented
    out with "For production safety" notes). Consider gating them.
 7. `/.well-known/apple-app-site-association` is served from `public/.well-known/`, which does not
@@ -172,3 +173,4 @@ a different route) today. Decide per item whether to fix the client or add the r
 ## Change log
 
 - Initial version, generated from the code at commit `22f5894`.
+- Added `DELETE /api/summary-history/:id` (fixes swipe-to-delete in `SummaryHistoryView`).
