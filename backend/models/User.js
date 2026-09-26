@@ -405,6 +405,12 @@ userSchema.methods.getSummaryHistory = function() {
   return this.summaryHistory || [];
 };
 
+userSchema.methods.removeSummaryFromHistory = async function(summaryId) {
+  this.summaryHistory = (this.summaryHistory || []).filter(s => s.id !== summaryId);
+  await this.save();
+  return this.summaryHistory;
+};
+
 userSchema.methods.clearSummaryHistory = async function() {
   this.summaryHistory = [];
   await this.save();

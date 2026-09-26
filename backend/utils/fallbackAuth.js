@@ -331,6 +331,13 @@ const fallbackAuth = {
     return user.summaryHistory || [];
   },
 
+  async removeSummaryFromHistory(user, summaryId) {
+    user.summaryHistory = (user.summaryHistory || []).filter(s => s.id !== summaryId);
+    user.updatedAt = new Date();
+    saveUsers(); // Persist to disk
+    return user.summaryHistory;
+  },
+
   async clearSummaryHistory(user) {
     user.summaryHistory = [];
     user.updatedAt = new Date();
