@@ -2341,10 +2341,11 @@ final class NewsVM: ObservableObject {
             
             guard shouldLoad else { return }
             
-            // Send notification if this is a new scheduled fetch (not a manual fetch)
-            if mostRecent.id.hasPrefix("scheduled-") {
-                await sendScheduledFetchNotification(title: mostRecent.title)
-            }
+            // NOTE: we deliberately do NOT post a local "Daily Fetch Ready!" notification here.
+            // This code only runs while the app is open (launch, foreground, 2-minute timer), so a
+            // local notification from it can only ever appear in the foreground — the exact
+            // "notifications only work when the app is open" symptom — and it duplicates the real
+            // server push (APNs) that is delivered when the app is backgrounded or closed.
             
             // Load the most recent fetch to the homepage (scheduled or manual)
             await loadSummaryFromHistory(mostRecent)
