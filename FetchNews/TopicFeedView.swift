@@ -49,17 +49,34 @@ struct TopicFeedView: View {
         if sections.isEmpty, let combined = vm.combined {
             print("📱 Creating fallback topic section for legacy summary (no per-topic data)")
             print("   Legacy audioUrl: \(combined.audioUrl ?? "nil")")
+            // Use the fetched/restored articles so the "View N Articles" button still appears.
             return [TopicSection(
                 id: combined.id,
                 topic: "Your News",
                 summary: combined.summary,
-                articles: [],
+                articles: vm.items,
                 audioUrl: combined.audioUrl
             )]
         }
-        
-        print("📱 Returning \(sections.count) topic sections")
-        return sections
+
+        // Sections that arrived without articles (older history entries, cached topics) borrow
+        // the matching items from vm.items so their sources still show under the summary.
+        let backfilled = sections.map { section -> TopicSection in
+            guard section.articles.isEmpty else { return section }
+            let key = section.topic.lowercased()
+            let matching = vm.items.filter { ($0.topic ?? "").lowercased() == key }
+            guard !matching.isEmpty else { return section }
+            return TopicSection(
+                id: section.id,
+                topic: section.topic,
+                summary: section.summary,
+                articles: matching,
+                audioUrl: section.audioUrl
+            )
+        }
+
+        print("📱 Returning \(backfilled.count) topic sections")
+        return backfilled
     }
     
     // Split topics into My Topics and Recommended
