@@ -71,11 +71,19 @@ struct Item: Identifiable, Codable {
         self.summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
         self.url = try container.decodeIfPresent(String.self, forKey: .url)
         
-        // Handle source as either String or Object with name property
+        // Handle source as either String or Object with name/id properties.
+        // NewsAPI-style objects are {"id": null, "name": "CNN"}; decoding those as
+        // [String: String] fails on the null id and silently dropped the source name.
+        struct SourceObject: Decodable {
+            let name: String?
+            let id: String?
+        }
         if let sourceString = try? container.decodeIfPresent(String.self, forKey: .source) {
             self.source = sourceString
-        } else if let sourceDict = try? container.decodeIfPresent([String: String].self, forKey: .source),
-                  let sourceName = sourceDict["name"] {
+        } else if let sourceObject = try? container.decodeIfPresent(SourceObject.self, forKey: .source),
+                  let sourceName = [sourceObject.name, sourceObject.id]
+                    .compactMap({ $0 })
+                    .first(where: { !$0.isEmpty }) {
             self.source = sourceName
         } else {
             self.source = nil
