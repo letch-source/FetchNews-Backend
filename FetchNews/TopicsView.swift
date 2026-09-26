@@ -158,8 +158,9 @@ struct TopicsView: View {
                     )
                     .padding(.horizontal, 20)
                     
-                    // Bottom padding
-                    Spacer(minLength: vm.canPlay ? 120 : 60)
+                    // Bottom padding: MainTabView floats a transparent custom nav bar over the
+                    // content (and ignores the bottom safe area), so always leave room for it.
+                    Spacer(minLength: 120)
                 }
             }
         }
