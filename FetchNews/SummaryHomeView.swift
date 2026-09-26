@@ -26,35 +26,70 @@ struct SummaryHomeView: View {
         return filtered.isEmpty ? sections : filtered
     }
     
+    /// Collapses all whitespace runs (including paragraph breaks) to single spaces and lowercases,
+    /// so section text can be located inside the combined text even if the two were
+    /// whitespace-normalized differently (the combined summary is condensed on the client,
+    /// per-topic summaries are not).
+    private func normalizedForMatching(_ text: String) -> String {
+        text.lowercased()
+            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .joined(separator: " ")
+    }
+    
+    /// Chapter start offsets are ESTIMATED from where each topic's text sits inside the combined
+    /// text that was sent to TTS (the backend does not return real timings). Position is measured in
+    /// characters, which tracks speech time better than word count, and the combined text includes the
+    /// spoken intro/transitions, so a topic's offset is its real position in the script.
     private var chapters: [SummaryChapter] {
         guard let combined = vm.combined else { return [] }
         let sections = chapterSections
         guard !sections.isEmpty else { return [] }
         
-        let fullText = combined.summary
-        let totalWords = wordCount(fullText)
-        let lowerFullText = fullText.lowercased()
-        var fallbackWordIndex = 0
+        let fullText = normalizedForMatching(combined.summary)
+        let totalChars = fullText.count
+        let duration = vm.duration
+        var searchStart = fullText.startIndex
+        var lastOffset = 0.0
         
         return sections.map { section in
-            let sectionText = section.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-            let lowerSectionText = sectionText.lowercased()
-            var startWordIndex = fallbackWordIndex
+            let sectionText = normalizedForMatching(section.summary)
+            var matchRange: Range<String.Index>? = nil
+            var matchKind = "none"
             
-            if let range = lowerFullText.range(of: lowerSectionText) {
-                let prefix = String(lowerFullText[..<range.lowerBound])
-                startWordIndex = wordCount(prefix)
+            // 1) Whole section text, searched forward from the previous chapter so repeated
+            //    phrases can't jump backwards.
+            if !sectionText.isEmpty,
+               let r = fullText.range(of: sectionText, range: searchStart..<fullText.endIndex) {
+                matchRange = r
+                matchKind = "full"
+            }
+            // 2) Opening words only (the combined text may have edited the end of the section).
+            if matchRange == nil {
+                let opening = sectionText.split(separator: " ").prefix(10).joined(separator: " ")
+                if !opening.isEmpty,
+                   let r = fullText.range(of: opening, range: searchStart..<fullText.endIndex) {
+                    matchRange = r
+                    matchKind = "opening"
+                }
             }
             
-            fallbackWordIndex += wordCount(sectionText)
-            
-            let rawOffset = totalWords > 0 ? (Double(startWordIndex) / Double(totalWords)) * vm.duration : 0
-            let offset = min(max(rawOffset, 0), vm.duration)
+            let offset: Double
+            if let r = matchRange, totalChars > 0, duration > 0 {
+                let startChars = fullText.distance(from: fullText.startIndex, to: r.lowerBound)
+                offset = min(max(Double(startChars) / Double(totalChars) * duration, lastOffset), duration)
+                searchStart = r.lowerBound
+            } else {
+                // No match: don't guess a position from summed section lengths (that ignores the
+                // spoken intro and drifts). Keep it at the previous chapter's start.
+                offset = lastOffset
+            }
+            lastOffset = offset
             
             return SummaryChapter(
                 id: section.id,
                 title: section.topic,
-                offset: offset
+                offset: offset,
+                matchKind: matchKind
             )
         }
     }
@@ -86,6 +121,7 @@ struct SummaryHomeView: View {
                             VStack(spacing: 8) {
                                 ForEach(chapters) { chapter in
                                     Button(action: {
+                                        print("🔖 [CHAPTER] \"\(chapter.title)\" offset=\(String(format: "%.1f", chapter.offset))s of duration=\(String(format: "%.1f", vm.duration))s match=\(chapter.matchKind)")
                                         if vm.currentTopicAudioUrl != nil {
                                             vm.switchToCombinedAudio(autoPlay: false)
                                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
@@ -200,6 +236,8 @@ struct SummaryChapter: Identifiable {
     let id: String
     let title: String
     let offset: Double
+    /// How the chapter was located in the combined text: "full", "opening", or "none" (unmatched).
+    let matchKind: String
 }
 
 #Preview {
