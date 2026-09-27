@@ -79,8 +79,14 @@ struct SummaryHomeView: View {
         let duration = vm.duration
         var searchStart = fullText.startIndex
         var lastOffset = 0.0
+        // End of the previous topic's text when it was fully matched. The backend speaks a short
+        // transition ("Next up in tech…") between topics, so a chapter should start right after the
+        // previous topic ends, not at the first word of its own text (which skipped the transition).
+        var previousSectionEnd: String.Index? = nil
+        // Small pre-roll so a chapter never clips its first syllable due to estimation error.
+        let preRollSeconds = 0.4
         
-        return sections.map { section in
+        return sections.enumerated().map { index, section in
             let sectionText = normalizedForMatching(section.summary)
             var matchRange: Range<String.Index>? = nil
             var matchKind = "none"
@@ -104,10 +110,19 @@ struct SummaryHomeView: View {
             
             let offset: Double
             if let r = matchRange, totalChars > 0, duration > 0 {
-                let startChars = fullText.distance(from: fullText.startIndex, to: r.lowerBound)
-                offset = min(max(Double(startChars) / Double(totalChars) * duration, lastOffset), duration)
+                // First topic starts at its own text (after the greeting). Later topics start where
+                // the previous topic ended, so the transition line is included.
+                var chapterStart = r.lowerBound
+                if index > 0, let prevEnd = previousSectionEnd, prevEnd <= r.lowerBound {
+                    chapterStart = prevEnd
+                }
+                let startChars = fullText.distance(from: fullText.startIndex, to: chapterStart)
+                let estimated = Double(startChars) / Double(totalChars) * duration - preRollSeconds
+                offset = min(max(estimated, lastOffset, 0), duration)
                 searchStart = r.lowerBound
+                previousSectionEnd = matchKind == "full" ? r.upperBound : nil
             } else {
+                previousSectionEnd = nil
                 // No match: don't guess a position from summed section lengths (that ignores the
                 // spoken intro and drifts). Keep it at the previous chapter's start.
                 offset = lastOffset
